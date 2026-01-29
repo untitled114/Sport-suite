@@ -15,51 +15,45 @@ Usage:
     python3 track_results.py --date 2025-11-07
     python3 track_results.py --backfill-days 7
 """
-import sys
-import os
-import psycopg2
-import pandas as pd
-from datetime import datetime, timedelta
-import logging
-import argparse
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+import argparse
+import logging
+import os
+from datetime import datetime, timedelta
+
+import pandas as pd
+import psycopg2
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# Import centralized config
-_nba_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if _nba_root not in sys.path:
-    sys.path.insert(0, _nba_root)
-
 try:
-    from nba.config import get_intelligence_db_config, get_players_db_config, STAT_COLUMN_MAP
+    from nba.config import STAT_COLUMN_MAP, get_intelligence_db_config, get_players_db_config
+
     DB_INTELLIGENCE = get_intelligence_db_config()
     DB_PLAYERS = get_players_db_config()
 except ImportError:
     # Fallback for standalone execution
     DB_INTELLIGENCE = {
-        'host': 'localhost',
-        'port': 5539,
-        'user': os.getenv('DB_USER', 'nba_user'),
-        'password': os.getenv('DB_PASSWORD'),
-        'database': 'nba_intelligence'
+        "host": "localhost",
+        "port": 5539,
+        "user": os.getenv("DB_USER", "nba_user"),
+        "password": os.getenv("DB_PASSWORD"),
+        "database": "nba_intelligence",
     }
     DB_PLAYERS = {
-        'host': 'localhost',
-        'port': 5536,
-        'user': os.getenv('DB_USER', 'nba_user'),
-        'password': os.getenv('DB_PASSWORD'),
-        'database': 'nba_players'
+        "host": "localhost",
+        "port": 5536,
+        "user": os.getenv("DB_USER", "nba_user"),
+        "password": os.getenv("DB_PASSWORD"),
+        "database": "nba_players",
     }
     # Note: Use correct column name 'three_pointers_made' (not 'threes_made')
     STAT_COLUMN_MAP = {
-        'POINTS': 'points',
-        'REBOUNDS': 'rebounds',
-        'ASSISTS': 'assists',
-        'THREES': 'three_pointers_made'
+        "POINTS": "points",
+        "REBOUNDS": "rebounds",
+        "ASSISTS": "assists",
+        "THREES": "three_pointers_made",
     }
 
 
@@ -147,11 +141,7 @@ class ResultsTracker:
         """
 
         try:
-            result = pd.read_sql_query(
-                query,
-                self.conn_players,
-                params=(player_name, game_date)
-            )
+            result = pd.read_sql_query(query, self.conn_players, params=(player_name, game_date))
 
             if len(result) > 0:
                 return float(result.iloc[0][stat_column])
@@ -175,26 +165,26 @@ class ResultsTracker:
             (result_str, profit_float)
         """
         if actual_value is None:
-            return ('PENDING', 0.0)
+            return ("PENDING", 0.0)
 
         # Check result
-        if side == 'OVER':
+        if side == "OVER":
             if actual_value > line:
-                return ('WIN', 1.0)
+                return ("WIN", 1.0)
             elif actual_value < line:
-                return ('LOSS', -1.1)  # Standard -110 odds
+                return ("LOSS", -1.1)  # Standard -110 odds
             else:
-                return ('PUSH', 0.0)
-        elif side == 'UNDER':
+                return ("PUSH", 0.0)
+        elif side == "UNDER":
             if actual_value < line:
-                return ('WIN', 1.0)
+                return ("WIN", 1.0)
             elif actual_value > line:
-                return ('LOSS', -1.1)
+                return ("LOSS", -1.1)
             else:
-                return ('PUSH', 0.0)
+                return ("PUSH", 0.0)
         else:
             logger.error(f"Unknown side: {side}")
-            return ('PENDING', 0.0)
+            return ("PENDING", 0.0)
 
     def update_pick_result(self, pick_id, actual_result, result, profit):
         """
@@ -227,9 +217,9 @@ class ResultsTracker:
         Args:
             game_date: Optional specific date to process
         """
-        logger.info("="*80)
+        logger.info("=" * 80)
         logger.info("PROCESSING PENDING PICKS")
-        logger.info("="*80)
+        logger.info("=" * 80)
 
         # Get pending picks
         pending_picks = self.get_pending_picks(game_date=game_date)
@@ -246,20 +236,18 @@ class ResultsTracker:
         pushes = 0
         still_pending = 0
 
-        for idx, pick in pending_picks.iterrows():
-            player_name = pick['player_name']
-            game_date = pick['game_date']
-            stat_type = pick['stat_type']
-            side = pick['side']
-            line = pick['best_line']
+        for _idx, pick in pending_picks.iterrows():
+            player_name = pick["player_name"]
+            game_date = pick["game_date"]
+            stat_type = pick["stat_type"]
+            side = pick["side"]
+            line = pick["best_line"]
 
             # Get actual stat
             actual_value = self.get_actual_stat(player_name, game_date, stat_type)
 
             if actual_value is None:
-                logger.debug(
-                    f"⏳ No result yet: {player_name} {stat_type} ({game_date})"
-                )
+                logger.debug(f"⏳ No result yet: {player_name} {stat_type} ({game_date})")
                 still_pending += 1
                 continue
 
@@ -267,12 +255,7 @@ class ResultsTracker:
             result, profit = self.calculate_result(actual_value, line, side)
 
             # Update database
-            self.update_pick_result(
-                pick['pick_id'],
-                actual_value,
-                result,
-                profit
-            )
+            self.update_pick_result(pick["pick_id"], actual_value, result, profit)
 
             # Log result
             result_symbol = "[OK]" if result == "WIN" else "[ERROR]" if result == "LOSS" else "[-]"
@@ -283,17 +266,17 @@ class ResultsTracker:
             )
 
             # Count results
-            if result == 'WIN':
+            if result == "WIN":
                 wins += 1
-            elif result == 'LOSS':
+            elif result == "LOSS":
                 losses += 1
-            elif result == 'PUSH':
+            elif result == "PUSH":
                 pushes += 1
 
         # Summary
-        logger.info("\n" + "="*80)
+        logger.info("\n" + "=" * 80)
         logger.info("RESULTS SUMMARY")
-        logger.info("="*80)
+        logger.info("=" * 80)
         logger.info(f"Total Processed: {wins + losses + pushes}")
         logger.info(f"  Wins: {wins}")
         logger.info(f"  Losses: {losses}")
@@ -307,7 +290,7 @@ class ResultsTracker:
 
             logger.info(f"\nWin Rate: {win_rate:.1f}%")
             logger.info(f"ROI: {roi:+.2f}%")
-        logger.info("="*80)
+        logger.info("=" * 80)
 
     def run(self, game_date=None):
         """Main execution"""
@@ -322,19 +305,10 @@ class ResultsTracker:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Track results for NBA betting picks'
-    )
+    parser = argparse.ArgumentParser(description="Track results for NBA betting picks")
+    parser.add_argument("--date", help="Specific game date to process (YYYY-MM-DD)", default=None)
     parser.add_argument(
-        '--date',
-        help='Specific game date to process (YYYY-MM-DD)',
-        default=None
-    )
-    parser.add_argument(
-        '--backfill-days',
-        type=int,
-        help='Process last N days of picks',
-        default=None
+        "--backfill-days", type=int, help="Process last N days of picks", default=None
     )
 
     args = parser.parse_args()
@@ -346,7 +320,7 @@ def main():
         tracker.connect()
 
         for days_ago in range(args.backfill_days):
-            date = (datetime.now() - timedelta(days=days_ago)).strftime('%Y-%m-%d')
+            date = (datetime.now() - timedelta(days=days_ago)).strftime("%Y-%m-%d")
             logger.info(f"\nProcessing {date}...")
             tracker.process_pending_picks(game_date=date)
 
@@ -358,5 +332,5 @@ def main():
         tracker.run(game_date=args.date)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

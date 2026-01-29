@@ -19,21 +19,22 @@ Features calculated:
 Output: Populates player_rolling_stats table in nba_players database
 """
 
-import psycopg2
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
-import sys
-from pathlib import Path
 import os
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import psycopg2
 
 # Database connection
 DB_CONFIG = {
-    'host': 'localhost',
-    'port': 5536,
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD'),
-    'database': 'nba_players'
+    "host": "localhost",
+    "port": 5536,
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
+    "database": "nba_players",
 }
 
 # Rolling window sizes (in games)
@@ -112,7 +113,7 @@ def calculate_rolling_for_player(conn, player_id, player_name, window_size):
     # Calculate rolling stats for each game (starting from window_size)
     for i in range(window_size, len(games) + 1):
         # Get last N games (most recent first for EMA)
-        window = games[i-window_size:i]
+        window = games[i - window_size : i]
         window_reversed = list(reversed(window))  # Most recent first
 
         as_of_date = window[-1][0]  # Date of most recent game
@@ -159,23 +160,25 @@ def calculate_rolling_for_player(conn, player_id, player_name, window_size):
             recent_points = points[0]  # Most recent game
             is_hot_streak = bool(recent_points > (avg_points + std_points))
 
-        rolling_stats.append({
-            'player_id': player_id,
-            'as_of_date': as_of_date,
-            'window_size': window_size,
-            'ema_points': ema_points,
-            'ema_rebounds': ema_rebounds,
-            'ema_assists': ema_assists,
-            'ema_minutes': ema_minutes,
-            'ema_fg_pct': ema_fg_pct,
-            'ema_three_pt_pct': ema_three_pt_pct,
-            'ema_steals': ema_steals,
-            'ema_blocks': ema_blocks,
-            'ema_turnovers': ema_turnovers,
-            'ema_plus_minus': ema_plus_minus,
-            'games_in_window': len(points),
-            'is_hot_streak': is_hot_streak
-        })
+        rolling_stats.append(
+            {
+                "player_id": player_id,
+                "as_of_date": as_of_date,
+                "window_size": window_size,
+                "ema_points": ema_points,
+                "ema_rebounds": ema_rebounds,
+                "ema_assists": ema_assists,
+                "ema_minutes": ema_minutes,
+                "ema_fg_pct": ema_fg_pct,
+                "ema_three_pt_pct": ema_three_pt_pct,
+                "ema_steals": ema_steals,
+                "ema_blocks": ema_blocks,
+                "ema_turnovers": ema_turnovers,
+                "ema_plus_minus": ema_plus_minus,
+                "games_in_window": len(points),
+                "is_hot_streak": is_hot_streak,
+            }
+        )
 
     return rolling_stats
 
@@ -214,13 +217,26 @@ def insert_rolling_stats(conn, rolling_stats):
     """
 
     for stat in rolling_stats:
-        cursor.execute(insert_query, (
-            stat['player_id'], stat['as_of_date'], stat['window_size'],
-            stat['ema_points'], stat['ema_rebounds'], stat['ema_assists'], stat['ema_minutes'],
-            stat['ema_fg_pct'], stat['ema_three_pt_pct'],
-            stat['ema_steals'], stat['ema_blocks'], stat['ema_turnovers'], stat['ema_plus_minus'],
-            stat['games_in_window'], stat['is_hot_streak']
-        ))
+        cursor.execute(
+            insert_query,
+            (
+                stat["player_id"],
+                stat["as_of_date"],
+                stat["window_size"],
+                stat["ema_points"],
+                stat["ema_rebounds"],
+                stat["ema_assists"],
+                stat["ema_minutes"],
+                stat["ema_fg_pct"],
+                stat["ema_three_pt_pct"],
+                stat["ema_steals"],
+                stat["ema_blocks"],
+                stat["ema_turnovers"],
+                stat["ema_plus_minus"],
+                stat["games_in_window"],
+                stat["is_hot_streak"],
+            ),
+        )
 
     conn.commit()
     cursor.close()
@@ -230,10 +246,10 @@ def insert_rolling_stats(conn, rolling_stats):
 
 def main():
     """Main execution"""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("NBA ROLLING STATS CALCULATOR")
     print("EMA-based Rolling Statistics (L3/L5/L10/L20)")
-    print("="*80 + "\n")
+    print("=" * 80 + "\n")
 
     # Connect to database
     print("🔌 Connecting to NBA Players Database...")
@@ -274,13 +290,15 @@ def main():
         total_stats_inserted += player_total
         print(f"            ✅ {player_total} rolling stat records created")
 
-    print(f"\n" + "="*80)
+    print(f"\n" + "=" * 80)
     print(f"✅ COMPLETE: {total_stats_inserted:,} rolling stat records inserted")
-    print("="*80 + "\n")
+    print("=" * 80 + "\n")
 
     # Verify results
     cursor = conn.cursor()
-    cursor.execute("SELECT window_size, COUNT(*) FROM player_rolling_stats GROUP BY window_size ORDER BY window_size")
+    cursor.execute(
+        "SELECT window_size, COUNT(*) FROM player_rolling_stats GROUP BY window_size ORDER BY window_size"
+    )
     results = cursor.fetchall()
     cursor.close()
 
@@ -291,5 +309,5 @@ def main():
     conn.close()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

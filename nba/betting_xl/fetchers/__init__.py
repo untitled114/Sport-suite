@@ -24,11 +24,11 @@ Usage:
 """
 
 from .base_fetcher import BaseFetcher
-from .fetch_bettingpros import BettingProsFetcher
 from .fetch_all import FetchOrchestrator
+from .fetch_bettingpros import BettingProsFetcher
 
 __all__ = [
-    'BaseFetcher',
-    'BettingProsFetcher',
-    'FetchOrchestrator',
+    "BaseFetcher",
+    "BettingProsFetcher",
+    "FetchOrchestrator",
 ]

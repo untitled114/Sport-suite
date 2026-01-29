@@ -7,11 +7,12 @@ Finds softest lines across multiple books and calculates edge.
 Part of Phase 5: XL Betting Pipeline (Task 5.2)
 """
 
-import os
-import psycopg2
-import pandas as pd
 import logging
-from typing import Dict, Optional, List, Any, Union
+import os
+from typing import Any, Dict, List, Optional, Union
+
+import pandas as pd
+import psycopg2
 
 logger = logging.getLogger(__name__)
 
@@ -22,16 +23,25 @@ logger = logging.getLogger(__name__)
 # BLACKLISTED (poor WR): Luka (19%), Lauri (7%), Paolo (33%), Giannis (35%), Randle (20-39%), Miles (0-48%)
 STAR_PLAYERS = {
     # Keepers
-    'Donovan Mitchell', 'Tyrese Maxey', 'Anthony Edwards',
-    'Jaylen Brown', 'De\'Aaron Fox', 'Franz Wagner',
-    'Pascal Siakam', 'Kevin Durant',
+    "Donovan Mitchell",
+    "Tyrese Maxey",
+    "Anthony Edwards",
+    "Jaylen Brown",
+    "De'Aaron Fox",
+    "Franz Wagner",
+    "Pascal Siakam",
+    "Kevin Durant",
     # Gold (75%+ WR, Dec-Jan 2026)
-    'Joel Embiid', 'Michael Porter Jr.',
+    "Joel Embiid",
+    "Michael Porter Jr.",
     # Standard (70%+ WR)
-    'Jamal Murray', 'OG Anunoby',
+    "Jamal Murray",
+    "OG Anunoby",
     # Minimum (65%+ WR)
-    'LeBron James', 'Deni Avdija',
-    'Jaren Jackson Jr.', 'Brandon Miller',
+    "LeBron James",
+    "Deni Avdija",
+    "Jaren Jackson Jr.",
+    "Brandon Miller",
 }
 
 # =============================================================================
@@ -47,16 +57,17 @@ STAR_PLAYERS = {
 
 # Books that showed trap behavior when softest in December
 TRAP_BOOKS_WHEN_SOFTEST = {
-    'DraftKings': {'min_spread_required': 3.5, 'min_p_over_boost': 0.05},
-    'BetMGM': {'min_spread_required': 3.5, 'min_p_over_boost': 0.05},
-    'BetRivers': {'min_spread_required': 3.0, 'min_p_over_boost': 0.03},
-    'Caesars': {'min_spread_required': 3.0, 'min_p_over_boost': 0.03},
+    "DraftKings": {"min_spread_required": 3.5, "min_p_over_boost": 0.05},
+    "BetMGM": {"min_spread_required": 3.5, "min_p_over_boost": 0.05},
+    "BetRivers": {"min_spread_required": 3.0, "min_p_over_boost": 0.03},
+    "Caesars": {"min_spread_required": 3.0, "min_p_over_boost": 0.03},
 }
 
 # Books that showed reliability when softest in December
 RELIABLE_BOOKS_WHEN_SOFTEST = {
-    'Underdog', 'Underdog Fantasy',
-    'ESPNBet',
+    "Underdog",
+    "Underdog Fantasy",
+    "ESPNBet",
 }
 
 # =============================================================================
@@ -68,10 +79,10 @@ RELIABLE_BOOKS_WHEN_SOFTEST = {
 # =============================================================================
 # ★ REGIME SHIFT FIX: Added BetRivers to blacklist (0W/7L = 0% WR in January)
 BLACKLISTED_BOOKS = {
-    'POINTS': {'FanDuel', 'fanduel', 'BetRivers', 'betrivers'},  # FD 16.7% WR, BR 0% WR in Jan
-    'REBOUNDS': set(),  # No blacklist for rebounds
-    'ASSISTS': set(),
-    'THREES': set(),
+    "POINTS": {"FanDuel", "fanduel", "BetRivers", "betrivers"},  # FD 16.7% WR, BR 0% WR in Jan
+    "REBOUNDS": set(),  # No blacklist for rebounds
+    "ASSISTS": set(),
+    "THREES": set(),
 }
 
 # =============================================================================
@@ -89,38 +100,38 @@ BLACKLISTED_BOOKS = {
 UNDERDOG_ONLY_MODE = False  # Jan 26, 2026: Disabled for backtest comparison
 
 UNDERDOG_CONFIG = {
-    'POINTS': {
-        'enabled': True,          # Apply soft-book filter to POINTS
-        'min_spread': 0.5,
-        'underdog_names': {'underdog', 'Underdog', 'Underdog Fantasy'},  # ONLY Underdog - Jan 15
+    "POINTS": {
+        "enabled": True,  # Apply soft-book filter to POINTS
+        "min_spread": 0.5,
+        "underdog_names": {"underdog", "Underdog", "Underdog Fantasy"},  # ONLY Underdog - Jan 15
     },
-    'REBOUNDS': {
-        'enabled': False,         # KEEP NORMAL FILTERING - was 65-67% WR
-        'min_spread': 1.0,
-        'underdog_names': {'underdog', 'Underdog', 'Underdog Fantasy'},
+    "REBOUNDS": {
+        "enabled": False,  # KEEP NORMAL FILTERING - was 65-67% WR
+        "min_spread": 1.0,
+        "underdog_names": {"underdog", "Underdog", "Underdog Fantasy"},
     },
-    'ASSISTS': {
-        'enabled': False,
-        'min_spread': 1.5,
-        'underdog_names': {'underdog', 'Underdog', 'Underdog Fantasy'},
+    "ASSISTS": {
+        "enabled": False,
+        "min_spread": 1.5,
+        "underdog_names": {"underdog", "Underdog", "Underdog Fantasy"},
     },
-    'THREES': {
-        'enabled': False,
-        'min_spread': 1.5,
-        'underdog_names': {'underdog', 'Underdog', 'Underdog Fantasy'},
+    "THREES": {
+        "enabled": False,
+        "min_spread": 1.5,
+        "underdog_names": {"underdog", "Underdog", "Underdog Fantasy"},
     },
 }
 
 # Database config
-DB_DEFAULT_USER = os.getenv('NBA_DB_USER', os.getenv('DB_USER', 'nba_user'))
-DB_DEFAULT_PASSWORD = os.getenv('NBA_DB_PASSWORD', os.getenv('DB_PASSWORD'))
+DB_DEFAULT_USER = os.getenv("NBA_DB_USER", os.getenv("DB_USER", "nba_user"))
+DB_DEFAULT_PASSWORD = os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
 
 DB_INTELLIGENCE = {
-    'host': os.getenv('NBA_INT_DB_HOST', 'localhost'),
-    'port': int(os.getenv('NBA_INT_DB_PORT', 5539)),
-    'user': os.getenv('NBA_INT_DB_USER', DB_DEFAULT_USER),
-    'password': os.getenv('NBA_INT_DB_PASSWORD', DB_DEFAULT_PASSWORD),
-    'database': os.getenv('NBA_INT_DB_NAME', 'nba_intelligence')
+    "host": os.getenv("NBA_INT_DB_HOST", "localhost"),
+    "port": int(os.getenv("NBA_INT_DB_PORT", 5539)),
+    "user": os.getenv("NBA_INT_DB_USER", DB_DEFAULT_USER),
+    "password": os.getenv("NBA_INT_DB_PASSWORD", DB_DEFAULT_PASSWORD),
+    "database": os.getenv("NBA_INT_DB_NAME", "nba_intelligence"),
 }
 
 # =============================================================================
@@ -138,54 +149,67 @@ DB_INTELLIGENCE = {
 # Note: Edge >= 5 was too aggressive for X/V3 tiers in TIER_CONFIG
 # Use edge >= 3 for a better balance between WR and volume
 TIER_CONFIG = {
-    'POINTS': {
-        'enabled': True,
-        'min_probability': 0.65,  # Raised from 0.60 - eliminates 33% WR trap
-        'min_line': 12.0,
-        'max_line': 24.0,
-        'max_edge_points': 5.0,
-        'max_edge_low_variance': 3.0,
+    "POINTS": {
+        "enabled": True,
+        "min_probability": 0.65,  # Raised from 0.60 - eliminates 33% WR trap
+        "min_line": 12.0,
+        "max_line": 24.0,
+        "max_edge_points": 5.0,
+        "max_edge_low_variance": 3.0,
         # ★ REGIME SHIFT FIX: Blacklist BetRivers for OVER picks
-        'avoid_books': {'betrivers', 'BetRivers'},
-        'tiers': {
-            'X': {  # Legacy XL model tier - moderate edge filter
+        "avoid_books": {"betrivers", "BetRivers"},
+        "tiers": {
+            "X": {  # Legacy XL model tier - moderate edge filter
                 # Edge >= 3.0 balances WR vs volume (edge >= 5 was too aggressive)
-                'min_spread': 0.0,
-                'min_edge_points': 3.0,  # ★ REGIME SHIFT FIX: Edge>=3 required
-                'min_p_over': 0.70,
-                'require_positive_edge': False,
-                'require_both': False,
-                'model_version': 'xl',
+                "min_spread": 0.0,
+                "min_edge_points": 3.0,  # ★ REGIME SHIFT FIX: Edge>=3 required
+                "min_p_over": 0.70,
+                "require_positive_edge": False,
+                "require_both": False,
+                "model_version": "xl",
             },
-            'V3': {  # V3 model tier - moderate edge filter
+            "V3": {  # V3 model tier - moderate edge filter
                 # Edge >= 3.0 balances WR vs volume (edge >= 5 was too aggressive)
-                'min_spread': 0.0,
-                'min_edge_points': 3.0,  # ★ REGIME SHIFT FIX: Edge>=3 required
-                'min_p_over': 0.85,  # High confidence threshold
-                'require_positive_edge': False,
-                'require_both': False,
-                'model_version': 'v3',
+                "min_spread": 0.0,
+                "min_edge_points": 3.0,  # ★ REGIME SHIFT FIX: Edge>=3 required
+                "min_p_over": 0.85,  # High confidence threshold
+                "require_positive_edge": False,
+                "require_both": False,
+                "model_version": "v3",
             },
         },
     },
-    'REBOUNDS': {
-        'enabled': True,
-        'min_probability': 0.60,
-        'min_line': 3.0,  # Filter bad ESPNBet data (showing 1.5 when real is 2.5)
-        'max_edge_low_variance': 2.0,
-        'tiers': {
-            'A': {  # ~73% WR - REBOUNDS tier
+    "REBOUNDS": {
+        "enabled": True,
+        "min_probability": 0.55,  # Lowered for META tier (Jan 29, 2026)
+        "min_line": 3.0,  # Filter bad ESPNBet data (showing 1.5 when real is 2.5)
+        "max_edge_low_variance": 2.0,
+        "tiers": {
+            # =================================================================
+            # REBOUNDS META TIER (Jan 29, 2026)
+            # Backtested: line_spread >= 1.5 AND edge_pct >= 20% = 70.6% WR
+            # Edge_pct = (consensus - softest) / softest * 100
+            # =================================================================
+            "META": {
+                "min_spread": 1.5,  # High market disagreement
+                "min_edge_pct": 20.0,  # 20%+ line shopping edge
+                "min_p_over": 0.55,  # Relaxed - edge_pct is primary filter
+                "require_positive_edge": True,
+                "require_both": True,  # AND logic: spread AND edge_pct required
+                "expected_wr": 0.706,  # 70.6% from backtest
+            },
+            "A": {  # ~61% WR - Legacy REBOUNDS tier (fallback)
                 # REBOUNDS not affected by regime shift - keep original
-                'min_spread': 2.0,
-                'min_edge_points': 1.0,
-                'min_p_over': 0.70,
-                'require_positive_edge': False,
-                'require_both': False,
+                "min_spread": 2.0,
+                "min_edge_points": 1.0,
+                "min_p_over": 0.70,
+                "require_positive_edge": False,
+                "require_both": False,
             },
         },
     },
-    'ASSISTS': {'enabled': False},
-    'THREES': {'enabled': False},
+    "ASSISTS": {"enabled": False},
+    "THREES": {"enabled": False},
 }
 
 # =============================================================================
@@ -215,18 +239,17 @@ TIER_CONFIG = {
 #   - draftkings + p_over 0.75-0.90: Avg 82.9%
 # =============================================================================
 V3_TIER_CONFIG = {
-    'POINTS': {
-        'enabled': True,
-        'model_version': 'v3',
+    "POINTS": {
+        "enabled": True,
+        "model_version": "v3",
         # ★ JANUARY-OPTIMIZED: Blacklist betmgm+betrivers for ALL picks
-        'avoid_books_over': {'betrivers', 'BetRivers', 'betmgm', 'BetMGM'},
-        'avoid_books_under': {'betrivers', 'BetRivers'},
-        'tiers': {
+        "avoid_books_over": {"betrivers", "BetRivers", "betmgm", "BetMGM"},
+        "avoid_books_under": {"betrivers", "BetRivers"},
+        "tiers": {
             # =================================================================
             # JANUARY-OPTIMIZED TIERS (Jan 16, 2026)
             # Target: 80%+ WR in January (matching December's performance)
             # =================================================================
-
             # ★ TIER 1: JAN_PRIME_OVER - DISABLED (Jan 28, 2026)
             # Actual Jan performance: 4W/6L = 40% WR, -23.6% ROI
             # Backtest was overfitted - real performance is losing money
@@ -240,20 +263,18 @@ V3_TIER_CONFIG = {
             #     'min_spread': 0,
             #     'expected_wr': 0.917,
             # },
-
             # ★ TIER 2: JAN_CONFIDENT_OVER (January 87.5% WR - 7W/1L)
             # p_over 0.75-0.85 sweet spot (avoids overconfidence trap)
-            'JAN_CONFIDENT_OVER': {
-                'direction': 'OVER',
-                'min_p_over': 0.75,
-                'max_p_over': 0.85,  # Critical cap - Jan 100% in this range w/ book filter
-                'min_line': 0,
-                'max_line': 25.0,
-                'min_edge': 4.0,
-                'min_spread': 0,
-                'expected_wr': 0.875,  # 87.5% from Jan backtest (7W/1L)
+            "JAN_CONFIDENT_OVER": {
+                "direction": "OVER",
+                "min_p_over": 0.75,
+                "max_p_over": 0.85,  # Critical cap - Jan 100% in this range w/ book filter
+                "min_line": 0,
+                "max_line": 25.0,
+                "min_edge": 4.0,
+                "min_spread": 0,
+                "expected_wr": 0.875,  # 87.5% from Jan backtest (7W/1L)
             },
-
             # ★ TIER 3: JAN_LINE_OVER - DISABLED (Jan 28, 2026)
             # Actual Jan performance: 7W/5L = 58.3% WR, +11.4% ROI
             # Marginal - not worth the noise, disabling per user request
@@ -267,10 +288,8 @@ V3_TIER_CONFIG = {
             #     'min_spread': 0,
             #     'expected_wr': 0.824,
             # },
-
             # UNDER TIERS - Disabled for January (50% WR overall)
             # Only enable high-confidence UNDERs with strict filters
-
             # V3_HIGHLINE_UNDER - Keep but require NOT betrivers
             # 'V3_HIGHLINE_UNDER': {
             #     'direction': 'UNDER',
@@ -283,9 +302,9 @@ V3_TIER_CONFIG = {
             # },
         },
     },
-    'REBOUNDS': {'enabled': False},
-    'ASSISTS': {'enabled': False},
-    'THREES': {'enabled': False},
+    "REBOUNDS": {"enabled": False},
+    "ASSISTS": {"enabled": False},
+    "THREES": {"enabled": False},
 }
 
 # NOTE: Odds API tier config moved to standalone generate_odds_api_picks.py (Jan 26, 2026)
@@ -310,57 +329,62 @@ V3_TIER_CONFIG = {
 # STAR tier was dragging down overall WR: 25% WR with edge 0.3-0.5
 # Edge >= 3.0 balances WR vs volume (edge >= 5 was too aggressive)
 STAR_TIER_CONFIG = {
-    'POINTS': {
-        'enabled': True,
-        'min_p_over': 0.70,
-        'max_p_over': 0.80,      # Cap to avoid overconfident trap
-        'min_spread': 2.0,
-        'max_line': 29.0,
-        'min_edge': 3.0,         # ★ REGIME SHIFT FIX: Edge>=3 required (was 0.5)
-        'avoid_books_softest': {'draftkings', 'DraftKings', 'betrivers', 'BetRivers'},  # ★ Added BetRivers
-        'model_preference': 'v3',
+    "POINTS": {
+        "enabled": True,
+        "min_p_over": 0.70,
+        "max_p_over": 0.80,  # Cap to avoid overconfident trap
+        "min_spread": 2.0,
+        "max_line": 29.0,
+        "min_edge": 3.0,  # ★ REGIME SHIFT FIX: Edge>=3 required (was 0.5)
+        "avoid_books_softest": {
+            "draftkings",
+            "DraftKings",
+            "betrivers",
+            "BetRivers",
+        },  # ★ Added BetRivers
+        "model_preference": "v3",
     },
-    'REBOUNDS': {
-        'enabled': True,
-        'min_p_over': 0.55,
-        'max_p_over': 0.80,      # Cap at 0.80 (45% WR above this)
-        'min_spread': 0.5,       # Relaxed from 1.0 (was filtering good picks)
-        'min_line': 3.0,         # Filter bad ESPNBet data
-        'max_line': 8.0,         # Lower lines only (82.6% WR)
-        'min_edge': 0.25,
+    "REBOUNDS": {
+        "enabled": True,
+        "min_p_over": 0.55,
+        "max_p_over": 0.80,  # Cap at 0.80 (45% WR above this)
+        "min_spread": 0.5,  # Relaxed from 1.0 (was filtering good picks)
+        "min_line": 3.0,  # Filter bad ESPNBet data
+        "max_line": 8.0,  # Lower lines only (82.6% WR)
+        "min_edge": 0.25,
     },
-    'ASSISTS': {'enabled': False},
-    'THREES': {'enabled': False},
+    "ASSISTS": {"enabled": False},
+    "THREES": {"enabled": False},
 }
 
 # Legacy config for backwards compatibility
 PRODUCTION_CONFIG = {
-    'POINTS': {
-        'enabled': True,
-        'use_hybrid_filter': True,
-        'min_probability': 0.58,
-        'min_edge_points': 1.5,
-        'max_edge_points': 5.0,
-        'min_line': 12.0,
+    "POINTS": {
+        "enabled": True,
+        "use_hybrid_filter": True,
+        "min_probability": 0.58,
+        "min_edge_points": 1.5,
+        "max_edge_points": 5.0,
+        "min_line": 12.0,
         # max_line REMOVED - was filtering out star players
-        'min_spread': 2.5,
-        'high_confidence_p_over': 0.65,
-        'tier_b': None,
-        'max_edge_low_variance': 3.0,
+        "min_spread": 2.5,
+        "high_confidence_p_over": 0.65,
+        "tier_b": None,
+        "max_edge_low_variance": 3.0,
     },
-    'REBOUNDS': {
-        'enabled': True,
-        'use_hybrid_filter': True,
-        'min_probability': 0.58,
-        'min_edge_points': 1.0,
-        'min_line': 3.0,  # Filter bad ESPNBet data
-        'min_spread': 2.5,
-        'high_confidence_p_over': 0.65,
-        'max_edge_low_variance': 2.0,
-        'tier_b': None,
+    "REBOUNDS": {
+        "enabled": True,
+        "use_hybrid_filter": True,
+        "min_probability": 0.58,
+        "min_edge_points": 1.0,
+        "min_line": 3.0,  # Filter bad ESPNBet data
+        "min_spread": 2.5,
+        "high_confidence_p_over": 0.65,
+        "max_edge_low_variance": 2.0,
+        "tier_b": None,
     },
-    'ASSISTS': {'enabled': False},
-    'THREES': {'enabled': False},
+    "ASSISTS": {"enabled": False},
+    "THREES": {"enabled": False},
 }
 
 
@@ -391,8 +415,14 @@ class LineOptimizer:
         if not self.conn:
             self.conn = psycopg2.connect(**DB_INTELLIGENCE)
 
-    def get_all_book_lines(self, player_name: str, game_date: str, stat_type: str,
-                           opponent_team: str = None, is_home: bool = None) -> Optional[pd.DataFrame]:
+    def get_all_book_lines(
+        self,
+        player_name: str,
+        game_date: str,
+        stat_type: str,
+        opponent_team: str = None,
+        is_home: bool = None,
+    ) -> Optional[pd.DataFrame]:
         """
         Query all available book lines for a player/game/stat.
 
@@ -460,10 +490,17 @@ class LineOptimizer:
             logger.error(f"Error querying book lines: {e}")
             return None
 
-    def optimize_line(self, player_name: str, game_date: str, stat_type: str,
-                     prediction: float, p_over: float,
-                     opponent_team: str = None, is_home: bool = None,
-                     underdog_only: bool = None) -> Optional[Dict]:
+    def optimize_line(
+        self,
+        player_name: str,
+        game_date: str,
+        stat_type: str,
+        prediction: float,
+        p_over: float,
+        opponent_team: str = None,
+        is_home: bool = None,
+        underdog_only: bool = None,
+    ) -> Optional[Dict]:
         """
         Find best book/line to bet based on model prediction and line shopping.
 
@@ -494,24 +531,26 @@ class LineOptimizer:
             Or None if no actionable bet
         """
         # Check if market is enabled
-        if stat_type not in PRODUCTION_CONFIG or not PRODUCTION_CONFIG[stat_type]['enabled']:
+        if stat_type not in PRODUCTION_CONFIG or not PRODUCTION_CONFIG[stat_type]["enabled"]:
             return None
 
         # Get all book lines (filtered by matchup to match main query grouping)
-        lines_df = self.get_all_book_lines(player_name, game_date, stat_type, opponent_team, is_home)
+        lines_df = self.get_all_book_lines(
+            player_name, game_date, stat_type, opponent_team, is_home
+        )
 
         if lines_df is None or len(lines_df) == 0:
             return None
 
         # Calculate metrics
-        softest_line = lines_df['over_line'].min()
-        hardest_line = lines_df['over_line'].max()
-        consensus_line = lines_df['over_line'].mean()
+        softest_line = lines_df["over_line"].min()
+        hardest_line = lines_df["over_line"].max()
+        consensus_line = lines_df["over_line"].mean()
         line_spread = hardest_line - softest_line
         num_books = len(lines_df)
 
         # Get top 3 softest lines (sorted ascending)
-        top_3_lines = lines_df.nsmallest(min(3, len(lines_df)), 'over_line')
+        top_3_lines = lines_df.nsmallest(min(3, len(lines_df)), "over_line")
 
         # =============================================================================
         # UNDERDOG-ONLY MODE CHECK (Jan 2, 2026) - POINTS ONLY
@@ -520,15 +559,15 @@ class LineOptimizer:
         # =============================================================================
         use_underdog_only = underdog_only if underdog_only is not None else UNDERDOG_ONLY_MODE
         underdog_cfg = UNDERDOG_CONFIG.get(stat_type, {})
-        market_underdog_enabled = underdog_cfg.get('enabled', False)
+        market_underdog_enabled = underdog_cfg.get("enabled", False)
 
         # Only apply underdog filter if: global flag is on AND this market has it enabled
         if use_underdog_only and market_underdog_enabled:
-            underdog_names = underdog_cfg.get('underdog_names', {'underdog', 'Underdog'})
-            min_spread_for_underdog = underdog_cfg.get('min_spread', 1.5)
+            underdog_names = underdog_cfg.get("underdog_names", {"underdog", "Underdog"})
+            min_spread_for_underdog = underdog_cfg.get("min_spread", 1.5)
 
             # Check if softest book is Underdog
-            softest_book_name = lines_df.sort_values('over_line').iloc[0]['book_name']
+            softest_book_name = lines_df.sort_values("over_line").iloc[0]["book_name"]
             is_underdog_softest = softest_book_name in underdog_names
 
             if not is_underdog_softest:
@@ -558,16 +597,16 @@ class LineOptimizer:
         blacklist = BLACKLISTED_BOOKS.get(stat_type, set())
 
         # Also exclude pseudo-books that aren't real sportsbooks
-        pseudo_books = {'consensus', 'Consensus', 'average', 'Average'}
+        pseudo_books = {"consensus", "Consensus", "average", "Average"}
         blacklist = blacklist | pseudo_books
 
         # Find first non-blacklisted book from softest to hardest
         best_book = None
         best_line = None
-        for idx, row in lines_df.sort_values('over_line').iterrows():
-            if row['book_name'] not in blacklist:
-                best_book = row['book_name']
-                best_line = row['over_line']
+        for _idx, row in lines_df.sort_values("over_line").iterrows():
+            if row["book_name"] not in blacklist:
+                best_book = row["book_name"]
+                best_line = row["over_line"]
                 break
 
         # If all books are blacklisted, skip this prop
@@ -576,7 +615,7 @@ class LineOptimizer:
             return None
 
         # Log if we skipped a blacklisted book
-        softest_book = lines_df.sort_values('over_line').iloc[0]['book_name']
+        softest_book = lines_df.sort_values("over_line").iloc[0]["book_name"]
         if softest_book in blacklist:
             logger.info(
                 f"Blacklist skip: {player_name} {stat_type} - "
@@ -587,8 +626,8 @@ class LineOptimizer:
         edge = prediction - best_line
 
         # Get game context
-        opponent_team = lines_df['opponent_team'].iloc[0]
-        is_home = lines_df['is_home'].iloc[0]
+        opponent_team = lines_df["opponent_team"].iloc[0]
+        is_home = lines_df["is_home"].iloc[0]
 
         # Apply production filters
         config = PRODUCTION_CONFIG[stat_type]
@@ -600,8 +639,8 @@ class LineOptimizer:
         book_penalty_applied = False
         if best_book in TRAP_BOOKS_WHEN_SOFTEST:
             trap_config = TRAP_BOOKS_WHEN_SOFTEST[best_book]
-            min_spread_required = trap_config['min_spread_required']
-            min_p_over_boost = trap_config['min_p_over_boost']
+            min_spread_required = trap_config["min_spread_required"]
+            min_p_over_boost = trap_config["min_p_over_boost"]
 
             # If spread is too low when a trap book is softest, reject
             if line_spread < min_spread_required:
@@ -620,7 +659,7 @@ class LineOptimizer:
             )
 
         # Clamp edge for low-variance situations (few books, tight spread)
-        clamp_edge = config.get('max_edge_low_variance')
+        clamp_edge = config.get("max_edge_low_variance")
         if clamp_edge and num_books <= 3 and line_spread < 1.0 and edge > clamp_edge:
             logger.debug(
                 f"Clamping edge for low-variance prop: {player_name} {stat_type} "
@@ -645,14 +684,14 @@ class LineOptimizer:
         is_star_player = player_name in STAR_PLAYERS
         star_config = STAR_TIER_CONFIG.get(stat_type, {})
 
-        if is_star_player and star_config.get('enabled', False):
-            star_min_p_over = star_config.get('min_p_over', 0.55)
-            star_max_p_over = star_config.get('max_p_over', 1.0)  # ★ NEW: max_p_over cap
-            star_min_spread = star_config.get('min_spread', 1.0)
-            star_min_line = star_config.get('min_line', 0)  # ★ NEW: min_line support
-            star_max_line = star_config.get('max_line', 999)
-            star_min_edge = star_config.get('min_edge', 0.25)
-            star_avoid_books = star_config.get('avoid_books_softest', set())
+        if is_star_player and star_config.get("enabled", False):
+            star_min_p_over = star_config.get("min_p_over", 0.55)
+            star_max_p_over = star_config.get("max_p_over", 1.0)  # ★ NEW: max_p_over cap
+            star_min_spread = star_config.get("min_spread", 1.0)
+            star_min_line = star_config.get("min_line", 0)  # ★ NEW: min_line support
+            star_max_line = star_config.get("max_line", 999)
+            star_min_edge = star_config.get("min_edge", 0.25)
+            star_avoid_books = star_config.get("avoid_books_softest", set())
 
             # Star tier gates (with max_p_over cap)
             star_prob_gate = p_over >= star_min_p_over and p_over <= star_max_p_over  # ★ UPDATED
@@ -661,9 +700,15 @@ class LineOptimizer:
             star_edge_gate = edge >= star_min_edge
             star_book_gate = best_book.lower() not in {b.lower() for b in star_avoid_books}
 
-            if star_prob_gate and star_spread_gate and star_line_gate and star_edge_gate and star_book_gate:
+            if (
+                star_prob_gate
+                and star_spread_gate
+                and star_line_gate
+                and star_edge_gate
+                and star_book_gate
+            ):
                 passes_filter = True
-                filter_tier = 'star_tier'
+                filter_tier = "star_tier"
                 logger.info(
                     f"STAR TIER pass: {player_name} {stat_type} - "
                     f"p_over {p_over:.3f} / edge {edge:.2f} / spread {line_spread:.1f} / line {best_line:.1f}"
@@ -675,7 +720,9 @@ class LineOptimizer:
                     if p_over < star_min_p_over:
                         fail_reasons.append(f"p_over {p_over:.3f} < {star_min_p_over}")
                     else:
-                        fail_reasons.append(f"p_over {p_over:.3f} > {star_max_p_over} (overconfident)")
+                        fail_reasons.append(
+                            f"p_over {p_over:.3f} > {star_max_p_over} (overconfident)"
+                        )
                 if not star_spread_gate:
                     fail_reasons.append(f"spread {line_spread:.1f} < {star_min_spread}")
                 if not star_line_gate:
@@ -693,37 +740,47 @@ class LineOptimizer:
 
         # Get tier config for this market (fallback if star tier didn't pass)
         tier_config = TIER_CONFIG.get(stat_type, {})
-        tiers = tier_config.get('tiers', {})
+        tiers = tier_config.get("tiers", {})
 
         # Common gates (apply to all tiers)
-        min_prob = tier_config.get('min_probability', config.get('min_probability', 0.58))
+        min_prob = tier_config.get("min_probability", config.get("min_probability", 0.58))
         probability_gate = p_over >= min_prob
 
-        min_line_val = tier_config.get('min_line', config.get('min_line', 0))
-        max_line_val = tier_config.get('max_line', config.get('max_line', 999))
+        min_line_val = tier_config.get("min_line", config.get("min_line", 0))
+        max_line_val = tier_config.get("max_line", config.get("max_line", 999))
         line_gate = (best_line >= min_line_val) and (best_line < max_line_val)
 
-        max_edge_val = tier_config.get('max_edge_points', config.get('max_edge_points', 999))
+        max_edge_val = tier_config.get("max_edge_points", config.get("max_edge_points", 999))
         edge_cap_gate = edge < max_edge_val
 
-        # Check tiers (X and V3 for POINTS, A for REBOUNDS)
+        # Calculate edge_pct for META tier (Jan 29, 2026)
+        # edge_pct = (consensus_line - softest_line) / softest_line * 100
+        edge_pct = ((consensus_line - best_line) / best_line * 100) if best_line > 0 else 0
+
+        # Check tiers (META first for REBOUNDS, then V3/X for POINTS, A as fallback)
         # Skip if star tier already passed
-        for tier_name in ['V3', 'X', 'A']:  # V3=new model (check first), X=legacy POINTS, A=REBOUNDS
+        for tier_name in [
+            "META",  # REBOUNDS META tier (70.6% WR) - check first
+            "V3",
+            "X",
+            "A",
+        ]:  # META=REBOUNDS meta, V3=new model, X=legacy POINTS, A=fallback
             if passes_filter:  # Star tier already passed
                 break
             tier_cfg = tiers.get(tier_name)
             if not tier_cfg:
                 continue
 
-            tier_min_spread = tier_cfg.get('min_spread', 2.5)
-            tier_min_edge = tier_cfg.get('min_edge_points', 1.5)
-            tier_min_p_over = tier_cfg.get('min_p_over', 0.58)
-            tier_require_pos_edge = tier_cfg.get('require_positive_edge', True)
-            tier_require_both = tier_cfg.get('require_both', False)  # AND vs OR logic
+            tier_min_spread = tier_cfg.get("min_spread", 2.5)
+            tier_min_edge = tier_cfg.get("min_edge_points", 1.5)
+            tier_min_edge_pct = tier_cfg.get("min_edge_pct", 0)  # NEW: edge_pct threshold
+            tier_min_p_over = tier_cfg.get("min_p_over", 0.58)
+            tier_require_pos_edge = tier_cfg.get("require_positive_edge", True)
+            tier_require_both = tier_cfg.get("require_both", False)  # AND vs OR logic
 
             # Apply book-aware penalty to p_over threshold when trap book is softest
             if book_penalty_applied and best_book in TRAP_BOOKS_WHEN_SOFTEST:
-                p_over_boost = TRAP_BOOKS_WHEN_SOFTEST[best_book]['min_p_over_boost']
+                p_over_boost = TRAP_BOOKS_WHEN_SOFTEST[best_book]["min_p_over_boost"]
                 tier_min_p_over += p_over_boost
 
             # Probability gate (tier-specific)
@@ -732,11 +789,17 @@ class LineOptimizer:
             # Spread/edge gate
             spread_gate = line_spread >= tier_min_spread
             edge_gate = edge >= tier_min_edge
+            edge_pct_gate = edge_pct >= tier_min_edge_pct  # NEW: edge_pct gate
 
             # Value gate: depends on require_both setting
             if tier_require_both:
-                # AND logic: both spread AND edge must pass (stricter, for Tier B)
-                value_gate = spread_gate and edge_gate
+                # AND logic: spread AND (edge OR edge_pct) must pass
+                if tier_min_edge_pct > 0:
+                    # META tier: spread AND edge_pct required
+                    value_gate = spread_gate and edge_pct_gate
+                else:
+                    # Legacy: spread AND edge_points required
+                    value_gate = spread_gate and edge_gate
             else:
                 # OR logic: spread OR edge must pass (original, for Tier A)
                 value_gate = edge_gate or spread_gate
@@ -750,7 +813,7 @@ class LineOptimizer:
                 filter_tier = tier_name
                 logger.debug(
                     f"Tier-{tier_name} pass: {player_name} {stat_type} - "
-                    f"p_over {p_over:.3f} / edge {edge:.2f} / spread {line_spread:.1f}"
+                    f"p_over {p_over:.3f} / edge {edge:.2f} / edge_pct {edge_pct:.1f}% / spread {line_spread:.1f}"
                 )
                 break  # Use highest tier that passes
 
@@ -773,7 +836,7 @@ class LineOptimizer:
             else:
                 logger.debug(
                     f"Filtered (all tiers): {player_name} {stat_type} - "
-                    f"p_over {p_over:.3f} / edge {edge:.2f} / spread {line_spread:.1f}"
+                    f"p_over {p_over:.3f} / edge {edge:.2f} / edge_pct {edge_pct:.1f}% / spread {line_spread:.1f}"
                 )
 
         # Return None if filtered
@@ -789,38 +852,41 @@ class LineOptimizer:
 
         # Determine confidence based on hybrid filter metrics
         if p_over >= 0.70 and edge >= 3.0:
-            confidence = 'HIGH'  # Strong model confidence + large edge
+            confidence = "HIGH"  # Strong model confidence + large edge
         elif p_over >= 0.60 and edge >= 2.0:
-            confidence = 'MEDIUM'  # Good confidence + decent edge
+            confidence = "MEDIUM"  # Good confidence + decent edge
         elif line_spread >= 2.5:
-            confidence = 'MEDIUM'  # High line spread (book disagreement)
+            confidence = "MEDIUM"  # High line spread (book disagreement)
         elif edge >= 3.0:
-            confidence = 'MEDIUM'
+            confidence = "MEDIUM"
         else:
-            confidence = 'STANDARD'
+            confidence = "STANDARD"
 
-        if filter_tier == 'tier_b' and confidence == 'MEDIUM':
-            confidence = 'STANDARD'  # Tier B picks carry slightly less conviction
+        if filter_tier == "tier_b" and confidence == "MEDIUM":
+            confidence = "STANDARD"  # Tier B picks carry slightly less conviction
 
         # Build top 3 lines with individual edges
         top_lines = []
-        for idx, row in top_3_lines.iterrows():
-            line_edge = prediction - row['over_line']
-            top_lines.append({
-                'book': row['book_name'],
-                'line': float(row['over_line']),
-                'edge': float(line_edge),
-                'edge_pct': (line_edge / row['over_line'] * 100) if row['over_line'] > 0 else 0
-            })
+        for _idx, row in top_3_lines.iterrows():
+            line_edge = prediction - row["over_line"]
+            top_lines.append(
+                {
+                    "book": row["book_name"],
+                    "line": float(row["over_line"]),
+                    "edge": float(line_edge),
+                    "edge_pct": (line_edge / row["over_line"] * 100) if row["over_line"] > 0 else 0,
+                }
+            )
 
         # Calculate consensus offset (how far softest line is from consensus)
         consensus_offset = best_line - consensus_line
 
         # Group books by line value for line range display
         from collections import defaultdict
+
         line_groups = defaultdict(list)
-        for idx, row in lines_df.iterrows():
-            line_groups[float(row['over_line'])].append(row['book_name'])
+        for _idx, row in lines_df.iterrows():
+            line_groups[float(row["over_line"])].append(row["book_name"])
 
         # Sort lines (softest to hardest)
         sorted_lines = sorted(line_groups.keys())
@@ -830,13 +896,15 @@ class LineOptimizer:
         for line_value in sorted_lines:
             books = line_groups[line_value]
             line_edge = prediction - line_value
-            line_distribution.append({
-                'line': line_value,
-                'books': books,
-                'count': len(books),
-                'edge': float(line_edge),
-                'edge_pct': (line_edge / line_value * 100) if line_value > 0 else 0
-            })
+            line_distribution.append(
+                {
+                    "line": line_value,
+                    "books": books,
+                    "count": len(books),
+                    "edge": float(line_edge),
+                    "edge_pct": (line_edge / line_value * 100) if line_value > 0 else 0,
+                }
+            )
 
         # Determine if softest book is considered reliable or trap
         is_trap_book = best_book in TRAP_BOOKS_WHEN_SOFTEST
@@ -846,31 +914,39 @@ class LineOptimizer:
         use_underdog_only = underdog_only if underdog_only is not None else UNDERDOG_ONLY_MODE
 
         return {
-            'best_book': best_book,
-            'best_line': float(best_line),
-            'edge': float(edge),
-            'consensus_line': float(consensus_line),
-            'consensus_offset': float(consensus_offset),
-            'line_spread': float(line_spread),
-            'num_books': int(num_books),
-            'confidence': confidence,
-            'opponent_team': opponent_team,
-            'is_home': bool(is_home),
-            'p_over': float(p_over),
-            'filter_tier': filter_tier or 'unknown',
-            'top_3_lines': top_lines,  # Top 3 softest lines with individual edges
-            'line_distribution': line_distribution,  # All lines grouped by value
-            'book_aware_filter': {
-                'is_trap_book': is_trap_book,
-                'is_reliable_book': is_reliable_book,
-                'penalty_applied': book_penalty_applied,
+            "best_book": best_book,
+            "best_line": float(best_line),
+            "edge": float(edge),
+            "line_edge_pct": float(edge_pct),  # NEW: edge_pct for META tier
+            "consensus_line": float(consensus_line),
+            "consensus_offset": float(consensus_offset),
+            "line_spread": float(line_spread),
+            "num_books": int(num_books),
+            "confidence": confidence,
+            "opponent_team": opponent_team,
+            "is_home": bool(is_home),
+            "p_over": float(p_over),
+            "filter_tier": filter_tier or "unknown",
+            "top_3_lines": top_lines,  # Top 3 softest lines with individual edges
+            "line_distribution": line_distribution,  # All lines grouped by value
+            "book_aware_filter": {
+                "is_trap_book": is_trap_book,
+                "is_reliable_book": is_reliable_book,
+                "penalty_applied": book_penalty_applied,
             },
-            'underdog_only_mode': use_underdog_only,
+            "underdog_only_mode": use_underdog_only,
         }
 
-    def optimize_line_v3(self, player_name: str, game_date: str, stat_type: str,
-                         prediction: float, p_over: float,
-                         opponent_team: str = None, is_home: bool = None) -> Optional[Dict]:
+    def optimize_line_v3(
+        self,
+        player_name: str,
+        game_date: str,
+        stat_type: str,
+        prediction: float,
+        p_over: float,
+        opponent_team: str = None,
+        is_home: bool = None,
+    ) -> Optional[Dict]:
         """
         V3 line optimizer with UNDER betting support.
 
@@ -900,62 +976,66 @@ class LineOptimizer:
         """
         # Check if V3 is enabled for this market
         v3_config = V3_TIER_CONFIG.get(stat_type, {})
-        if not v3_config.get('enabled', False):
+        if not v3_config.get("enabled", False):
             return None
 
-        tiers = v3_config.get('tiers', {})
+        tiers = v3_config.get("tiers", {})
         if not tiers:
             return None
 
         # Get all book lines
-        lines_df = self.get_all_book_lines(player_name, game_date, stat_type, opponent_team, is_home)
+        lines_df = self.get_all_book_lines(
+            player_name, game_date, stat_type, opponent_team, is_home
+        )
 
         if lines_df is None or len(lines_df) == 0:
             return None
 
         # Calculate metrics
-        softest_line = lines_df['over_line'].min()
-        hardest_line = lines_df['over_line'].max()
-        consensus_line = lines_df['over_line'].mean()
+        softest_line = lines_df["over_line"].min()
+        hardest_line = lines_df["over_line"].max()
+        consensus_line = lines_df["over_line"].mean()
         line_spread = hardest_line - softest_line
         num_books = len(lines_df)
 
         # Exclude pseudo-books from best book selection
-        pseudo_books = {'consensus', 'Consensus', 'average', 'Average'}
-        valid_lines_df = lines_df[~lines_df['book_name'].isin(pseudo_books)]
+        pseudo_books = {"consensus", "Consensus", "average", "Average"}
+        valid_lines_df = lines_df[~lines_df["book_name"].isin(pseudo_books)]
 
         if len(valid_lines_df) == 0:
             return None
 
         # ★ REGIME SHIFT FIX: Exclude blacklisted books for OVER picks
         # BetRivers: 0W/7L = 0% WR in January for OVER picks
-        avoid_books_over = v3_config.get('avoid_books_over', set())
+        avoid_books_over = v3_config.get("avoid_books_over", set())
         if avoid_books_over:
             # Create filtered df for OVER direction (case-insensitive)
             avoid_books_lower = {b.lower() for b in avoid_books_over}
             valid_lines_df_over = valid_lines_df[
-                ~valid_lines_df['book_name'].str.lower().isin(avoid_books_lower)
+                ~valid_lines_df["book_name"].str.lower().isin(avoid_books_lower)
             ]
             # Recalculate softest_line for OVER using filtered books
             if len(valid_lines_df_over) > 0:
-                softest_line = valid_lines_df_over['over_line'].min()
+                softest_line = valid_lines_df_over["over_line"].min()
         else:
             valid_lines_df_over = valid_lines_df
 
         if len(valid_lines_df_over) == 0:
-            logger.debug(f"V3 filter REJECT: {player_name} {stat_type} - all OVER books blacklisted")
+            logger.debug(
+                f"V3 filter REJECT: {player_name} {stat_type} - all OVER books blacklisted"
+            )
             return None
 
         # ★ NEW: Also exclude blacklisted books for UNDER picks (betrivers)
-        avoid_books_under = v3_config.get('avoid_books_under', set())
+        avoid_books_under = v3_config.get("avoid_books_under", set())
         if avoid_books_under:
             avoid_books_under_lower = {b.lower() for b in avoid_books_under}
             valid_lines_df_under = valid_lines_df[
-                ~valid_lines_df['book_name'].str.lower().isin(avoid_books_under_lower)
+                ~valid_lines_df["book_name"].str.lower().isin(avoid_books_under_lower)
             ]
             # Recalculate hardest_line for UNDER using filtered books
             if len(valid_lines_df_under) > 0:
-                hardest_line = valid_lines_df_under['over_line'].max()
+                hardest_line = valid_lines_df_under["over_line"].max()
         else:
             valid_lines_df_under = valid_lines_df
 
@@ -965,7 +1045,7 @@ class LineOptimizer:
         # Determine direction based on probability
         # If p_over is high (>= 0.50), model prefers OVER
         # If p_over is low (< 0.50), model prefers UNDER (which means p_under > 0.50)
-        direction = 'OVER' if p_over >= 0.50 else 'UNDER'
+        direction = "OVER" if p_over >= 0.50 else "UNDER"
 
         # Try each V3 tier to find a match
         # Order: Highest WR tiers first (from Jan 16 backtest)
@@ -974,7 +1054,7 @@ class LineOptimizer:
         # JANUARY-OPTIMIZED tier order (OVER only - UNDER disabled at 50% WR)
         # UPDATED Jan 28, 2026: Disabled JAN_PRIME_OVER (40% WR) and JAN_LINE_OVER (58% WR)
         tier_order = [
-            'JAN_CONFIDENT_OVER',  # 100% WR (2W/0L) - p 0.75-0.85 + edge >= 4 - ONLY REMAINING
+            "JAN_CONFIDENT_OVER",  # 100% WR (2W/0L) - p 0.75-0.85 + edge >= 4 - ONLY REMAINING
         ]
 
         matched_tier = None
@@ -989,38 +1069,38 @@ class LineOptimizer:
             if not tier_cfg:
                 continue
 
-            tier_direction = tier_cfg.get('direction', 'OVER')
+            tier_direction = tier_cfg.get("direction", "OVER")
 
             # Check probability threshold (min AND max for OVER tiers)
-            if tier_direction == 'OVER':
-                min_prob = tier_cfg.get('min_p_over', 0.50)
-                max_prob = tier_cfg.get('max_p_over', 1.0)  # ★ NEW: max_p_over cap
+            if tier_direction == "OVER":
+                min_prob = tier_cfg.get("min_p_over", 0.50)
+                max_prob = tier_cfg.get("max_p_over", 1.0)  # ★ NEW: max_p_over cap
                 if p_over < min_prob or p_over > max_prob:
                     continue
             else:  # UNDER
-                min_p_under = tier_cfg.get('min_p_under', 0.50)
+                min_p_under = tier_cfg.get("min_p_under", 0.50)
                 if p_under < min_p_under:
                     continue
 
             # Check line constraints
-            min_line = tier_cfg.get('min_line', 0)
-            max_line = tier_cfg.get('max_line', 999)
+            min_line = tier_cfg.get("min_line", 0)
+            max_line = tier_cfg.get("max_line", 999)
 
             # For OVER: check against softest line
             # For UNDER: check against hardest line
-            check_line = softest_line if tier_direction == 'OVER' else hardest_line
+            check_line = softest_line if tier_direction == "OVER" else hardest_line
             if check_line < min_line or check_line > max_line:
                 continue
 
             # Check spread constraint (if specified)
-            min_spread = tier_cfg.get('min_spread', 0)
+            min_spread = tier_cfg.get("min_spread", 0)
             if line_spread < min_spread:
                 continue
 
             # ★ NEW: Check edge constraint (if specified)
-            min_edge = tier_cfg.get('min_edge', 0)
+            min_edge = tier_cfg.get("min_edge", 0)
             if min_edge > 0:
-                check_edge = edge_over if tier_direction == 'OVER' else (hardest_line - prediction)
+                check_edge = edge_over if tier_direction == "OVER" else (hardest_line - prediction)
                 if check_edge < min_edge:
                     continue
 
@@ -1038,24 +1118,28 @@ class LineOptimizer:
             is_star_player = player_name in STAR_PLAYERS
             star_config = STAR_TIER_CONFIG.get(stat_type, {})
 
-            if is_star_player and star_config.get('enabled', False):
-                star_min_p_over = star_config.get('min_p_over', 0.70)
-                star_max_p_over = star_config.get('max_p_over', 1.0)
-                star_min_spread = star_config.get('min_spread', 2.0)
-                star_max_line = star_config.get('max_line', 29.0)
-                star_min_line = star_config.get('min_line', 0)
-                star_min_edge = star_config.get('min_edge', 0.5)
-                star_avoid_books = star_config.get('avoid_books_softest', set())
+            if is_star_player and star_config.get("enabled", False):
+                star_min_p_over = star_config.get("min_p_over", 0.70)
+                star_max_p_over = star_config.get("max_p_over", 1.0)
+                star_min_spread = star_config.get("min_spread", 2.0)
+                star_max_line = star_config.get("max_line", 29.0)
+                star_min_line = star_config.get("min_line", 0)
+                star_min_edge = star_config.get("min_edge", 0.5)
+                star_avoid_books = star_config.get("avoid_books_softest", set())
 
                 # ★ REGIME SHIFT FIX: Use valid_lines_df_over (excludes blacklisted books)
                 # This ensures STAR tier uses same filtered book set as V3 tiers
-                edge = prediction - softest_line  # softest_line already calculated from filtered set
+                edge = (
+                    prediction - softest_line
+                )  # softest_line already calculated from filtered set
 
                 # Get softest book from FILTERED set (not all books)
                 if len(valid_lines_df_over) > 0:
-                    softest_book = valid_lines_df_over.loc[valid_lines_df_over['over_line'].idxmin()]['book_name']
+                    softest_book = valid_lines_df_over.loc[
+                        valid_lines_df_over["over_line"].idxmin()
+                    ]["book_name"]
                 else:
-                    softest_book = ''  # Will fail book gate
+                    softest_book = ""  # Will fail book gate
 
                 star_prob_gate = p_over >= star_min_p_over and p_over <= star_max_p_over
                 star_spread_gate = line_spread >= star_min_spread
@@ -1063,9 +1147,15 @@ class LineOptimizer:
                 star_edge_gate = edge >= star_min_edge
                 star_book_gate = softest_book.lower() not in {b.lower() for b in star_avoid_books}
 
-                if star_prob_gate and star_spread_gate and star_line_gate and star_edge_gate and star_book_gate:
-                    matched_tier = 'star_tier'
-                    matched_direction = 'OVER'
+                if (
+                    star_prob_gate
+                    and star_spread_gate
+                    and star_line_gate
+                    and star_edge_gate
+                    and star_book_gate
+                ):
+                    matched_tier = "star_tier"
+                    matched_direction = "OVER"
                     logger.info(
                         f"STAR PASS: {player_name} {stat_type} - "
                         f"p_over {p_over:.3f} / edge {edge:.2f} / spread {line_spread:.1f} / line {softest_line:.1f}"
@@ -1079,82 +1169,89 @@ class LineOptimizer:
             return None
 
         # Get best line and book based on direction
-        if matched_direction == 'OVER':
+        if matched_direction == "OVER":
             # For OVER: softest (lowest) line is best
             # ★ Use valid_lines_df_over (excludes blacklisted books like BetRivers)
-            best_row = valid_lines_df_over.loc[valid_lines_df_over['over_line'].idxmin()]
-            best_book = best_row['book_name']
-            best_line = float(best_row['over_line'])
+            best_row = valid_lines_df_over.loc[valid_lines_df_over["over_line"].idxmin()]
+            best_book = best_row["book_name"]
+            best_line = float(best_row["over_line"])
             edge = prediction - best_line
         else:  # UNDER
             # For UNDER: hardest (highest) line is best
             # ★ Use valid_lines_df_under (excludes blacklisted books like betrivers)
             if len(valid_lines_df_under) == 0:
-                logger.debug(f"V3 filter REJECT: {player_name} {stat_type} - all UNDER books blacklisted")
+                logger.debug(
+                    f"V3 filter REJECT: {player_name} {stat_type} - all UNDER books blacklisted"
+                )
                 return None
-            best_row = valid_lines_df_under.loc[valid_lines_df_under['over_line'].idxmax()]
-            best_book = best_row['book_name']
-            best_line = float(best_row['over_line'])
+            best_row = valid_lines_df_under.loc[valid_lines_df_under["over_line"].idxmax()]
+            best_book = best_row["book_name"]
+            best_line = float(best_row["over_line"])
             edge = best_line - prediction
 
         # Get expected win rate for this tier
-        if matched_tier == 'STAR_V3':
+        if matched_tier == "STAR_V3":
             expected_wr = 0.833  # 83.3% WR from backtest
-            confidence = 'HIGH'
+            confidence = "HIGH"
         elif matched_tier in tiers:
-            expected_wr = tiers[matched_tier].get('expected_wr', 0.60)
-            confidence = 'HIGH' if 'ELITE' in matched_tier else 'MEDIUM'
+            expected_wr = tiers[matched_tier].get("expected_wr", 0.60)
+            confidence = "HIGH" if "ELITE" in matched_tier else "MEDIUM"
         else:
             expected_wr = 0.60
-            confidence = 'MEDIUM'
+            confidence = "MEDIUM"
 
         # Get opponent/home from data
-        opponent_team = lines_df['opponent_team'].iloc[0]
-        is_home = lines_df['is_home'].iloc[0]
+        opponent_team = lines_df["opponent_team"].iloc[0]
+        is_home = lines_df["is_home"].iloc[0]
 
         # Build top 3 lines with edges
-        if matched_direction == 'OVER':
+        if matched_direction == "OVER":
             # ★ Use valid_lines_df_over (excludes blacklisted books)
-            top_3 = valid_lines_df_over.nsmallest(min(3, len(valid_lines_df_over)), 'over_line')
+            top_3 = valid_lines_df_over.nsmallest(min(3, len(valid_lines_df_over)), "over_line")
         else:
             # ★ Use valid_lines_df_under for UNDER (excludes blacklisted books)
-            top_3 = valid_lines_df_under.nlargest(min(3, len(valid_lines_df_under)), 'over_line')
+            top_3 = valid_lines_df_under.nlargest(min(3, len(valid_lines_df_under)), "over_line")
 
         top_lines = []
-        for idx, row in top_3.iterrows():
-            if matched_direction == 'OVER':
-                line_edge = prediction - row['over_line']
+        for _idx, row in top_3.iterrows():
+            if matched_direction == "OVER":
+                line_edge = prediction - row["over_line"]
             else:
-                line_edge = row['over_line'] - prediction
-            top_lines.append({
-                'book': row['book_name'],
-                'line': float(row['over_line']),
-                'edge': float(line_edge),
-            })
+                line_edge = row["over_line"] - prediction
+            top_lines.append(
+                {
+                    "book": row["book_name"],
+                    "line": float(row["over_line"]),
+                    "edge": float(line_edge),
+                }
+            )
 
         # Calculate consensus offset (how far best line is from consensus)
         consensus_offset = best_line - consensus_line
 
         # Build line distribution for display (group books by line value)
         from collections import defaultdict
+
         line_groups = defaultdict(list)
-        for idx, row in valid_lines_df.iterrows():
-            line_groups[float(row['over_line'])].append(row['book_name'])
+        for _idx, row in valid_lines_df.iterrows():
+            line_groups[float(row["over_line"])].append(row["book_name"])
 
         line_distribution = []
         for line_value in sorted(line_groups.keys()):
             books = line_groups[line_value]
-            if matched_direction == 'OVER':
+            if matched_direction == "OVER":
                 line_edge = prediction - line_value
             else:
                 line_edge = line_value - prediction
-            line_distribution.append({
-                'line': line_value,
-                'books': books,
-                'count': len(books),
-                'edge': float(line_edge),
-                'edge_pct': (line_edge / line_value * 100) if line_value > 0 else 0
-            })
+            line_distribution.append(
+                {
+                    "line": line_value,
+                    "books": books,
+                    "count": len(books),
+                    "edge": float(line_edge),
+                    "edge_pct": (line_edge / line_value * 100) if line_value > 0 else 0,
+                }
+            )
 
         logger.info(
             f"V3 {matched_tier} PASS: {player_name} {stat_type} {matched_direction} - "
@@ -1162,24 +1259,24 @@ class LineOptimizer:
         )
 
         return {
-            'direction': matched_direction,
-            'best_book': best_book,
-            'best_line': best_line,
-            'edge': float(edge),
-            'consensus_line': float(consensus_line),
-            'consensus_offset': float(consensus_offset),
-            'line_spread': float(line_spread),
-            'num_books': int(num_books),
-            'confidence': confidence,
-            'opponent_team': opponent_team,
-            'is_home': bool(is_home),
-            'p_over': float(p_over),
-            'p_under': float(p_under),
-            'filter_tier': matched_tier,
-            'expected_wr': expected_wr,
-            'top_3_lines': top_lines,
-            'line_distribution': line_distribution,
-            'model_version': 'v3',
+            "direction": matched_direction,
+            "best_book": best_book,
+            "best_line": best_line,
+            "edge": float(edge),
+            "consensus_line": float(consensus_line),
+            "consensus_offset": float(consensus_offset),
+            "line_spread": float(line_spread),
+            "num_books": int(num_books),
+            "confidence": confidence,
+            "opponent_team": opponent_team,
+            "is_home": bool(is_home),
+            "p_over": float(p_over),
+            "p_under": float(p_under),
+            "filter_tier": matched_tier,
+            "expected_wr": expected_wr,
+            "top_3_lines": top_lines,
+            "line_distribution": line_distribution,
+            "model_version": "v3",
         }
 
     # NOTE: apply_odds_api_filter() removed - Odds API filtering is now in
@@ -1197,7 +1294,7 @@ class LineOptimizer:
             self.conn = None
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Test line optimizer
     print("Testing Line Optimizer...")
 
@@ -1205,9 +1302,7 @@ if __name__ == '__main__':
 
     # Test query (will return None if no data for this date)
     result = optimizer.get_all_book_lines(
-        player_name='Luka Doncic',
-        game_date='2025-11-07',
-        stat_type='POINTS'
+        player_name="Luka Doncic", game_date="2025-11-07", stat_type="POINTS"
     )
 
     if result is not None:

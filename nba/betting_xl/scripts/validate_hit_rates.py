@@ -5,24 +5,24 @@ from __future__ import annotations
 
 import argparse
 import json
-import psycopg2
-from pathlib import Path
-from datetime import datetime, timedelta
-from typing import Dict, Any, Iterable, List, Callable, Optional, Tuple
 import os
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
+import psycopg2
 
 DB_PLAYERS = {
-    'host': 'localhost',
-    'port': 5536,
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD'),
-    'database': 'nba_players'
+    "host": "localhost",
+    "port": 5536,
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
+    "database": "nba_players",
 }
 
 STAT_COLUMN_MAP = {
-    'POINTS': 'points',
-    'REBOUNDS': 'rebounds',
+    "POINTS": "points",
+    "REBOUNDS": "rebounds",
 }
 
 
@@ -44,31 +44,33 @@ class HitRateValidator:
             self.conn_players.close()
 
     def _load_predictions(self, game_date: datetime) -> List[Dict[str, Any]]:
-        date_str = game_date.strftime('%Y-%m-%d')
+        date_str = game_date.strftime("%Y-%m-%d")
         candidates = [
             self.predictions_dir / f"xl_picks_{date_str}.json",
             self.predictions_dir / f"xl_picks_{date_str.replace('-', '')}.json",
         ]
         pick_file = next((p for p in candidates if p.exists()), None)
         if not pick_file:
-            raise FileNotFoundError(f"No predictions file for {date_str} (looked for: {candidates})")
+            raise FileNotFoundError(
+                f"No predictions file for {date_str} (looked for: {candidates})"
+            )
 
-        with open(pick_file, 'r') as f:
+        with open(pick_file, "r") as f:
             data = json.load(f)
 
-        picks = data.get('picks', [])
+        picks = data.get("picks", [])
         for pick in picks:
-            pick['game_date'] = data.get('date') or date_str
-            pick['hit_rate_l10'] = self._extract_rate(pick, 'last_10')
-            pick['hit_rate_season'] = self._extract_rate(pick, 'season')
+            pick["game_date"] = data.get("date") or date_str
+            pick["hit_rate_l10"] = self._extract_rate(pick, "last_10")
+            pick["hit_rate_season"] = self._extract_rate(pick, "season")
         return picks
 
     @staticmethod
     def _extract_rate(pick: Dict[str, Any], window: str) -> Optional[float]:
-        rates = pick.get('hit_rates') or {}
+        rates = pick.get("hit_rates") or {}
         entry = rates.get(window)
-        if entry and entry.get('rate') is not None:
-            return float(entry['rate'])
+        if entry and entry.get("rate") is not None:
+            return float(entry["rate"])
         return None
 
     def _get_actual_stats(self, player_name: str, game_date: str) -> Optional[Dict[str, Any]]:
@@ -77,7 +79,7 @@ class HitRateValidator:
             return self.stat_cache[key]
 
         columns_list = sorted(set(STAT_COLUMN_MAP.values()))
-        select_clause = ', '.join([f"pgl.{col}" for col in columns_list])
+        select_clause = ", ".join([f"pgl.{col}" for col in columns_list])
         query = f"""
             SELECT {select_clause}
             FROM player_game_logs pgl
@@ -106,20 +108,20 @@ class HitRateValidator:
     @staticmethod
     def _grade_pick(actual: float, line: float, side: str) -> Tuple[str, float]:
         if actual is None:
-            return ('PENDING', 0.0)
-        if side == 'OVER':
+            return ("PENDING", 0.0)
+        if side == "OVER":
             if actual > line:
-                return ('WIN', 1.0)
+                return ("WIN", 1.0)
             if actual < line:
-                return ('LOSS', -1.1)
-            return ('PUSH', 0.0)
-        if side == 'UNDER':
+                return ("LOSS", -1.1)
+            return ("PUSH", 0.0)
+        if side == "UNDER":
             if actual < line:
-                return ('WIN', 1.0)
+                return ("WIN", 1.0)
             if actual > line:
-                return ('LOSS', -1.1)
-            return ('PUSH', 0.0)
-        return ('PENDING', 0.0)
+                return ("LOSS", -1.1)
+            return ("PUSH", 0.0)
+        return ("PENDING", 0.0)
 
     def collect_picks(self, start: datetime, end: datetime) -> List[Dict[str, Any]]:
         collected: List[Dict[str, Any]] = []
@@ -131,51 +133,62 @@ class HitRateValidator:
                 continue
 
             for pick in picks:
-                stats = self._get_actual_stats(pick['player_name'], pick['game_date'])
+                stats = self._get_actual_stats(pick["player_name"], pick["game_date"])
                 if not stats:
                     continue
-                stat_value = stats.get(pick['stat_type'])
-                result, profit = self._grade_pick(stat_value, pick['best_line'], pick['side'])
-                pick['actual_value'] = stat_value
-                pick['result'] = result
-                pick['profit'] = profit
+                stat_value = stats.get(pick["stat_type"])
+                result, profit = self._grade_pick(stat_value, pick["best_line"], pick["side"])
+                pick["actual_value"] = stat_value
+                pick["result"] = result
+                pick["profit"] = profit
                 collected.append(pick)
 
         return collected
 
 
-def summarize(picks: List[Dict[str, Any]], name: str, selector: Callable[[Dict[str, Any]], bool]) -> Dict[str, Any]:
+def summarize(
+    picks: List[Dict[str, Any]], name: str, selector: Callable[[Dict[str, Any]], bool]
+) -> Dict[str, Any]:
     filtered = [p for p in picks if selector(p)]
-    wins = sum(1 for p in filtered if p['result'] == 'WIN')
-    losses = sum(1 for p in filtered if p['result'] == 'LOSS')
-    pushes = sum(1 for p in filtered if p['result'] == 'PUSH')
+    wins = sum(1 for p in filtered if p["result"] == "WIN")
+    losses = sum(1 for p in filtered if p["result"] == "LOSS")
+    pushes = sum(1 for p in filtered if p["result"] == "PUSH")
     total = len(filtered)
-    profit = sum(p['profit'] for p in filtered)
+    profit = sum(p["profit"] for p in filtered)
     wr = (wins / total * 100) if total else 0.0
     roi = (profit / total * 100) if total else 0.0
     return {
-        'strategy': name,
-        'picks': total,
-        'wins': wins,
-        'losses': losses,
-        'pushes': pushes,
-        'win_rate': wr,
-        'roi': roi,
+        "strategy": name,
+        "picks": total,
+        "wins": wins,
+        "losses": losses,
+        "pushes": pushes,
+        "win_rate": wr,
+        "roi": roi,
     }
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Validate hit-rate gating strategies.')
-    parser.add_argument('--start', required=True, help='Start date (YYYY-MM-DD)')
-    parser.add_argument('--end', required=True, help='End date (YYYY-MM-DD)')
-    parser.add_argument('--predictions-dir', default='predictions', help='Directory with xl_picks_*.json files')
-    parser.add_argument('--tierb-min', type=float, default=0.55, help='Min L10 hit rate required for Tier B picks')
-    parser.add_argument('--global-min', type=float, default=0.35, help='Drop picks below this L10 hit rate regardless of tier')
+    parser = argparse.ArgumentParser(description="Validate hit-rate gating strategies.")
+    parser.add_argument("--start", required=True, help="Start date (YYYY-MM-DD)")
+    parser.add_argument("--end", required=True, help="End date (YYYY-MM-DD)")
+    parser.add_argument(
+        "--predictions-dir", default="predictions", help="Directory with xl_picks_*.json files"
+    )
+    parser.add_argument(
+        "--tierb-min", type=float, default=0.55, help="Min L10 hit rate required for Tier B picks"
+    )
+    parser.add_argument(
+        "--global-min",
+        type=float,
+        default=0.35,
+        help="Drop picks below this L10 hit rate regardless of tier",
+    )
 
     args = parser.parse_args()
 
-    start = datetime.strptime(args.start, '%Y-%m-%d')
-    end = datetime.strptime(args.end, '%Y-%m-%d')
+    start = datetime.strptime(args.start, "%Y-%m-%d")
+    end = datetime.strptime(args.end, "%Y-%m-%d")
     predictions_dir = Path(args.predictions_dir)
 
     validator = HitRateValidator(predictions_dir)
@@ -189,37 +202,40 @@ def main():
         return
 
     strategies = [
-        summarize(all_picks, 'Baseline (current picks)', lambda p: True),
+        summarize(all_picks, "Baseline (current picks)", lambda p: True),
         summarize(
             all_picks,
-            f'Tier-B >= {args.tierb_min:.2f}',
-            lambda p: p['filter_tier'] != 'tier_b' or (p['hit_rate_l10'] is None or p['hit_rate_l10'] >= args.tierb_min)
+            f"Tier-B >= {args.tierb_min:.2f}",
+            lambda p: p["filter_tier"] != "tier_b"
+            or (p["hit_rate_l10"] is None or p["hit_rate_l10"] >= args.tierb_min),
         ),
         summarize(
             all_picks,
-            f'Global min >= {args.global_min:.2f}',
-            lambda p: p['hit_rate_l10'] is None or p['hit_rate_l10'] >= args.global_min
-        )
+            f"Global min >= {args.global_min:.2f}",
+            lambda p: p["hit_rate_l10"] is None or p["hit_rate_l10"] >= args.global_min,
+        ),
     ]
 
     print("\nHit-Rate Validation Results")
     print("=" * 70)
     header = "{:<28} {:>6} {:>6} {:>6} {:>6} {:>8} {:>8}".format(
-        'Strategy', 'Picks', 'Wins', 'Loss', 'Push', 'WR%', 'ROI%'
+        "Strategy", "Picks", "Wins", "Loss", "Push", "WR%", "ROI%"
     )
     print(header)
-    print('-' * len(header))
+    print("-" * len(header))
     for stats in strategies:
-        print("{:<28} {:>6} {:>6} {:>6} {:>6} {:>8.2f} {:>8.2f}".format(
-            stats['strategy'][:28],
-            stats['picks'],
-            stats['wins'],
-            stats['losses'],
-            stats['pushes'],
-            stats['win_rate'],
-            stats['roi'],
-        ))
+        print(
+            "{:<28} {:>6} {:>6} {:>6} {:>6} {:>8.2f} {:>8.2f}".format(
+                stats["strategy"][:28],
+                stats["picks"],
+                stats["wins"],
+                stats["losses"],
+                stats["pushes"],
+                stats["win_rate"],
+                stats["roi"],
+            )
+        )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

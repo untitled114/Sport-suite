@@ -10,21 +10,22 @@ Usage:
     games = api.get_season_games(season="2023-24")
 """
 
-import time
 import logging
-from typing import Optional, Dict, List, Any
+import time
 from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
+
 import pandas as pd
+from nba_api.stats.endpoints.boxscoretraditionalv2 import BoxScoreTraditionalV2
+from nba_api.stats.endpoints.commonplayerinfo import CommonPlayerInfo
+from nba_api.stats.endpoints.leaguedashplayerstats import LeagueDashPlayerStats
+from nba_api.stats.endpoints.leaguegamefinder import LeagueGameFinder
+from nba_api.stats.endpoints.playergamelog import PlayerGameLog
+from nba_api.stats.endpoints.teamgamelog import TeamGameLog
 
 # NBA API imports
 from nba_api.stats.static import players as static_players
 from nba_api.stats.static import teams as static_teams
-from nba_api.stats.endpoints.playergamelog import PlayerGameLog
-from nba_api.stats.endpoints.leaguegamefinder import LeagueGameFinder
-from nba_api.stats.endpoints.commonplayerinfo import CommonPlayerInfo
-from nba_api.stats.endpoints.teamgamelog import TeamGameLog
-from nba_api.stats.endpoints.boxscoretraditionalv2 import BoxScoreTraditionalV2
-from nba_api.stats.endpoints.leaguedashplayerstats import LeagueDashPlayerStats
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -97,7 +98,7 @@ class NBAApiWrapper:
                 return df
 
             except Exception as e:
-                wait_time = 2 ** attempt  # Exponential backoff
+                wait_time = 2**attempt  # Exponential backoff
                 logger.warning(f"API call failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
 
                 if attempt < max_retries - 1:
@@ -111,7 +112,9 @@ class NBAApiWrapper:
 
     # ========== PLAYER METHODS ==========
 
-    def get_all_players(self, season: Optional[str] = None, active_only: bool = True) -> pd.DataFrame:
+    def get_all_players(
+        self, season: Optional[str] = None, active_only: bool = True
+    ) -> pd.DataFrame:
         """
         Get all NBA players
 
@@ -134,7 +137,7 @@ class NBAApiWrapper:
         df = pd.DataFrame(player_list)
 
         if active_only:
-            df = df[df['is_active'] == True]
+            df = df[df["is_active"]]
 
         self._save_to_cache(cache_key, df)
         logger.info(f"Retrieved {len(df)} players")
@@ -162,14 +165,15 @@ class NBAApiWrapper:
             season=season,
             per_mode_detailed="PerGame",
             measure_type_detailed_defense="Advanced",  # Fix: Include advanced stats (USG_PCT)
-            season_type_all_star="Regular Season"
+            season_type_all_star="Regular Season",
         )
 
         self._save_to_cache(cache_key, df)
         return df
 
-    def get_player_game_logs(self, player_id: int, season: str = "2023-24",
-                            season_type: str = "Regular Season") -> pd.DataFrame:
+    def get_player_game_logs(
+        self, player_id: int, season: str = "2023-24", season_type: str = "Regular Season"
+    ) -> pd.DataFrame:
         """
         Get game logs for a specific player
 
@@ -189,10 +193,7 @@ class NBAApiWrapper:
         logger.info(f"Fetching game logs for player {player_id} ({season})")
 
         df = self._api_call_with_retry(
-            PlayerGameLog,
-            player_id=player_id,
-            season=season,
-            season_type_all_star=season_type
+            PlayerGameLog, player_id=player_id, season=season, season_type_all_star=season_type
         )
 
         self._save_to_cache(cache_key, df)
@@ -248,8 +249,9 @@ class NBAApiWrapper:
         logger.info(f"Retrieved {len(df)} teams")
         return df
 
-    def get_team_game_logs(self, team_id: int, season: str = "2023-24",
-                          season_type: str = "Regular Season") -> pd.DataFrame:
+    def get_team_game_logs(
+        self, team_id: int, season: str = "2023-24", season_type: str = "Regular Season"
+    ) -> pd.DataFrame:
         """
         Get game logs for a specific team
 
@@ -269,10 +271,7 @@ class NBAApiWrapper:
         logger.info(f"Fetching team game logs for team {team_id} ({season})")
 
         df = self._api_call_with_retry(
-            TeamGameLog,
-            team_id=team_id,
-            season=season,
-            season_type_all_star=season_type
+            TeamGameLog, team_id=team_id, season=season, season_type_all_star=season_type
         )
 
         self._save_to_cache(cache_key, df)
@@ -280,8 +279,9 @@ class NBAApiWrapper:
 
     # ========== GAME METHODS ==========
 
-    def get_season_games(self, season: str = "2023-24",
-                        season_type: str = "Regular Season") -> pd.DataFrame:
+    def get_season_games(
+        self, season: str = "2023-24", season_type: str = "Regular Season"
+    ) -> pd.DataFrame:
         """
         Get all games for a season
 
@@ -303,7 +303,7 @@ class NBAApiWrapper:
             LeagueGameFinder,
             season_nullable=season,
             season_type_nullable=season_type,
-            league_id_nullable="00"
+            league_id_nullable="00",
         )
 
         self._save_to_cache(cache_key, df)
@@ -327,17 +327,14 @@ class NBAApiWrapper:
 
         logger.info(f"Fetching box score for game {game_id}")
 
-        endpoint = self._api_call_with_retry(
-            BoxScoreTraditionalV2,
-            game_id=game_id
-        )
+        endpoint = self._api_call_with_retry(BoxScoreTraditionalV2, game_id=game_id)
 
         # Box score returns multiple DataFrames
-        data_frames = endpoint.get_data_frames() if hasattr(endpoint, 'get_data_frames') else []
+        data_frames = endpoint.get_data_frames() if hasattr(endpoint, "get_data_frames") else []
 
         result = {
-            'player_stats': data_frames[0] if len(data_frames) > 0 else pd.DataFrame(),
-            'team_stats': data_frames[1] if len(data_frames) > 1 else pd.DataFrame()
+            "player_stats": data_frames[0] if len(data_frames) > 0 else pd.DataFrame(),
+            "team_stats": data_frames[1] if len(data_frames) > 1 else pd.DataFrame(),
         }
 
         self._save_to_cache(cache_key, result)
@@ -352,10 +349,7 @@ class NBAApiWrapper:
 
     def get_cache_stats(self) -> Dict[str, int]:
         """Get cache statistics"""
-        return {
-            'total_entries': len(self.cache),
-            'cache_ttl_seconds': self.cache_ttl
-        }
+        return {"total_entries": len(self.cache), "cache_ttl_seconds": self.cache_ttl}
 
 
 # Convenience functions for quick access

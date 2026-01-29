@@ -13,37 +13,32 @@ Usage:
     enriched_props = mapper.enrich_props(props)
 """
 
+import logging
 import os
 import sys
-import requests
-import psycopg2
-import logging
-from typing import Dict, List, Optional
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, List, Optional
 
-# Add parent directories to path for imports
-script_dir = Path(__file__).resolve().parent
-betting_xl_dir = script_dir.parent
-nba_dir = betting_xl_dir.parent
-if str(nba_dir) not in sys.path:
-    sys.path.insert(0, str(nba_dir))
+import psycopg2
+import requests
 
-from utils.team_utils import normalize_team_abbrev
+from nba.utils.team_utils import normalize_team_abbrev
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Database config for player team lookup
 DB_PLAYERS = {
-    'host': os.getenv('NBA_PLAYERS_DB_HOST', 'localhost'),
-    'port': int(os.getenv('NBA_PLAYERS_DB_PORT', 5536)),
-    'user': os.getenv('NBA_PLAYERS_DB_USER', os.getenv('NBA_DB_USER', os.getenv('DB_USER', 'nba_user'))),
-    'password': os.getenv('NBA_PLAYERS_DB_PASSWORD', os.getenv('NBA_DB_PASSWORD', os.getenv('DB_PASSWORD'))),
-    'database': os.getenv('NBA_PLAYERS_DB_NAME', 'nba_players')
+    "host": os.getenv("NBA_PLAYERS_DB_HOST", "localhost"),
+    "port": int(os.getenv("NBA_PLAYERS_DB_PORT", 5536)),
+    "user": os.getenv(
+        "NBA_PLAYERS_DB_USER", os.getenv("NBA_DB_USER", os.getenv("DB_USER", "nba_user"))
+    ),
+    "password": os.getenv(
+        "NBA_PLAYERS_DB_PASSWORD", os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
+    ),
+    "database": os.getenv("NBA_PLAYERS_DB_NAME", "nba_players"),
 }
 
 # ESPN API
@@ -88,7 +83,7 @@ class OpponentMapper:
             return self._schedule_cache[game_date]
 
         # Format date for ESPN API (YYYYMMDD)
-        date_param = game_date.replace('-', '')
+        date_param = game_date.replace("-", "")
         url = f"{ESPN_SCOREBOARD_URL}?dates={date_param}"
 
         try:
@@ -97,7 +92,7 @@ class OpponentMapper:
             data = response.json()
 
             games_map = {}
-            events = data.get('events', [])
+            events = data.get("events", [])
 
             if not events:
                 if self.verbose:
@@ -106,12 +101,12 @@ class OpponentMapper:
 
             for event in events:
                 # Parse from shortName format: "HOU @ MIL"
-                short_name = event.get('shortName', '')
+                short_name = event.get("shortName", "")
 
-                if ' @ ' not in short_name:
+                if " @ " not in short_name:
                     continue
 
-                parts = short_name.split(' @ ')
+                parts = short_name.split(" @ ")
                 if len(parts) != 2:
                     continue
 
@@ -119,8 +114,8 @@ class OpponentMapper:
                 home_team = normalize_team_abbrev(parts[1].strip())
 
                 if away_team and home_team:
-                    games_map[away_team] = {'opponent': home_team, 'is_home': False}
-                    games_map[home_team] = {'opponent': away_team, 'is_home': True}
+                    games_map[away_team] = {"opponent": home_team, "is_home": False}
+                    games_map[home_team] = {"opponent": away_team, "is_home": True}
 
             if self.verbose:
                 logger.info(f"Fetched {len(games_map) // 2} games for {game_date}")
@@ -133,6 +128,64 @@ class OpponentMapper:
             logger.error(f"Failed to fetch ESPN schedule for {game_date}: {e}")
             return {}
 
+    def batch_load_player_teams(self, player_names: List[str]) -> None:
+        """
+        Batch load player teams into cache for efficiency.
+        Players not found are marked as None in cache to prevent repeated lookups.
+
+        Args:
+            player_names: List of player names to lookup
+        """
+        # Filter out already cached players
+        names_to_lookup = [n for n in player_names if n and n not in self._player_teams_cache]
+        if not names_to_lookup:
+            return
+
+        try:
+            conn = self._get_db_connection()
+            with conn.cursor() as cur:
+                # Batch query - get all players at once
+                cur.execute(
+                    """
+                    SELECT full_name, team_abbrev FROM player_profile
+                    WHERE full_name = ANY(%s)
+                """,
+                    (names_to_lookup,),
+                )
+                rows = cur.fetchall()
+
+                for name, team in rows:
+                    if team:
+                        self._player_teams_cache[name] = normalize_team_abbrev(team)
+
+                # For any remaining players not found, check game logs
+                still_missing = [n for n in names_to_lookup if n not in self._player_teams_cache]
+                if still_missing:
+                    cur.execute(
+                        """
+                        SELECT DISTINCT ON (pp.full_name) pp.full_name, pgl.team_abbrev
+                        FROM player_game_logs pgl
+                        JOIN player_profile pp ON pgl.player_id = pp.player_id
+                        WHERE pp.full_name = ANY(%s)
+                        ORDER BY pp.full_name, pgl.game_date DESC
+                    """,
+                        (still_missing,),
+                    )
+                    rows = cur.fetchall()
+
+                    for name, team in rows:
+                        if team:
+                            self._player_teams_cache[name] = normalize_team_abbrev(team)
+
+                # Mark all remaining players as "not found" to prevent individual lookups
+                for name in names_to_lookup:
+                    if name not in self._player_teams_cache:
+                        self._player_teams_cache[name] = None
+
+        except Exception as e:
+            logger.warning(f"Batch player team lookup failed: {e}")
+            self._close_connection()
+
     def get_player_team(self, player_name: str) -> Optional[str]:
         """
         Get player's current team from database.
@@ -143,19 +196,22 @@ class OpponentMapper:
         Returns:
             Team abbreviation or None if not found
         """
-        # Check cache first
+        # Check cache first (including "not found" markers which are None)
         if player_name in self._player_teams_cache:
-            return self._player_teams_cache[player_name]
+            return self._player_teams_cache[player_name]  # May be None if not found
 
         try:
             conn = self._get_db_connection()
             with conn.cursor() as cur:
                 # Try player_profile first (column is 'full_name')
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT team_abbrev FROM player_profile
-                    WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(%s))
+                    WHERE full_name = %s
                     LIMIT 1
-                """, (player_name,))
+                """,
+                    (player_name,),
+                )
                 row = cur.fetchone()
 
                 if row and row[0]:
@@ -164,14 +220,17 @@ class OpponentMapper:
                     return team
 
                 # Fallback to most recent game log (join to player_profile for name)
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT pgl.team_abbrev
                     FROM player_game_logs pgl
                     JOIN player_profile pp ON pgl.player_id = pp.player_id
-                    WHERE LOWER(TRIM(pp.full_name)) = LOWER(TRIM(%s))
+                    WHERE pp.full_name = %s
                     ORDER BY pgl.game_date DESC
                     LIMIT 1
-                """, (player_name,))
+                """,
+                    (player_name,),
+                )
                 row = cur.fetchone()
 
                 if row and row[0]:
@@ -203,24 +262,40 @@ class OpponentMapper:
         total_count = len(props)
 
         # Group by game_date for efficient schedule fetching
-        dates = set(p.get('game_date') for p in props if p.get('game_date'))
+        dates = set(p.get("game_date") for p in props if p.get("game_date"))
 
         # Pre-fetch schedules for all dates
+        if self.verbose:
+            logger.info(f"Fetching schedules for {len(dates)} date(s)...")
         for date_str in dates:
             if isinstance(date_str, datetime):
-                date_str = date_str.strftime('%Y-%m-%d')
+                date_str = date_str.strftime("%Y-%m-%d")
             self.fetch_schedule(date_str)
 
+        # Collect unique players to lookup (more efficient than per-prop)
+        unique_players = list(set(p.get("player_name") for p in props if p.get("player_name")))
+        if self.verbose:
+            logger.info(f"Batch loading teams for {len(unique_players)} unique players...")
+
+        # Batch load all player teams in a single query (much faster)
+        self.batch_load_player_teams(unique_players)
+
+        if self.verbose:
+            cached = len([p for p in unique_players if p in self._player_teams_cache])
+            logger.info(
+                f"Player team lookup complete: {cached}/{len(unique_players)} found. Enriching {total_count} props..."
+            )
+
         for prop in props:
-            player_name = prop.get('player_name')
-            game_date = prop.get('game_date')
+            player_name = prop.get("player_name")
+            game_date = prop.get("game_date")
 
             if not player_name or not game_date:
                 continue
 
             # Normalize date format
             if isinstance(game_date, datetime):
-                game_date = game_date.strftime('%Y-%m-%d')
+                game_date = game_date.strftime("%Y-%m-%d")
 
             # Get player's team
             player_team = self.get_player_team(player_name)
@@ -235,8 +310,8 @@ class OpponentMapper:
 
             if player_team in schedule:
                 game_info = schedule[player_team]
-                prop['opponent_team'] = game_info['opponent']
-                prop['is_home'] = game_info['is_home']
+                prop["opponent_team"] = game_info["opponent"]
+                prop["is_home"] = game_info["is_home"]
                 enriched_count += 1
             else:
                 if self.verbose:
@@ -247,7 +322,9 @@ class OpponentMapper:
 
         if self.verbose:
             pct = (enriched_count / total_count * 100) if total_count > 0 else 0
-            logger.info(f"Enriched {enriched_count}/{total_count} props ({pct:.1f}%) with opponent data")
+            logger.info(
+                f"Enriched {enriched_count}/{total_count} props ({pct:.1f}%) with opponent data"
+            )
 
         return props
 
@@ -256,9 +333,13 @@ def main():
     """Test the OpponentMapper"""
     import argparse
 
-    parser = argparse.ArgumentParser(description='Test OpponentMapper')
-    parser.add_argument('--date', type=str, default=datetime.now().strftime('%Y-%m-%d'),
-                        help='Game date (YYYY-MM-DD)')
+    parser = argparse.ArgumentParser(description="Test OpponentMapper")
+    parser.add_argument(
+        "--date",
+        type=str,
+        default=datetime.now().strftime("%Y-%m-%d"),
+        help="Game date (YYYY-MM-DD)",
+    )
     args = parser.parse_args()
 
     mapper = OpponentMapper(verbose=True)
@@ -270,9 +351,9 @@ def main():
     if schedule:
         seen_games = set()
         for team, info in schedule.items():
-            game_key = tuple(sorted([team, info['opponent']]))
+            game_key = tuple(sorted([team, info["opponent"]]))
             if game_key not in seen_games:
-                if info['is_home']:
+                if info["is_home"]:
                     print(f"  {info['opponent']} @ {team}")
                 seen_games.add(game_key)
     else:
@@ -281,15 +362,17 @@ def main():
     # Test with sample props
     print(f"\n=== Testing prop enrichment ===")
     sample_props = [
-        {'player_name': 'LeBron James', 'game_date': args.date, 'stat_type': 'POINTS'},
-        {'player_name': 'Stephen Curry', 'game_date': args.date, 'stat_type': 'THREES'},
-        {'player_name': 'Nikola Jokic', 'game_date': args.date, 'stat_type': 'REBOUNDS'},
+        {"player_name": "LeBron James", "game_date": args.date, "stat_type": "POINTS"},
+        {"player_name": "Stephen Curry", "game_date": args.date, "stat_type": "THREES"},
+        {"player_name": "Nikola Jokic", "game_date": args.date, "stat_type": "REBOUNDS"},
     ]
 
     enriched = mapper.enrich_props(sample_props)
     for prop in enriched:
-        print(f"  {prop['player_name']}: opponent={prop.get('opponent_team')}, is_home={prop.get('is_home')}")
+        print(
+            f"  {prop['player_name']}: opponent={prop.get('opponent_team')}, is_home={prop.get('is_home')}"
+        )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

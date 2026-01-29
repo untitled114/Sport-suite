@@ -25,19 +25,19 @@ Usage:
 import logging
 import os
 import sys
-from pathlib import Path
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 # Check for DEBUG environment variable (set by shell script)
-DEBUG_ENV = os.environ.get('DEBUG', '0') == '1'
+DEBUG_ENV = os.environ.get("DEBUG", "0") == "1"
 
 
 def setup_logging(
-    log_name: str = 'xl_pipeline',
+    log_name: str = "xl_pipeline",
     level: int = logging.INFO,
     debug: bool = False,
-    quiet: bool = False
+    quiet: bool = False,
 ) -> logging.Logger:
     """
     Configure unified logging with dual handlers.
@@ -64,11 +64,11 @@ def setup_logging(
         debug = True
 
     # Create logs directory
-    logs_dir = Path(__file__).parent.parent / 'logs'
+    logs_dir = Path(__file__).parent.parent / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
 
     # Log file with date
-    today = datetime.now().strftime('%Y-%m-%d')
+    today = datetime.now().strftime("%Y-%m-%d")
     log_file = logs_dir / f"{log_name}_{today}.log"
 
     # Get root logger
@@ -82,20 +82,18 @@ def setup_logging(
     if debug:
         # Detailed format for debug mode
         console_format = logging.Formatter(
-            '%(asctime)s [%(levelname)s] %(name)s:%(lineno)d - %(message)s',
-            datefmt='%H:%M:%S'
+            "%(asctime)s [%(levelname)s] %(name)s:%(lineno)d - %(message)s", datefmt="%H:%M:%S"
         )
     else:
         # Clean format for normal mode
         console_format = logging.Formatter(
-            '%(asctime)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
+            "%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
         )
 
     # File format always includes full context
     file_format = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
+        "%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
 
     # Console handler
@@ -111,21 +109,18 @@ def setup_logging(
 
     # File handler - always log INFO and above for full context
     file_handler = RotatingFileHandler(
-        log_file,
-        mode='a',
-        maxBytes=10 * 1024 * 1024,  # 10MB
-        backupCount=7  # Keep 7 backups
+        log_file, mode="a", maxBytes=10 * 1024 * 1024, backupCount=7  # 10MB  # Keep 7 backups
     )
     file_handler.setLevel(logging.DEBUG if debug else logging.INFO)
     file_handler.setFormatter(file_format)
     logger.addHandler(file_handler)
 
     # Suppress overly verbose libraries
-    for lib in ['urllib3', 'requests', 'matplotlib', 'PIL', 'asyncio']:
+    for lib in ["urllib3", "requests", "matplotlib", "PIL", "asyncio"]:
         logging.getLogger(lib).setLevel(logging.WARNING)
 
     # Log startup info
-    mode = 'DEBUG' if debug else ('QUIET' if quiet else 'NORMAL')
+    mode = "DEBUG" if debug else ("QUIET" if quiet else "NORMAL")
     logger.debug(f"Logging initialized: mode={mode}, file={log_file}")
 
     return logger
@@ -163,21 +158,17 @@ def add_logging_args(parser):
         args = parser.parse_args()
         logger = setup_logging('my_script', debug=args.debug, quiet=args.quiet)
     """
-    logging_group = parser.add_argument_group('Logging Options')
+    logging_group = parser.add_argument_group("Logging Options")
     logging_group.add_argument(
-        '--debug',
-        action='store_true',
-        help='Enable debug mode (verbose output, detailed logging)'
+        "--debug", action="store_true", help="Enable debug mode (verbose output, detailed logging)"
     )
     logging_group.add_argument(
-        '--quiet', '-q',
-        action='store_true',
-        help='Quiet mode (only show warnings and errors)'
+        "--quiet", "-q", action="store_true", help="Quiet mode (only show warnings and errors)"
     )
 
 
 # Convenience function for quick setup
-def quick_setup(name: str = 'xl_pipeline') -> logging.Logger:
+def quick_setup(name: str = "xl_pipeline") -> logging.Logger:
     """
     Quick logging setup respecting DEBUG environment variable.
 

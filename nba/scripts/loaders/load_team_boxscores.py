@@ -1,31 +1,34 @@
 #!/usr/bin/env python3
 from pathlib import Path
+
 """
 Load team game log box score stats from NBA API
 Populates: fg_made, fg_attempted, three_pt_made, three_pt_attempted,
            ft_made, ft_attempted, rebounds, assists, turnovers
 """
 
-import sys
 import os
-import psycopg2
+import sys
 from datetime import datetime
 
-sys.path.append(str(Path(__file__).parent.parent.parent / 'nba/scripts/utilities'))
+import psycopg2
+
+sys.path.append(str(Path(__file__).parent.parent.parent / "nba/scripts/utilities"))
 from nba_api_wrapper import NBAApiWrapper
 
 DB_CONFIG = {
-    'host': 'localhost',
-    'port': 5537,
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD'),
-    'database': 'nba_games'
+    "host": "localhost",
+    "port": 5537,
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
+    "database": "nba_games",
 }
 
+
 def main():
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("LOADING TEAM GAME LOG BOX SCORES FROM NBA API")
-    print("="*80 + "\n")
+    print("=" * 80 + "\n")
 
     api = NBAApiWrapper(requests_per_minute=15)
     conn = psycopg2.connect(**DB_CONFIG)
@@ -51,16 +54,16 @@ def main():
         return 0
 
     fixed_count = 0
-    for i, (log_id, team, game_id, game_date, opp, is_home) in enumerate(logs, 1):
+    for i, (log_id, team, game_id, game_date, opp, _is_home) in enumerate(logs, 1):
         try:
-            print(f"[{i}/{len(logs)}] {game_date} {team} vs {opp}...", end=' ')
+            print(f"[{i}/{len(logs)}] {game_date} {team} vs {opp}...", end=" ")
 
             # Extract season from game_id (format: 002XXYYYYYY)
-            if game_id.startswith('002'):
+            if game_id.startswith("002"):
                 season_year = int(game_id[3:5])
                 season = 2000 + season_year
             else:
-                season = int(game_date.split('-')[0])
+                season = int(game_date.split("-")[0])
 
             # Fetch team game log from NBA API
             team_logs = api.get_team_game_logs(team, season)
@@ -72,7 +75,7 @@ def main():
             # Find matching game in team logs
             matching_game = None
             for log in team_logs:
-                if log.get('GAME_ID') == game_id:
+                if log.get("GAME_ID") == game_id:
                     matching_game = log
                     break
 
@@ -81,18 +84,19 @@ def main():
                 continue
 
             # Extract box score stats
-            fg_made = matching_game.get('FGM')
-            fg_attempted = matching_game.get('FGA')
-            three_pt_made = matching_game.get('FG3M')
-            three_pt_attempted = matching_game.get('FG3A')
-            ft_made = matching_game.get('FTM')
-            ft_attempted = matching_game.get('FTA')
-            rebounds = matching_game.get('REB')
-            assists = matching_game.get('AST')
-            turnovers = matching_game.get('TOV')
+            fg_made = matching_game.get("FGM")
+            fg_attempted = matching_game.get("FGA")
+            three_pt_made = matching_game.get("FG3M")
+            three_pt_attempted = matching_game.get("FG3A")
+            ft_made = matching_game.get("FTM")
+            ft_attempted = matching_game.get("FTA")
+            rebounds = matching_game.get("REB")
+            assists = matching_game.get("AST")
+            turnovers = matching_game.get("TOV")
 
             # Update database
-            cur.execute("""
+            cur.execute(
+                """
                 UPDATE team_game_logs
                 SET fg_made = %s,
                     fg_attempted = %s,
@@ -104,8 +108,20 @@ def main():
                     assists = %s,
                     turnovers = %s
                 WHERE game_log_id = %s;
-            """, (fg_made, fg_attempted, three_pt_made, three_pt_attempted,
-                  ft_made, ft_attempted, rebounds, assists, turnovers, log_id))
+            """,
+                (
+                    fg_made,
+                    fg_attempted,
+                    three_pt_made,
+                    three_pt_attempted,
+                    ft_made,
+                    ft_attempted,
+                    rebounds,
+                    assists,
+                    turnovers,
+                    log_id,
+                ),
+            )
 
             conn.commit()
             fixed_count += 1
@@ -128,5 +144,6 @@ def main():
     conn.close()
     return 0
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     sys.exit(main())

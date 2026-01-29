@@ -8,7 +8,7 @@ NBA seasons use END year convention:
 Season typically runs October to June.
 """
 
-from datetime import datetime, date
+from datetime import date, datetime
 from typing import Union
 
 
@@ -29,7 +29,7 @@ def date_to_season(game_date: Union[str, date, datetime]) -> int:
     """
     # Parse string dates
     if isinstance(game_date, str):
-        game_date = datetime.strptime(game_date[:10], '%Y-%m-%d').date()
+        game_date = datetime.strptime(game_date[:10], "%Y-%m-%d").date()
     elif isinstance(game_date, datetime):
         game_date = game_date.date()
 
@@ -58,5 +58,5 @@ def season_to_date_range(season: int) -> tuple:
     start_year = season - 1
     return (
         date(start_year, 10, 1),  # Season starts ~October
-        date(season, 6, 30)        # Season ends ~June
+        date(season, 6, 30),  # Season ends ~June
     )

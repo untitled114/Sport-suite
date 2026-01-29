@@ -31,22 +31,20 @@ Usage:
         --output data/raw/nba/historical/
 """
 
+import argparse
+import json
+import logging
+import re
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional
+
+import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-import pandas as pd
-import time
-import logging
-import argparse
-from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Optional
-import json
-import re
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -55,21 +53,41 @@ class ESPNGamelogScraper:
 
     BASE_URL = "https://www.espn.com/nba"
     HEADERS = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
 
     # NBA teams (for fetching rosters)
     NBA_TEAMS = {
-        'ATL': 'atlanta-hawks', 'BOS': 'boston-celtics', 'BKN': 'brooklyn-nets',
-        'CHA': 'charlotte-hornets', 'CHI': 'chicago-bulls', 'CLE': 'cleveland-cavaliers',
-        'DAL': 'dallas-mavericks', 'DEN': 'denver-nuggets', 'DET': 'detroit-pistons',
-        'GSW': 'golden-state-warriors', 'HOU': 'houston-rockets', 'IND': 'indiana-pacers',
-        'LAC': 'la-clippers', 'LAL': 'los-angeles-lakers', 'MEM': 'memphis-grizzlies',
-        'MIA': 'miami-heat', 'MIL': 'milwaukee-bucks', 'MIN': 'minnesota-timberwolves',
-        'NOP': 'new-orleans-pelicans', 'NYK': 'new-york-knicks', 'OKC': 'oklahoma-city-thunder',
-        'ORL': 'orlando-magic', 'PHI': 'philadelphia-76ers', 'PHX': 'phoenix-suns',
-        'POR': 'portland-trail-blazers', 'SAC': 'sacramento-kings', 'SAS': 'san-antonio-spurs',
-        'TOR': 'toronto-raptors', 'UTA': 'utah-jazz', 'WAS': 'washington-wizards'
+        "ATL": "atlanta-hawks",
+        "BOS": "boston-celtics",
+        "BKN": "brooklyn-nets",
+        "CHA": "charlotte-hornets",
+        "CHI": "chicago-bulls",
+        "CLE": "cleveland-cavaliers",
+        "DAL": "dallas-mavericks",
+        "DEN": "denver-nuggets",
+        "DET": "detroit-pistons",
+        "GSW": "golden-state-warriors",
+        "HOU": "houston-rockets",
+        "IND": "indiana-pacers",
+        "LAC": "la-clippers",
+        "LAL": "los-angeles-lakers",
+        "MEM": "memphis-grizzlies",
+        "MIA": "miami-heat",
+        "MIL": "milwaukee-bucks",
+        "MIN": "minnesota-timberwolves",
+        "NOP": "new-orleans-pelicans",
+        "NYK": "new-york-knicks",
+        "OKC": "oklahoma-city-thunder",
+        "ORL": "orlando-magic",
+        "PHI": "philadelphia-76ers",
+        "PHX": "phoenix-suns",
+        "POR": "portland-trail-blazers",
+        "SAC": "sacramento-kings",
+        "SAS": "san-antonio-spurs",
+        "TOR": "toronto-raptors",
+        "UTA": "utah-jazz",
+        "WAS": "washington-wizards",
     }
 
     def __init__(self, rate_limit: float = 1.0):
@@ -94,7 +112,7 @@ class ESPNGamelogScraper:
             Year integer (e.g., 2023 for 2022-23 season)
         """
         # ESPN uses the end year (2022-23 → 2023)
-        return int(season.split('-')[1]) + 2000
+        return int(season.split("-")[1]) + 2000
 
     def fetch_team_roster(self, team_abbr: str, season: str) -> List[Dict]:
         """
@@ -122,48 +140,50 @@ class ESPNGamelogScraper:
             resp.raise_for_status()
             time.sleep(self.rate_limit)
 
-            soup = BeautifulSoup(resp.text, 'html.parser')
+            soup = BeautifulSoup(resp.text, "html.parser")
 
             # Find roster table
             players = []
-            tables = soup.find_all('table', class_='Table')
+            tables = soup.find_all("table", class_="Table")
 
             for table in tables:
-                tbody = table.find('tbody')
+                tbody = table.find("tbody")
                 if not tbody:
                     continue
 
-                for row in tbody.find_all('tr'):
-                    cells = row.find_all('td')
+                for row in tbody.find_all("tr"):
+                    cells = row.find_all("td")
                     if len(cells) < 2:
                         continue
 
                     # Extract player link and ID
-                    player_link = cells[1].find('a')
+                    player_link = cells[1].find("a")
                     if not player_link:
                         continue
 
                     player_name = player_link.get_text(strip=True)
-                    player_href = player_link.get('href', '')
+                    player_href = player_link.get("href", "")
 
                     # Extract player ID from href
                     # Example: /nba/player/_/id/1966/lebron-james
-                    match = re.search(r'/id/(\d+)/', player_href)
+                    match = re.search(r"/id/(\d+)/", player_href)
                     if not match:
                         continue
 
                     player_id = match.group(1)
 
                     # Position
-                    position = cells[2].get_text(strip=True) if len(cells) > 2 else ''
+                    position = cells[2].get_text(strip=True) if len(cells) > 2 else ""
 
-                    players.append({
-                        'player_id': player_id,
-                        'player_name': player_name,
-                        'position': position,
-                        'team': team_abbr,
-                        'season': season
-                    })
+                    players.append(
+                        {
+                            "player_id": player_id,
+                            "player_name": player_name,
+                            "position": position,
+                            "team": team_abbr,
+                            "season": season,
+                        }
+                    )
 
             logger.info(f"  Found {len(players)} players for {team_abbr}")
             return players
@@ -199,8 +219,8 @@ class ESPNGamelogScraper:
         seen = set()
         unique_players = []
         for player in all_players:
-            if player['player_id'] not in seen:
-                seen.add(player['player_id'])
+            if player["player_id"] not in seen:
+                seen.add(player["player_id"])
                 unique_players.append(player)
 
         logger.info(f"✅ Unique players: {len(unique_players)}")
@@ -227,49 +247,49 @@ class ESPNGamelogScraper:
             resp.raise_for_status()
             time.sleep(self.rate_limit)
 
-            soup = BeautifulSoup(resp.text, 'html.parser')
+            soup = BeautifulSoup(resp.text, "html.parser")
 
             games = []
 
             # Find gamelog table
-            tables = soup.find_all('div', class_='ResponsiveTable')
+            tables = soup.find_all("div", class_="ResponsiveTable")
 
             for table_div in tables:
-                table = table_div.find('table')
+                table = table_div.find("table")
                 if not table:
                     continue
 
                 # Get headers
-                thead = table.find('thead')
+                thead = table.find("thead")
                 if not thead:
                     continue
 
-                header_row = thead.find_all('tr')[-1]  # Last row of thead
-                headers = [th.get_text(strip=True) for th in header_row.find_all('th')]
+                header_row = thead.find_all("tr")[-1]  # Last row of thead
+                headers = [th.get_text(strip=True) for th in header_row.find_all("th")]
 
                 # Skip if not a gamelog table (check for "MIN" or "PTS" columns)
-                if 'MIN' not in headers and 'PTS' not in headers:
+                if "MIN" not in headers and "PTS" not in headers:
                     continue
 
                 # Get game rows
-                tbody = table.find('tbody')
+                tbody = table.find("tbody")
                 if not tbody:
                     continue
 
-                for row in tbody.find_all('tr'):
+                for row in tbody.find_all("tr"):
                     # Skip header rows within tbody
-                    if row.find('th'):
+                    if row.find("th"):
                         continue
 
-                    cells = row.find_all('td')
+                    cells = row.find_all("td")
                     if len(cells) < len(headers):
                         continue
 
                     # Parse game data
                     game_data = {
-                        'player_id': player_id,
-                        'player_name': player_name,
-                        'season': season
+                        "player_id": player_id,
+                        "player_name": player_name,
+                        "season": season,
                     }
 
                     for i, header in enumerate(headers):
@@ -278,7 +298,7 @@ class ESPNGamelogScraper:
                             game_data[header] = value
 
                     # Skip if no date
-                    if 'Date' not in game_data or not game_data['Date']:
+                    if "Date" not in game_data or not game_data["Date"]:
                         continue
 
                     games.append(game_data)
@@ -289,7 +309,9 @@ class ESPNGamelogScraper:
             logger.error(f"Error fetching gamelog for {player_name} ({player_id}, {season}): {e}")
             return []
 
-    def fetch_season_gamelogs(self, season: str, output_dir: str = 'data/raw/nba/historical') -> str:
+    def fetch_season_gamelogs(
+        self, season: str, output_dir: str = "data/raw/nba/historical"
+    ) -> str:
         """
         Fetch all gamelogs for a given season
 
@@ -324,8 +346,8 @@ class ESPNGamelogScraper:
         logger.info(f"{'='*80}\n")
 
         for idx, player in enumerate(players, 1):
-            player_id = player['player_id']
-            player_name = player['player_name']
+            player_id = player["player_id"]
+            player_name = player["player_name"]
 
             logger.info(f"[{idx}/{total_players}] Fetching {player_name} ({player_id})...")
 
@@ -370,13 +392,23 @@ class ESPNGamelogScraper:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Fetch ESPN NBA historical gamelogs')
-    parser.add_argument('--season', type=str, help='Single season (e.g., 2022-23)')
-    parser.add_argument('--seasons', type=str, nargs='+', help='Multiple seasons (e.g., 2021-22 2022-23)')
-    parser.add_argument('--output', type=str, default='data/raw/nba/historical',
-                       help='Output directory for CSV files')
-    parser.add_argument('--rate-limit', type=float, default=1.0,
-                       help='Seconds to wait between requests (default: 1.0)')
+    parser = argparse.ArgumentParser(description="Fetch ESPN NBA historical gamelogs")
+    parser.add_argument("--season", type=str, help="Single season (e.g., 2022-23)")
+    parser.add_argument(
+        "--seasons", type=str, nargs="+", help="Multiple seasons (e.g., 2021-22 2022-23)"
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default="data/raw/nba/historical",
+        help="Output directory for CSV files",
+    )
+    parser.add_argument(
+        "--rate-limit",
+        type=float,
+        default=1.0,
+        help="Seconds to wait between requests (default: 1.0)",
+    )
 
     args = parser.parse_args()
 
@@ -388,7 +420,7 @@ def main():
         seasons = args.seasons
     else:
         # Default: fetch last 4 seasons
-        seasons = ['2021-22', '2022-23', '2023-24', '2024-25']
+        seasons = ["2021-22", "2022-23", "2023-24", "2024-25"]
 
     logger.info(f"{'='*80}")
     logger.info(f"ESPN NBA GAMELOG SCRAPER")
@@ -418,5 +450,5 @@ def main():
     logger.info(f"{'='*80}\n")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

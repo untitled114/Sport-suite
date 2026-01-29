@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 
 class HitRateCache:
@@ -12,7 +12,7 @@ class HitRateCache:
 
     def __init__(self, game_date: str, base_dir: Optional[Path] = None):
         self.game_date = game_date
-        self.base_dir = base_dir or Path(__file__).parent.parent / 'lines'
+        self.base_dir = base_dir or Path(__file__).parent.parent / "lines"
         self.records: Dict[Tuple[str, str], Dict[str, Any]] = {}
         self._loaded = False
 
@@ -29,15 +29,15 @@ class HitRateCache:
             return
 
         try:
-            with open(file_path, 'r') as f:
+            with open(file_path, "r") as f:
                 payload = json.load(f)
         except (json.JSONDecodeError, OSError):
             self._loaded = True
             return
 
-        for record in payload.get('records', []):
-            player = record.get('player_name')
-            stat_type = record.get('stat_type')
+        for record in payload.get("records", []):
+            player = record.get("player_name")
+            stat_type = record.get("stat_type")
             if not player or not stat_type:
                 continue
             key = self._normalize_key(player, stat_type)
@@ -49,4 +49,3 @@ class HitRateCache:
         self.load()
         key = self._normalize_key(player_name, stat_type)
         return self.records.get(key)
-

@@ -3,9 +3,10 @@
 Check current season data status for 2025-2026 NBA season
 """
 
-import psycopg2
-from datetime import datetime
 import os
+from datetime import datetime
+
+import psycopg2
 
 print("=" * 80)
 print("NBA 2025-2026 SEASON DATA STATUS CHECK")
@@ -17,18 +18,27 @@ print()
 
 # Database connections
 DB_PLAYERS = {
-    'host': 'localhost', 'port': 5536, 'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD'), 'database': 'nba_players'
+    "host": "localhost",
+    "port": 5536,
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
+    "database": "nba_players",
 }
 
 DB_GAMES = {
-    'host': 'localhost', 'port': 5537, 'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD'), 'database': 'nba_games'
+    "host": "localhost",
+    "port": 5537,
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
+    "database": "nba_games",
 }
 
 DB_TEAM = {
-    'host': 'localhost', 'port': 5538, 'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD'), 'database': 'nba_team'
+    "host": "localhost",
+    "port": 5538,
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
+    "database": "nba_team",
 }
 
 # Check player data

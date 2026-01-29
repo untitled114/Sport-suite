@@ -22,30 +22,28 @@ Usage:
     python calculate_minutes_projections.py --update --min-games 5
 """
 
-import sys
-import os
 import argparse
 import logging
+import os
+import sys
+from datetime import datetime
 from typing import Dict, List, Tuple
-import pandas as pd
+
 import numpy as np
+import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
-from datetime import datetime
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Database connection params
 DB_CONFIG = {
-    'host': 'localhost',
-    'port': 5536,
-    'database': 'nba_players',
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD')
+    "host": "localhost",
+    "port": 5536,
+    "database": "nba_players",
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
 }
 
 
@@ -169,7 +167,9 @@ class MinutesProjector:
         adjusted = mpg * factor
         return adjusted, reason
 
-    def apply_experience_adjustment(self, mpg: float, experience: int, prev_gp: int) -> Tuple[float, str]:
+    def apply_experience_adjustment(
+        self, mpg: float, experience: int, prev_gp: int
+    ) -> Tuple[float, str]:
         """
         Apply experience-based adjustment
 
@@ -211,23 +211,23 @@ class MinutesProjector:
         flags = []
 
         # Missing previous season data
-        if pd.isna(row['prev_mpg']):
+        if pd.isna(row["prev_mpg"]):
             return "HIGH - No previous season data"
 
         # Very low games played last season (injury concerns)
-        if pd.notna(row['prev_gp']) and row['prev_gp'] < 20:
+        if pd.notna(row["prev_gp"]) and row["prev_gp"] < 20:
             flags.append("Injury history")
 
         # Extreme age
-        if pd.notna(row['estimated_age']) and row['estimated_age'] >= 38:
+        if pd.notna(row["estimated_age"]) and row["estimated_age"] >= 38:
             flags.append("Advanced age")
 
         # Rookie (no baseline)
-        if pd.notna(row['years_experience']) and row['years_experience'] == 0:
+        if pd.notna(row["years_experience"]) and row["years_experience"] == 0:
             return "HIGH - Rookie (no NBA history)"
 
         # Low minutes last year (role player uncertainty)
-        if row['prev_mpg'] < 10:
+        if row["prev_mpg"] < 10:
             flags.append("Low usage")
 
         if flags:
@@ -253,33 +253,30 @@ class MinutesProjector:
 
         for _, row in df.iterrows():
             projection = {
-                'player_id': row['player_id'],
-                'player_name': row['full_name'],
-                'team': row['team_abbrev'],
-                'position': row['position']
+                "player_id": row["player_id"],
+                "player_name": row["full_name"],
+                "team": row["team_abbrev"],
+                "position": row["position"],
             }
 
             # If we have current season data (>= min_games), use that
-            if pd.notna(row['curr_gp']) and row['curr_gp'] >= min_games:
-                projection['projected_mpg'] = row['curr_mpg']
-                projection['method'] = f'Actual (from {int(row["curr_gp"])} games)'
-                projection['uncertainty'] = 'LOW'
+            if pd.notna(row["curr_gp"]) and row["curr_gp"] >= min_games:
+                projection["projected_mpg"] = row["curr_mpg"]
+                projection["method"] = f'Actual (from {int(row["curr_gp"])} games)'
+                projection["uncertainty"] = "LOW"
 
             # Otherwise, project from previous season
-            elif pd.notna(row['prev_mpg']):
-                base_mpg = row['prev_mpg']
+            elif pd.notna(row["prev_mpg"]):
+                base_mpg = row["prev_mpg"]
 
                 # Apply age adjustment
                 mpg_after_age, age_reason = self.apply_age_adjustment(
-                    base_mpg,
-                    row['estimated_age']
+                    base_mpg, row["estimated_age"]
                 )
 
                 # Apply experience adjustment
                 mpg_final, exp_reason = self.apply_experience_adjustment(
-                    mpg_after_age,
-                    row['years_experience'],
-                    row['prev_gp']
+                    mpg_after_age, row["years_experience"], row["prev_gp"]
                 )
 
                 # Combine reasons
@@ -293,17 +290,17 @@ class MinutesProjector:
                 if reasons:
                     method += f" + {', '.join(reasons)}"
 
-                projection['projected_mpg'] = round(mpg_final, 1)
-                projection['baseline_mpg'] = round(base_mpg, 1)
-                projection['method'] = method
-                projection['uncertainty'] = self.flag_uncertainty(row)
+                projection["projected_mpg"] = round(mpg_final, 1)
+                projection["baseline_mpg"] = round(base_mpg, 1)
+                projection["method"] = method
+                projection["uncertainty"] = self.flag_uncertainty(row)
 
             else:
                 # No data available
-                projection['projected_mpg'] = None
-                projection['baseline_mpg'] = None
-                projection['method'] = 'No data'
-                projection['uncertainty'] = 'HIGH - No historical data'
+                projection["projected_mpg"] = None
+                projection["baseline_mpg"] = None
+                projection["method"] = "No data"
+                projection["uncertainty"] = "HIGH - No historical data"
 
             projections.append(projection)
 
@@ -312,10 +309,10 @@ class MinutesProjector:
         logger.info(f"✅ Calculated {len(proj_df)} projections")
 
         # Summary by uncertainty
-        if 'uncertainty' in proj_df.columns:
+        if "uncertainty" in proj_df.columns:
             logger.info(f"\n📊 UNCERTAINTY SUMMARY:")
-            for unc_level in ['LOW', 'MEDIUM', 'HIGH']:
-                count = proj_df['uncertainty'].str.contains(unc_level, na=False).sum()
+            for unc_level in ["LOW", "MEDIUM", "HIGH"]:
+                count = proj_df["uncertainty"].str.contains(unc_level, na=False).sum()
                 logger.info(f"   {unc_level}: {count} players")
 
         self.projections = proj_df
@@ -346,14 +343,16 @@ class MinutesProjector:
         # Insert/update projections
         insert_data = []
         for _, row in self.projections.iterrows():
-            if pd.notna(row['projected_mpg']):
-                insert_data.append((
-                    int(row['player_id']),
-                    float(row['projected_mpg']) if pd.notna(row['projected_mpg']) else None,
-                    float(row['baseline_mpg']) if pd.notna(row['baseline_mpg']) else None,
-                    row['method'],
-                    row['uncertainty']
-                ))
+            if pd.notna(row["projected_mpg"]):
+                insert_data.append(
+                    (
+                        int(row["player_id"]),
+                        float(row["projected_mpg"]) if pd.notna(row["projected_mpg"]) else None,
+                        float(row["baseline_mpg"]) if pd.notna(row["baseline_mpg"]) else None,
+                        row["method"],
+                        row["uncertainty"],
+                    )
+                )
 
         if insert_data:
             insert_query = """
@@ -383,18 +382,26 @@ class MinutesProjector:
         # Show a mix: stars, role players, rookies
         if len(self.projections) > 0:
             # Sort by projected MPG
-            sorted_proj = self.projections.sort_values('projected_mpg', ascending=False, na_position='last')
+            sorted_proj = self.projections.sort_values(
+                "projected_mpg", ascending=False, na_position="last"
+            )
 
             logger.info(f"\n   Top Minutes Players:")
             for _, row in sorted_proj.head(10).iterrows():
-                logger.info(f"      {row['player_name']} ({row['team']}): "
-                          f"{row['projected_mpg']:.1f} MPG ({row['uncertainty']})")
+                logger.info(
+                    f"      {row['player_name']} ({row['team']}): "
+                    f"{row['projected_mpg']:.1f} MPG ({row['uncertainty']})"
+                )
 
             logger.info(f"\n   High Uncertainty Players:")
-            high_unc = sorted_proj[sorted_proj['uncertainty'].str.contains('HIGH', na=False)].head(5)
+            high_unc = sorted_proj[sorted_proj["uncertainty"].str.contains("HIGH", na=False)].head(
+                5
+            )
             for _, row in high_unc.iterrows():
-                logger.info(f"      {row['player_name']} ({row['team']}): "
-                          f"{row['projected_mpg']} MPG - {row['uncertainty']}")
+                logger.info(
+                    f"      {row['player_name']} ({row['team']}): "
+                    f"{row['projected_mpg']} MPG - {row['uncertainty']}"
+                )
 
     def run(self, update_db: bool = False, min_games: int = 5):
         """
@@ -430,11 +437,14 @@ class MinutesProjector:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Calculate NBA player minutes projections')
-    parser.add_argument('--update', action='store_true',
-                       help='Save projections to database')
-    parser.add_argument('--min-games', type=int, default=5,
-                       help='Minimum current season games to use actual data (default: 5)')
+    parser = argparse.ArgumentParser(description="Calculate NBA player minutes projections")
+    parser.add_argument("--update", action="store_true", help="Save projections to database")
+    parser.add_argument(
+        "--min-games",
+        type=int,
+        default=5,
+        help="Minimum current season games to use actual data (default: 5)",
+    )
 
     args = parser.parse_args()
 

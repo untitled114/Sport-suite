@@ -11,25 +11,23 @@ Usage:
     python load_cheatsheet_to_db.py --latest
 """
 
-import sys
-import json
 import argparse
-import psycopg2
-from pathlib import Path
-from datetime import datetime
-from typing import List, Dict, Any, Optional
+import json
 import os
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-# Add parent directories to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+import psycopg2
 
 # Database connection
 DB_CONFIG = {
-    'host': 'localhost',
-    'port': 5539,
-    'database': 'nba_intelligence',
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD')
+    "host": "localhost",
+    "port": 5539,
+    "database": "nba_intelligence",
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
 }
 
 
@@ -40,9 +38,9 @@ def get_db_connection():
 
 def load_json_file(filepath: Path) -> List[Dict[str, Any]]:
     """Load props from JSON file"""
-    with open(filepath, 'r') as f:
+    with open(filepath, "r") as f:
         data = json.load(f)
-    return data.get('props', [])
+    return data.get("props", [])
 
 
 def insert_cheatsheet_data(conn, props: List[Dict[str, Any]], platform: str) -> int:
@@ -57,7 +55,7 @@ def insert_cheatsheet_data(conn, props: List[Dict[str, Any]], platform: str) -> 
     cursor = conn.cursor()
 
     # PrizePicks = reference only (lower payouts), Underdog = use for betting
-    use_for_betting = (platform == 'underdog')
+    use_for_betting = platform == "underdog"
 
     insert_sql = """
         INSERT INTO cheatsheet_data (
@@ -111,10 +109,10 @@ def insert_cheatsheet_data(conn, props: List[Dict[str, Any]], platform: str) -> 
     for prop in props:
         try:
             # Parse fetch_timestamp
-            fetch_ts = prop.get('fetch_timestamp', '')
+            fetch_ts = prop.get("fetch_timestamp", "")
             if fetch_ts:
                 try:
-                    fetch_timestamp = datetime.fromisoformat(fetch_ts.replace('Z', '+00:00'))
+                    fetch_timestamp = datetime.fromisoformat(fetch_ts.replace("Z", "+00:00"))
                 except (ValueError, AttributeError):
                     fetch_timestamp = datetime.now()
             else:
@@ -122,40 +120,42 @@ def insert_cheatsheet_data(conn, props: List[Dict[str, Any]], platform: str) -> 
 
             # Prepare record
             record = {
-                'player_name': prop.get('player_name'),
-                'game_date': prop.get('game_date'),
-                'stat_type': prop.get('stat_type'),
-                'platform': platform,
-                'line': prop.get('line'),
-                'over_odds': prop.get('over_odds'),
-                'under_odds': prop.get('under_odds'),
-                'projection': prop.get('projection'),
-                'projection_diff': prop.get('projection_diff'),
-                'bet_rating': prop.get('bet_rating'),
-                'expected_value': prop.get('expected_value'),
-                'ev_pct': prop.get('ev_pct'),
-                'probability': prop.get('probability'),
-                'recommended_side': prop.get('recommended_side'),
-                'opp_rank': prop.get('opp_rank'),
-                'opp_value': prop.get('opp_value'),
-                'hit_rate_l5': prop.get('hit_rate_l5'),
-                'hit_rate_l15': prop.get('hit_rate_l15'),
-                'hit_rate_season': prop.get('hit_rate_season'),
-                'l5_over': prop.get('l5_over'),
-                'l5_under': prop.get('l5_under'),
-                'l15_over': prop.get('l15_over'),
-                'l15_under': prop.get('l15_under'),
-                'season_over': prop.get('season_over'),
-                'season_under': prop.get('season_under'),
-                'fetch_timestamp': fetch_timestamp,
-                'use_for_betting': use_for_betting,
+                "player_name": prop.get("player_name"),
+                "game_date": prop.get("game_date"),
+                "stat_type": prop.get("stat_type"),
+                "platform": platform,
+                "line": prop.get("line"),
+                "over_odds": prop.get("over_odds"),
+                "under_odds": prop.get("under_odds"),
+                "projection": prop.get("projection"),
+                "projection_diff": prop.get("projection_diff"),
+                "bet_rating": prop.get("bet_rating"),
+                "expected_value": prop.get("expected_value"),
+                "ev_pct": prop.get("ev_pct"),
+                "probability": prop.get("probability"),
+                "recommended_side": prop.get("recommended_side"),
+                "opp_rank": prop.get("opp_rank"),
+                "opp_value": prop.get("opp_value"),
+                "hit_rate_l5": prop.get("hit_rate_l5"),
+                "hit_rate_l15": prop.get("hit_rate_l15"),
+                "hit_rate_season": prop.get("hit_rate_season"),
+                "l5_over": prop.get("l5_over"),
+                "l5_under": prop.get("l5_under"),
+                "l15_over": prop.get("l15_over"),
+                "l15_under": prop.get("l15_under"),
+                "season_over": prop.get("season_over"),
+                "season_under": prop.get("season_under"),
+                "fetch_timestamp": fetch_timestamp,
+                "use_for_betting": use_for_betting,
             }
 
             cursor.execute(insert_sql, record)
             rows_affected += 1
 
         except Exception as e:
-            print(f"  [WARN] Failed to insert {prop.get('player_name')} {prop.get('stat_type')}: {e}")
+            print(
+                f"  [WARN] Failed to insert {prop.get('player_name')} {prop.get('stat_type')}: {e}"
+            )
             continue
 
     conn.commit()
@@ -166,10 +166,10 @@ def insert_cheatsheet_data(conn, props: List[Dict[str, Any]], platform: str) -> 
 
 def find_cheatsheet_files(date: str = None, latest: bool = False) -> List[Path]:
     """Find cheat sheet JSON files"""
-    lines_dir = Path(__file__).parent.parent / 'lines'
+    lines_dir = Path(__file__).parent.parent / "lines"
 
     # Find all cheatsheet files
-    files = list(lines_dir.glob('cheatsheet_*.json'))
+    files = list(lines_dir.glob("cheatsheet_*.json"))
 
     if not files:
         return []
@@ -184,10 +184,10 @@ def find_cheatsheet_files(date: str = None, latest: bool = False) -> List[Path]:
         found_prizepicks = False
 
         for f in files:
-            if 'underdog' in f.name and not found_underdog:
+            if "underdog" in f.name and not found_underdog:
                 latest_files.append(f)
                 found_underdog = True
-            elif 'prizepicks' in f.name and not found_prizepicks:
+            elif "prizepicks" in f.name and not found_prizepicks:
                 latest_files.append(f)
                 found_prizepicks = True
 
@@ -201,16 +201,16 @@ def find_cheatsheet_files(date: str = None, latest: bool = False) -> List[Path]:
         date_files = []
         for f in files:
             # Check if date is in filename
-            if date.replace('-', '') in f.name or date in f.name:
+            if date.replace("-", "") in f.name or date in f.name:
                 date_files.append(f)
                 continue
 
             # Check content
             try:
-                with open(f, 'r') as fp:
+                with open(f, "r") as fp:
                     data = json.load(fp)
-                    props = data.get('props', [])
-                    if props and props[0].get('game_date') == date:
+                    props = data.get("props", [])
+                    if props and props[0].get("game_date") == date:
                         date_files.append(f)
             except (json.JSONDecodeError, IOError, KeyError, IndexError):
                 pass
@@ -221,11 +221,13 @@ def find_cheatsheet_files(date: str = None, latest: bool = False) -> List[Path]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Load cheat sheet data to database')
-    parser.add_argument('--file', type=str, help='Specific JSON file to load')
-    parser.add_argument('--date', type=str, help='Load files for specific date (YYYY-MM-DD)')
-    parser.add_argument('--latest', action='store_true', help='Load most recent files')
-    parser.add_argument('--dry-run', action='store_true', help='Show what would be loaded without inserting')
+    parser = argparse.ArgumentParser(description="Load cheat sheet data to database")
+    parser.add_argument("--file", type=str, help="Specific JSON file to load")
+    parser.add_argument("--date", type=str, help="Load files for specific date (YYYY-MM-DD)")
+    parser.add_argument("--latest", action="store_true", help="Load most recent files")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would be loaded without inserting"
+    )
 
     args = parser.parse_args()
 
@@ -266,19 +268,19 @@ def main():
         print(f"Loading {filepath.name}...")
 
         # Determine platform from filename
-        if 'underdog' in filepath.name:
-            platform = 'underdog'
-        elif 'prizepicks' in filepath.name:
-            platform = 'prizepicks'
+        if "underdog" in filepath.name:
+            platform = "underdog"
+        elif "prizepicks" in filepath.name:
+            platform = "prizepicks"
         else:
-            platform = 'unknown'
+            platform = "unknown"
 
         # Load props from file
         props = load_json_file(filepath)
         print(f"  Found {len(props)} props")
 
         # Filter to only OVER recommendations (since model only predicts overs)
-        over_props = [p for p in props if p.get('recommended_side') == 'over']
+        over_props = [p for p in props if p.get("recommended_side") == "over"]
         print(f"  OVER recommendations: {len(over_props)}")
 
         # Insert into database
@@ -294,5 +296,5 @@ def main():
     print("=" * 60 + "\n")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

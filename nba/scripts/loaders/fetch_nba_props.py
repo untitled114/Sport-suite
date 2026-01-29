@@ -8,16 +8,18 @@ Target props: Points, Rebounds, Assists, 3PM, PRA, P+R, P+A, R+A
 Data available: 2024-25 season only (Oct 22, 2024 - present)
 """
 
-import requests
-import pandas as pd
+import os
+import sys
 import time
 from datetime import datetime, timedelta
-import sys
 from pathlib import Path
-import os
+
+import pandas as pd
+import requests
 
 API_KEY = os.getenv("FANTASYPROS_API_KEY")
 BASE_URL = "https://api.sportsgameodds.com/v2/events"
+
 
 class NBAPropsFetcher:
     """Fetch historical NBA player props from Sports Game Odds API"""
@@ -38,9 +40,9 @@ class NBAPropsFetcher:
             DataFrame with filtered props
         """
         # Calculate date range (start of day to end of day)
-        date_obj = datetime.strptime(date, '%Y-%m-%d')
-        starts_after = date_obj.strftime('%Y-%m-%dT00:00:00Z')
-        starts_before = (date_obj + timedelta(days=1)).strftime('%Y-%m-%dT00:00:00Z')
+        date_obj = datetime.strptime(date, "%Y-%m-%d")
+        starts_after = date_obj.strftime("%Y-%m-%dT00:00:00Z")
+        starts_before = (date_obj + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
 
         all_props = []
         next_cursor = None
@@ -51,14 +53,14 @@ class NBAPropsFetcher:
             # Use cursor pagination to fetch all events for the date
             while True:
                 params = {
-                    'leagueID': 'NBA',
-                    'startsAfter': starts_after,
-                    'startsBefore': starts_before,
-                    'finalized': 'true'
+                    "leagueID": "NBA",
+                    "startsAfter": starts_after,
+                    "startsBefore": starts_before,
+                    "finalized": "true",
                 }
 
                 if next_cursor:
-                    params['cursor'] = next_cursor
+                    params["cursor"] = next_cursor
 
                 response = requests.get(BASE_URL, headers=self.headers, params=params, timeout=30)
 
@@ -69,9 +71,11 @@ class NBAPropsFetcher:
                         break
 
                     # Exponential backoff: 2s, 4s, 8s, 16s, 32s
-                    wait_time = base_delay * (2 ** retry_count)
+                    wait_time = base_delay * (2**retry_count)
                     retry_count += 1
-                    print(f"  {date}: Rate limited (429), waiting {wait_time:.0f}s (retry {retry_count}/{max_retries})")
+                    print(
+                        f"  {date}: Rate limited (429), waiting {wait_time:.0f}s (retry {retry_count}/{max_retries})"
+                    )
                     time.sleep(wait_time)
                     continue  # Retry the same request
 
@@ -88,43 +92,43 @@ class NBAPropsFetcher:
 
                 result = response.json()
 
-                if not result.get('data'):
+                if not result.get("data"):
                     if not all_props:  # Only print if we haven't found any data yet
                         print(f"  {date}: No data")
                     break
 
                 # Parse events and their odds
-                for event in result['data']:
-                    event_id = event.get('eventID')
-                    teams = event.get('teams', {})
-                    home_team = teams.get('home', {}).get('names', {}).get('short', '')
-                    away_team = teams.get('away', {}).get('names', {}).get('short', '')
+                for event in result["data"]:
+                    event_id = event.get("eventID")
+                    teams = event.get("teams", {})
+                    home_team = teams.get("home", {}).get("names", {}).get("short", "")
+                    away_team = teams.get("away", {}).get("names", {}).get("short", "")
 
-                    odds = event.get('odds', {})
+                    odds = event.get("odds", {})
 
                     # Process each odd
-                    for odd_id, odd in odds.items():
-                        stat_id = odd.get('statID', '')
-                        bet_type_id = odd.get('betTypeID', '')
-                        stat_entity_id = odd.get('statEntityID', '')
-                        period_id = odd.get('periodID', '')
-                        side_id = odd.get('sideID', '')
+                    for _odd_id, odd in odds.items():
+                        stat_id = odd.get("statID", "")
+                        bet_type_id = odd.get("betTypeID", "")
+                        stat_entity_id = odd.get("statEntityID", "")
+                        period_id = odd.get("periodID", "")
+                        side_id = odd.get("sideID", "")
 
                         # Only process over/under player props for full game
-                        if bet_type_id != 'ou' or period_id != 'game':
+                        if bet_type_id != "ou" or period_id != "game":
                             continue
 
                         # Only process 'over' side to avoid duplicates
                         # (each prop has both 'over' and 'under' entries with same line)
-                        if side_id != 'over':
+                        if side_id != "over":
                             continue
 
                         # Skip team-level props (only want player props)
-                        if stat_entity_id.upper() in ['HOME', 'AWAY', 'ALL', '']:
+                        if stat_entity_id.upper() in ["HOME", "AWAY", "ALL", ""]:
                             continue
 
                         # Only process NBA player props
-                        if '_NBA' not in stat_entity_id:
+                        if "_NBA" not in stat_entity_id:
                             continue
 
                         # Parse the prop type from statID
@@ -132,17 +136,24 @@ class NBAPropsFetcher:
 
                         if prop_type:
                             # Extract player name from marketName
-                            player_name = ''
-                            market_name = odd.get('marketName', '')
+                            player_name = ""
+                            market_name = odd.get("marketName", "")
                             if market_name:
                                 # Remove " Over/Under" suffix
-                                player_name = market_name.replace(' Over/Under', '').strip()
+                                player_name = market_name.replace(" Over/Under", "").strip()
                                 # Remove the stat type from the end
-                                for suffix in [' Points', ' Rebounds', ' Assists', ' Three Pointers Made',
-                                             ' Points + Rebounds + Assists', ' Points + Rebounds',
-                                             ' Points + Assists', ' Rebounds + Assists']:
+                                for suffix in [
+                                    " Points",
+                                    " Rebounds",
+                                    " Assists",
+                                    " Three Pointers Made",
+                                    " Points + Rebounds + Assists",
+                                    " Points + Rebounds",
+                                    " Points + Assists",
+                                    " Rebounds + Assists",
+                                ]:
                                     if player_name.endswith(suffix):
-                                        player_name = player_name[:-len(suffix)].strip()
+                                        player_name = player_name[: -len(suffix)].strip()
                                         break
 
                             # Fallback to parsing from statEntityID if needed
@@ -150,47 +161,52 @@ class NBAPropsFetcher:
                                 player_name = self._parse_player_name(stat_entity_id)
 
                             # Get team info (not always present in NBA data)
-                            team = odd.get('team', '')
+                            team = odd.get("team", "")
 
                             # Get line from fairOverUnder or bookOverUnder
-                            line = odd.get('fairOverUnder') or odd.get('bookOverUnder')
+                            line = odd.get("fairOverUnder") or odd.get("bookOverUnder")
 
                             # Get odds for over and under
-                            odds_over_str = odd.get('fairOdds') or odd.get('bookOdds')
+                            odds_over_str = odd.get("fairOdds") or odd.get("bookOdds")
 
                             # Try to find the opposing odd for under odds
-                            opposing_odd_id = odd.get('opposingOddID')
+                            opposing_odd_id = odd.get("opposingOddID")
                             odds_under_str = None
                             if opposing_odd_id and opposing_odd_id in odds:
                                 opposing_odd = odds[opposing_odd_id]
-                                odds_under_str = opposing_odd.get('fairOdds') or \
-                                               opposing_odd.get('bookOdds')
+                                odds_under_str = opposing_odd.get("fairOdds") or opposing_odd.get(
+                                    "bookOdds"
+                                )
 
                             # Convert American odds strings to integers
                             odds_over = self._parse_american_odds(odds_over_str)
                             odds_under = self._parse_american_odds(odds_under_str)
 
                             # Get actual result if available
-                            actual_result = odd.get('score')
+                            actual_result = odd.get("score")
 
-                            all_props.append({
-                                'date': date,
-                                'event_id': event_id,
-                                'player': player_name,
-                                'team': team,
-                                'home_team': home_team,
-                                'away_team': away_team,
-                                'prop_type': prop_type,
-                                'line': float(line) if line else 0.0,
-                                'odds_over': odds_over,
-                                'odds_under': odds_under,
-                                'actual_result': actual_result if actual_result is not None else '',
-                                'stat_id': stat_id,
-                                'stat_entity_id': stat_entity_id
-                            })
+                            all_props.append(
+                                {
+                                    "date": date,
+                                    "event_id": event_id,
+                                    "player": player_name,
+                                    "team": team,
+                                    "home_team": home_team,
+                                    "away_team": away_team,
+                                    "prop_type": prop_type,
+                                    "line": float(line) if line else 0.0,
+                                    "odds_over": odds_over,
+                                    "odds_under": odds_under,
+                                    "actual_result": (
+                                        actual_result if actual_result is not None else ""
+                                    ),
+                                    "stat_id": stat_id,
+                                    "stat_entity_id": stat_entity_id,
+                                }
+                            )
 
                 # Check for next page
-                next_cursor = result.get('nextCursor')
+                next_cursor = result.get("nextCursor")
                 if not next_cursor:
                     break
 
@@ -200,10 +216,12 @@ class NBAPropsFetcher:
             # Create DataFrame from all props
             if all_props:
                 df = pd.DataFrame(all_props)
-                print(f"  {date}: {len(df)} props (PTS:{(df['prop_type']=='points').sum()}, "
-                      f"REB:{(df['prop_type']=='rebounds').sum()}, "
-                      f"AST:{(df['prop_type']=='assists').sum()}, "
-                      f"PRA:{(df['prop_type']=='points+rebounds+assists').sum()})")
+                print(
+                    f"  {date}: {len(df)} props (PTS:{(df['prop_type']=='points').sum()}, "
+                    f"REB:{(df['prop_type']=='rebounds').sum()}, "
+                    f"AST:{(df['prop_type']=='assists').sum()}, "
+                    f"PRA:{(df['prop_type']=='points+rebounds+assists').sum()})"
+                )
                 return df
             else:
                 print(f"  {date}: 0 relevant props")
@@ -212,6 +230,7 @@ class NBAPropsFetcher:
         except Exception as e:
             print(f"  {date}: Error - {e}")
             import traceback
+
             traceback.print_exc()
             return pd.DataFrame()
 
@@ -240,14 +259,14 @@ class NBAPropsFetcher:
 
         # Map of API statIDs to our prop types (keep same naming)
         target_props = [
-            'points',
-            'rebounds',
-            'assists',
-            'threePointersMade',
-            'points+rebounds+assists',
-            'points+rebounds',
-            'points+assists',
-            'rebounds+assists'
+            "points",
+            "rebounds",
+            "assists",
+            "threePointersMade",
+            "points+rebounds+assists",
+            "points+rebounds",
+            "points+assists",
+            "rebounds+assists",
         ]
 
         return stat_id if stat_id in target_props else None
@@ -266,16 +285,16 @@ class NBAPropsFetcher:
             Formatted player name
         """
         if not stat_entity_id:
-            return ''
+            return ""
 
         # Remove _NBA suffix and number
-        parts = stat_entity_id.replace('_NBA', '').split('_')
+        parts = stat_entity_id.replace("_NBA", "").split("_")
 
         # Filter out numeric parts
         name_parts = [p for p in parts if not p.isdigit()]
 
         # Title case each part
-        formatted_name = ' '.join(p.title() for p in name_parts)
+        formatted_name = " ".join(p.title() for p in name_parts)
 
         return formatted_name
 
@@ -302,16 +321,18 @@ class NBAPropsFetcher:
         if isinstance(odds_str, int):
             return odds_str
 
-        if str(odds_str).upper() in ['EVEN', 'EV']:
+        if str(odds_str).upper() in ["EVEN", "EV"]:
             return 100
 
         # Remove '+' prefix and convert to int
         try:
-            return int(str(odds_str).replace('+', ''))
+            return int(str(odds_str).replace("+", ""))
         except (ValueError, AttributeError):
             return -110
 
-    def fetch_season_to_date(self, start_date: str = "2024-10-22", end_date: str = None) -> pd.DataFrame:
+    def fetch_season_to_date(
+        self, start_date: str = "2024-10-22", end_date: str = None
+    ) -> pd.DataFrame:
         """
         Fetch all NBA props from season start to present
 
@@ -334,13 +355,13 @@ class NBAPropsFetcher:
         if end_date is None:
             end_date = "2024-11-23"
 
-        start = datetime.strptime(start_date, '%Y-%m-%d')
-        today = datetime.strptime(end_date, '%Y-%m-%d')
+        start = datetime.strptime(start_date, "%Y-%m-%d")
+        today = datetime.strptime(end_date, "%Y-%m-%d")
 
         dates = []
         current = start
         while current <= today:
-            dates.append(current.strftime('%Y-%m-%d'))
+            dates.append(current.strftime("%Y-%m-%d"))
             current += timedelta(days=1)
 
         print(f"Date range: {dates[0]} to {dates[-1]}")
@@ -373,7 +394,7 @@ class NBAPropsFetcher:
             print(f"Total props fetched: {len(combined):,}")
             print()
             print("Breakdown by prop type:")
-            print(combined['prop_type'].value_counts())
+            print(combined["prop_type"].value_counts())
             print()
             print(f"Date range: {combined['date'].min()} to {combined['date'].max()}")
             print(f"Unique players: {combined['player'].nunique()}")
@@ -405,7 +426,7 @@ def main():
         df = fetcher.fetch_date(date)
 
         if not df.empty:
-            output_file = f'nba_props_{date}.csv'
+            output_file = f"nba_props_{date}.csv"
             df.to_csv(output_file, index=False)
             print()
             print(f"Saved to: {output_file}")
@@ -415,10 +436,16 @@ def main():
 
         if not df.empty:
             # Save to project data directory
-            output_dir = Path(__file__).parent.parent.parent.parent / 'data' / 'raw' / 'sportsgameodds' / 'nba'
+            output_dir = (
+                Path(__file__).parent.parent.parent.parent
+                / "data"
+                / "raw"
+                / "sportsgameodds"
+                / "nba"
+            )
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            output_file = output_dir / 'all_nba_props_2024_2025.csv'
+            output_file = output_dir / "all_nba_props_2024_2025.csv"
             df.to_csv(output_file, index=False)
             print(f"💾 Saved to: {output_file}")
             print()

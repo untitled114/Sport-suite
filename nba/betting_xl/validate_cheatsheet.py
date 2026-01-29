@@ -15,30 +15,34 @@ Usage:
     python validate_cheatsheet.py --start 2026-01-01 --end 2026-01-07
 """
 
-import sys
 import argparse
-import psycopg2
-from pathlib import Path
-from datetime import datetime, timedelta
-from collections import defaultdict
 import os
+from collections import defaultdict
+from datetime import datetime, timedelta
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+import psycopg2
 
 # Database configs
 INTELLIGENCE_DB = {
-    'host': 'localhost', 'port': 5539,
-    'database': 'nba_intelligence', 'user': os.getenv('DB_USER', 'nba_user'), 'password': os.getenv('DB_PASSWORD')
+    "host": "localhost",
+    "port": 5539,
+    "database": "nba_intelligence",
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
 }
 
 PLAYERS_DB = {
-    'host': 'localhost', 'port': 5536,
-    'database': 'nba_players', 'user': os.getenv('DB_USER', 'nba_user'), 'password': os.getenv('DB_PASSWORD')
+    "host": "localhost",
+    "port": 5536,
+    "database": "nba_players",
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
 }
 
 
-def get_cheatsheet_with_actuals(start_date: str, end_date: str, platform: str = 'underdog',
-                                 stat_types: list = None):
+def get_cheatsheet_with_actuals(
+    start_date: str, end_date: str, platform: str = "underdog", stat_types: list = None
+):
     """
     Get cheat sheet recommendations joined with actual results.
 
@@ -67,7 +71,7 @@ def get_cheatsheet_with_actuals(start_date: str, end_date: str, platform: str = 
     params = [start_date, end_date, platform]
 
     if stat_types:
-        placeholders = ', '.join(['%s'] * len(stat_types))
+        placeholders = ", ".join(["%s"] * len(stat_types))
         query += f" AND stat_type IN ({placeholders})"
         params.extend(stat_types)
 
@@ -92,29 +96,29 @@ def get_cheatsheet_with_actuals(start_date: str, end_date: str, platform: str = 
     results = []
     for row in cheatsheet_rows:
         data = dict(zip(columns, row))
-        player_name = data['player_name']
-        game_date = data['game_date']
-        stat_type = data['stat_type']
-        line = float(data['line'])
+        player_name = data["player_name"]
+        game_date = data["game_date"]
+        stat_type = data["stat_type"]
+        line = float(data["line"])
 
         # Map stat_type to column in player_game_logs
         stat_column_map = {
-            'POINTS': 'points',
-            'REBOUNDS': 'rebounds',
-            'ASSISTS': 'assists',
-            'THREES': 'three_pointers_made',
+            "POINTS": "points",
+            "REBOUNDS": "rebounds",
+            "ASSISTS": "assists",
+            "THREES": "three_pointers_made",
         }
 
         # Combo stat mappings (PA, PR, RA, PRA)
         combo_stat_map = {
-            'PA': ('points', 'assists'),           # Points + Assists
-            'PR': ('points', 'rebounds'),          # Points + Rebounds
-            'RA': ('rebounds', 'assists'),         # Rebounds + Assists
-            'PRA': ('points', 'rebounds', 'assists'),  # Points + Rebounds + Assists
+            "PA": ("points", "assists"),  # Points + Assists
+            "PR": ("points", "rebounds"),  # Points + Rebounds
+            "RA": ("rebounds", "assists"),  # Rebounds + Assists
+            "PRA": ("points", "rebounds", "assists"),  # Points + Rebounds + Assists
             # Legacy names (for backwards compatibility)
-            'POINTS_ASSISTS': ('points', 'assists'),
-            'POINTS_REBOUNDS': ('points', 'rebounds'),
-            'REBOUNDS_ASSISTS': ('rebounds', 'assists'),
+            "POINTS_ASSISTS": ("points", "assists"),
+            "POINTS_REBOUNDS": ("points", "rebounds"),
+            "REBOUNDS_ASSISTS": ("rebounds", "assists"),
         }
 
         stat_col = stat_column_map.get(stat_type)
@@ -122,23 +126,29 @@ def get_cheatsheet_with_actuals(start_date: str, end_date: str, platform: str = 
 
         if stat_col:
             # Single stat - join with player_profile to match by name
-            cursor_players.execute(f"""
+            cursor_players.execute(
+                f"""
                 SELECT g.{stat_col}
                 FROM player_game_logs g
                 JOIN player_profile p ON g.player_id = p.player_id
                 WHERE LOWER(p.full_name) = LOWER(%s) AND g.game_date = %s
                 LIMIT 1
-            """, (player_name, game_date))
+            """,
+                (player_name, game_date),
+            )
         elif combo_cols:
             # Combo stat - sum the columns
-            sum_expr = ' + '.join([f'g.{col}' for col in combo_cols])
-            cursor_players.execute(f"""
+            sum_expr = " + ".join([f"g.{col}" for col in combo_cols])
+            cursor_players.execute(
+                f"""
                 SELECT {sum_expr} as combo
                 FROM player_game_logs g
                 JOIN player_profile p ON g.player_id = p.player_id
                 WHERE LOWER(p.full_name) = LOWER(%s) AND g.game_date = %s
                 LIMIT 1
-            """, (player_name, game_date))
+            """,
+                (player_name, game_date),
+            )
         else:
             continue
 
@@ -146,15 +156,15 @@ def get_cheatsheet_with_actuals(start_date: str, end_date: str, platform: str = 
 
         if result_row and result_row[0] is not None:
             actual = float(result_row[0])
-            data['actual_value'] = actual
+            data["actual_value"] = actual
 
             # Determine result (OVER bet)
             if actual > line:
-                data['result'] = 'WIN'
+                data["result"] = "WIN"
             elif actual < line:
-                data['result'] = 'LOSS'
+                data["result"] = "LOSS"
             else:
-                data['result'] = 'PUSH'
+                data["result"] = "PUSH"
 
             results.append(data)
 
@@ -170,7 +180,7 @@ def analyze_by_filter(results: list, filter_name: str, filter_fn, buckets: list)
     print(f"WIN RATE BY {filter_name.upper()}")
     print(f"{'='*60}")
 
-    bucket_stats = defaultdict(lambda: {'wins': 0, 'losses': 0, 'pushes': 0})
+    bucket_stats = defaultdict(lambda: {"wins": 0, "losses": 0, "pushes": 0})
 
     for r in results:
         bucket = filter_fn(r)
@@ -180,51 +190,55 @@ def analyze_by_filter(results: list, filter_name: str, filter_fn, buckets: list)
         # Find which bucket this falls into
         for b_name, b_min, b_max in buckets:
             if b_min <= bucket < b_max:
-                if r['result'] == 'WIN':
-                    bucket_stats[b_name]['wins'] += 1
-                elif r['result'] == 'LOSS':
-                    bucket_stats[b_name]['losses'] += 1
+                if r["result"] == "WIN":
+                    bucket_stats[b_name]["wins"] += 1
+                elif r["result"] == "LOSS":
+                    bucket_stats[b_name]["losses"] += 1
                 else:
-                    bucket_stats[b_name]['pushes'] += 1
+                    bucket_stats[b_name]["pushes"] += 1
                 break
 
     print(f"{'Bucket':<20} {'W':>5} {'L':>5} {'P':>3} {'Total':>6} {'WR':>8} {'vs 52.4%':>10}")
     print("-" * 60)
 
-    for b_name, b_min, b_max in buckets:
+    for b_name, _b_min, _b_max in buckets:
         stats = bucket_stats[b_name]
-        total = stats['wins'] + stats['losses']
+        total = stats["wins"] + stats["losses"]
         if total > 0:
-            wr = stats['wins'] / total * 100
+            wr = stats["wins"] / total * 100
             edge = wr - 52.4  # breakeven for -110
             edge_str = f"+{edge:.1f}%" if edge > 0 else f"{edge:.1f}%"
-            print(f"{b_name:<20} {stats['wins']:>5} {stats['losses']:>5} {stats['pushes']:>3} {total:>6} {wr:>7.1f}% {edge_str:>10}")
+            print(
+                f"{b_name:<20} {stats['wins']:>5} {stats['losses']:>5} {stats['pushes']:>3} {total:>6} {wr:>7.1f}% {edge_str:>10}"
+            )
         else:
             print(f"{b_name:<20} {'-':>5} {'-':>5} {'-':>3} {0:>6} {'-':>8} {'-':>10}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Validate cheat sheet recommendations')
-    parser.add_argument('--days', type=int, default=7, help='Number of days to analyze')
-    parser.add_argument('--start', type=str, help='Start date (YYYY-MM-DD)')
-    parser.add_argument('--end', type=str, help='End date (YYYY-MM-DD)')
-    parser.add_argument('--platform', type=str, default='underdog', help='Platform to analyze')
-    parser.add_argument('--stat-types', type=str, help='Comma-separated stat types (e.g., PA,PR,RA)')
+    parser = argparse.ArgumentParser(description="Validate cheat sheet recommendations")
+    parser.add_argument("--days", type=int, default=7, help="Number of days to analyze")
+    parser.add_argument("--start", type=str, help="Start date (YYYY-MM-DD)")
+    parser.add_argument("--end", type=str, help="End date (YYYY-MM-DD)")
+    parser.add_argument("--platform", type=str, default="underdog", help="Platform to analyze")
+    parser.add_argument(
+        "--stat-types", type=str, help="Comma-separated stat types (e.g., PA,PR,RA)"
+    )
 
     args = parser.parse_args()
 
     # Parse stat types if provided
     stat_types = None
     if args.stat_types:
-        stat_types = [s.strip().upper() for s in args.stat_types.split(',')]
+        stat_types = [s.strip().upper() for s in args.stat_types.split(",")]
 
     # Determine date range
     if args.start and args.end:
         start_date = args.start
         end_date = args.end
     else:
-        end_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-        start_date = (datetime.now() - timedelta(days=args.days)).strftime('%Y-%m-%d')
+        end_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        start_date = (datetime.now() - timedelta(days=args.days)).strftime("%Y-%m-%d")
 
     print("\n" + "=" * 60)
     print("BETTINGPROS CHEAT SHEET VALIDATION")
@@ -247,12 +261,16 @@ def main():
         return
 
     # Overall stats
-    wins = sum(1 for r in results if r['result'] == 'WIN')
-    losses = sum(1 for r in results if r['result'] == 'LOSS')
-    pushes = sum(1 for r in results if r['result'] == 'PUSH')
+    wins = sum(1 for r in results if r["result"] == "WIN")
+    losses = sum(1 for r in results if r["result"] == "LOSS")
+    pushes = sum(1 for r in results if r["result"] == "PUSH")
     total = wins + losses
 
-    print(f"\nOVERALL: {wins}W / {losses}L / {pushes}P = {wins/total*100:.1f}% WR" if total > 0 else "\nNo graded results")
+    print(
+        f"\nOVERALL: {wins}W / {losses}L / {pushes}P = {wins/total*100:.1f}% WR"
+        if total > 0
+        else "\nNo graded results"
+    )
     print(f"Total picks analyzed: {len(results)}")
 
     if total == 0:
@@ -260,64 +278,69 @@ def main():
 
     # Analyze by BET RATING (1-5 stars)
     analyze_by_filter(
-        results, "BET RATING (Stars)",
-        lambda r: r.get('bet_rating'),
+        results,
+        "BET RATING (Stars)",
+        lambda r: r.get("bet_rating"),
         [
             ("1 star", 1, 2),
             ("2 stars", 2, 3),
             ("3 stars", 3, 4),
             ("4 stars", 4, 5),
             ("5 stars", 5, 6),
-        ]
+        ],
     )
 
     # Analyze by EV%
     analyze_by_filter(
-        results, "EXPECTED VALUE (EV%)",
-        lambda r: r.get('ev_pct'),
+        results,
+        "EXPECTED VALUE (EV%)",
+        lambda r: r.get("ev_pct"),
         [
             ("EV < 10%", 0, 10),
             ("EV 10-20%", 10, 20),
             ("EV 20-30%", 20, 30),
             ("EV 30-40%", 30, 40),
             ("EV 40%+", 40, 100),
-        ]
+        ],
     )
 
     # Analyze by PROJECTION DIFF
     analyze_by_filter(
-        results, "PROJECTION DIFF (Proj - Line)",
-        lambda r: float(r.get('projection_diff') or 0),
+        results,
+        "PROJECTION DIFF (Proj - Line)",
+        lambda r: float(r.get("projection_diff") or 0),
         [
             ("Diff < 1", -10, 1),
             ("Diff 1-2", 1, 2),
             ("Diff 2-3", 2, 3),
             ("Diff 3-5", 3, 5),
             ("Diff 5+", 5, 50),
-        ]
+        ],
     )
 
     # Analyze by HIT RATE L5
     analyze_by_filter(
-        results, "HIT RATE LAST 5 GAMES",
-        lambda r: float(r.get('hit_rate_l5') or 0) * 100,
+        results,
+        "HIT RATE LAST 5 GAMES",
+        lambda r: float(r.get("hit_rate_l5") or 0) * 100,
         [
             ("L5 < 40%", 0, 40),
             ("L5 40-60%", 40, 60),
             ("L5 60-80%", 60, 80),
             ("L5 80%+", 80, 101),
-        ]
+        ],
     )
 
     # Analyze by OPP RANK
     analyze_by_filter(
-        results, "OPPONENT DEFENSE RANK",
-        lambda r: r.get('opp_rank'),
+        results,
+        "OPPONENT DEFENSE RANK",
+        lambda r: r.get("opp_rank"),
         [
             ("Top 10 (tough)", 1, 11),
             ("11-20", 11, 21),
             ("21-30 (weak)", 21, 31),
-        ]
+        ],
     )
 
     # Analyze by STAT TYPE
@@ -325,20 +348,20 @@ def main():
     print("WIN RATE BY STAT TYPE")
     print(f"{'='*60}")
 
-    stat_stats = defaultdict(lambda: {'wins': 0, 'losses': 0})
+    stat_stats = defaultdict(lambda: {"wins": 0, "losses": 0})
     for r in results:
-        st = r['stat_type']
-        if r['result'] == 'WIN':
-            stat_stats[st]['wins'] += 1
-        elif r['result'] == 'LOSS':
-            stat_stats[st]['losses'] += 1
+        st = r["stat_type"]
+        if r["result"] == "WIN":
+            stat_stats[st]["wins"] += 1
+        elif r["result"] == "LOSS":
+            stat_stats[st]["losses"] += 1
 
     print(f"{'Stat Type':<20} {'W':>5} {'L':>5} {'Total':>6} {'WR':>8}")
     print("-" * 45)
     for st in sorted(stat_stats.keys()):
         s = stat_stats[st]
-        total = s['wins'] + s['losses']
-        wr = s['wins'] / total * 100 if total > 0 else 0
+        total = s["wins"] + s["losses"]
+        wr = s["wins"] / total * 100 if total > 0 else 0
         print(f"{st:<20} {s['wins']:>5} {s['losses']:>5} {total:>6} {wr:>7.1f}%")
 
     # Best combinations
@@ -347,33 +370,71 @@ def main():
     print(f"{'='*60}")
 
     # High rating + high EV
-    high_conf = [r for r in results if r.get('bet_rating', 0) >= 4 and (r.get('ev_pct') or 0) >= 20]
+    high_conf = [r for r in results if r.get("bet_rating", 0) >= 4 and (r.get("ev_pct") or 0) >= 20]
     if high_conf:
-        w = sum(1 for r in high_conf if r['result'] == 'WIN')
-        l = sum(1 for r in high_conf if r['result'] == 'LOSS')
-        if w + l > 0:
-            print(f"Rating ≥4 AND EV ≥20%: {w}W/{l}L = {w/(w+l)*100:.1f}% ({w+l} picks)")
+        wins = sum(1 for r in high_conf if r["result"] == "WIN")
+        losses = sum(1 for r in high_conf if r["result"] == "LOSS")
+        if wins + losses > 0:
+            print(
+                f"Rating ≥4 AND EV ≥20%: {wins}W/{losses}L = {wins/(wins+losses)*100:.1f}% ({wins+losses} picks)"
+            )
 
     # High rating + high proj diff
-    high_diff = [r for r in results if r.get('bet_rating', 0) >= 4 and float(r.get('projection_diff') or 0) >= 2]
+    high_diff = [
+        r
+        for r in results
+        if r.get("bet_rating", 0) >= 4 and float(r.get("projection_diff") or 0) >= 2
+    ]
     if high_diff:
-        w = sum(1 for r in high_diff if r['result'] == 'WIN')
-        l = sum(1 for r in high_diff if r['result'] == 'LOSS')
-        if w + l > 0:
-            print(f"Rating ≥4 AND Diff ≥2: {w}W/{l}L = {w/(w+l)*100:.1f}% ({w+l} picks)")
+        wins = sum(1 for r in high_diff if r["result"] == "WIN")
+        losses = sum(1 for r in high_diff if r["result"] == "LOSS")
+        if wins + losses > 0:
+            print(
+                f"Rating ≥4 AND Diff ≥2: {wins}W/{losses}L = {wins/(wins+losses)*100:.1f}% ({wins+losses} picks)"
+            )
 
     # 5-star only
-    five_star = [r for r in results if r.get('bet_rating', 0) == 5]
+    five_star = [r for r in results if r.get("bet_rating", 0) == 5]
     if five_star:
-        w = sum(1 for r in five_star if r['result'] == 'WIN')
-        l = sum(1 for r in five_star if r['result'] == 'LOSS')
-        if w + l > 0:
-            print(f"5-Star Only: {w}W/{l}L = {w/(w+l)*100:.1f}% ({w+l} picks)")
+        wins = sum(1 for r in five_star if r["result"] == "WIN")
+        losses = sum(1 for r in five_star if r["result"] == "LOSS")
+        if wins + losses > 0:
+            print(
+                f"5-Star Only: {wins}W/{losses}L = {wins/(wins+losses)*100:.1f}% ({wins+losses} picks)"
+            )
+
+    # Rebounds Meta Filter (Jan 2026)
+    # Criteria: projection_diff >= 1.0, hit_rate_season >= 0.6, hit_rate_l15 >= 0.6
+    rebounds_meta = [
+        r
+        for r in results
+        if r.get("stat_type") == "REBOUNDS"
+        and float(r.get("projection_diff") or 0) >= 1.0
+        and float(r.get("hit_rate_season") or 0) >= 0.6
+        and float(r.get("hit_rate_l15") or 0) >= 0.6
+    ]
+    if rebounds_meta:
+        wins = sum(1 for r in rebounds_meta if r["result"] == "WIN")
+        losses = sum(1 for r in rebounds_meta if r["result"] == "LOSS")
+        if wins + losses > 0:
+            print(
+                f"REBOUNDS Meta (Diff≥1, Season≥60%, L15≥60%): {wins}W/{losses}L = {wins/(wins+losses)*100:.1f}% ({wins+losses} picks)"
+            )
+
+    # Rebounds baseline (no filter) for comparison
+    rebounds_all = [r for r in results if r.get("stat_type") == "REBOUNDS"]
+    if rebounds_all:
+        wins = sum(1 for r in rebounds_all if r["result"] == "WIN")
+        losses = sum(1 for r in rebounds_all if r["result"] == "LOSS")
+        if wins + losses > 0:
+            print(
+                f"REBOUNDS Baseline (all): {wins}W/{losses}L = {wins/(wins+losses)*100:.1f}% ({wins+losses} picks)"
+            )
 
     print("\n" + "=" * 60)
     print("Note: Need 50+ samples per bucket for statistical significance")
     print("=" * 60 + "\n")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

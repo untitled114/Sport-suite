@@ -23,18 +23,15 @@ Usage:
     python fetch_cheatsheet.py --platform all
 """
 
-import sys
 import logging
-import requests
-from pathlib import Path
-from typing import List, Dict, Any, Optional, Set
-from datetime import datetime
 import os
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set
 
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent))
+import requests
 
-from base_fetcher import BaseFetcher
+from nba.betting_xl.fetchers.base_fetcher import BaseFetcher
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -56,50 +53,60 @@ class CheatSheetFetcher(BaseFetcher):
     # Verified 2026-01-08 from /v3/markets endpoint
     MARKETS = {
         # Single stats
-        'points': 156,
-        'rebounds': 157,
-        'assists': 151,
-        'threes': 162,       # 3-pointers made
-        'steals': 160,
-        'blocks': 152,
+        "points": 156,
+        "rebounds": 157,
+        "assists": 151,
+        "threes": 162,  # 3-pointers made
+        "steals": 160,
+        "blocks": 152,
         # Combo stats (CORRECT IDs - verified 2026-01-08)
-        'pts_ast': 335,      # Points + Assists (PA)
-        'pts_reb': 336,      # Points + Rebounds (PR)
-        'reb_ast': 337,      # Rebounds + Assists (RA)
-        'pts_reb_ast': 338,  # Points + Rebounds + Assists (PRA)
+        "pts_ast": 335,  # Points + Assists (PA)
+        "pts_reb": 336,  # Points + Rebounds (PR)
+        "reb_ast": 337,  # Rebounds + Assists (RA)
+        "pts_reb_ast": 338,  # Points + Rebounds + Assists (PRA)
     }
 
     # Stat type mapping for combo markets
     COMBO_STAT_TYPES = {
-        'pts_ast': 'PA',              # Points + Assists
-        'pts_reb': 'PR',              # Points + Rebounds
-        'reb_ast': 'RA',              # Rebounds + Assists
-        'pts_reb_ast': 'PRA',         # Points + Rebounds + Assists
+        "pts_ast": "PA",  # Points + Assists
+        "pts_reb": "PR",  # Points + Rebounds
+        "reb_ast": "RA",  # Rebounds + Assists
+        "pts_reb_ast": "PRA",  # Points + Rebounds + Assists
     }
 
     # Platform book IDs
     PLATFORM_BOOKS = {
-        'underdog': 36,
-        'draftkings': 12,
-        'fanduel': 10,
-        'betmgm': 19,
-        'caesars': 13,
-        'bet365': 24,
-        'betrivers': 18,
-        'espnbet': 33,
+        "underdog": 36,
+        "draftkings": 12,
+        "fanduel": 10,
+        "betmgm": 19,
+        "caesars": 13,
+        "bet365": 24,
+        "betrivers": 18,
+        "espnbet": 33,
     }
 
     # Which markets each platform offers
     # Underdog has: points, rebounds, assists, steals, blocks + combos (PA, PR, RA)
     # NOTE: PRA and THREES are on other books but NOT Underdog
     PLATFORM_MARKETS = {
-        'underdog': [
-            'points', 'rebounds', 'assists',  # Core single stats
-            'pts_ast', 'pts_reb', 'reb_ast',  # Combo stats (PA, PR, RA)
+        "underdog": [
+            "points",
+            "rebounds",
+            "assists",  # Core single stats
+            "pts_ast",
+            "pts_reb",
+            "reb_ast",  # Combo stats (PA, PR, RA)
         ],
-        'all': [
-            'points', 'rebounds', 'assists', 'threes',  # Single stats
-            'pts_ast', 'pts_reb', 'reb_ast', 'pts_reb_ast',  # Combo stats
+        "all": [
+            "points",
+            "rebounds",
+            "assists",
+            "threes",  # Single stats
+            "pts_ast",
+            "pts_reb",
+            "reb_ast",
+            "pts_reb_ast",  # Combo stats
         ],
     }
 
@@ -107,17 +114,17 @@ class CheatSheetFetcher(BaseFetcher):
 
     # Premium authentication
     PREMIUM_HEADERS = {
-        'x-api-key': os.getenv('BETTINGPROS_API_KEY'),
-        'x-level': 'cHJlbWl1bQ==',
-        'accept': 'application/json'
+        "x-api-key": os.getenv("BETTINGPROS_API_KEY"),
+        "x-level": "cHJlbWl1bQ==",
+        "accept": "application/json",
     }
 
     def __init__(
         self,
         date: str = None,
-        platform: str = 'all',
+        platform: str = "all",
         include_combos: bool = True,
-        verbose: bool = True
+        verbose: bool = True,
     ):
         """
         Initialize cheat sheet fetcher.
@@ -129,14 +136,14 @@ class CheatSheetFetcher(BaseFetcher):
             verbose: Enable verbose logging
         """
         super().__init__(
-            source_name=f'cheatsheet_{platform}',
+            source_name=f"cheatsheet_{platform}",
             rate_limit=2.5,  # 2.5 seconds between requests
             max_retries=3,
             timeout=30,
-            verbose=verbose
+            verbose=verbose,
         )
 
-        self.date = date or datetime.now().strftime('%Y-%m-%d')
+        self.date = date or datetime.now().strftime("%Y-%m-%d")
         self.platform = platform.lower()
         self.include_combos = include_combos
 
@@ -151,8 +158,11 @@ class CheatSheetFetcher(BaseFetcher):
 
         # Filter out combo markets if not wanted
         if not include_combos:
-            self.markets_to_fetch = [m for m in self.markets_to_fetch
-                                     if m in ['points', 'rebounds', 'assists', 'threes', 'steals', 'blocks']]
+            self.markets_to_fetch = [
+                m
+                for m in self.markets_to_fetch
+                if m in ["points", "rebounds", "assists", "threes", "steals", "blocks"]
+            ]
 
         # Teams playing on requested date (for date filtering)
         self.teams_playing_today: Set[str] = set()
@@ -160,15 +170,15 @@ class CheatSheetFetcher(BaseFetcher):
     def _normalize_team_abbrev(self, abbrev: str) -> str:
         """Normalize team abbreviation to canonical format"""
         mapping = {
-            'GS': 'GSW',
-            'NO': 'NOP',
-            'NOR': 'NOP',
-            'SA': 'SAS',
-            'WSH': 'WAS',
-            'NY': 'NYK',
-            'UTAH': 'UTA',
-            'PHX': 'PHO',
-            'BKN': 'BRK',
+            "GS": "GSW",
+            "NO": "NOP",
+            "NOR": "NOP",
+            "SA": "SAS",
+            "WSH": "WAS",
+            "NY": "NYK",
+            "UTAH": "UTA",
+            "PHX": "PHO",
+            "BKN": "BRK",
         }
         return mapping.get(abbrev.upper(), abbrev.upper())
 
@@ -182,7 +192,7 @@ class CheatSheetFetcher(BaseFetcher):
             Set of team abbreviations playing on the requested date
         """
         # Convert date to ESPN format (YYYYMMDD)
-        date_param = self.date.replace('-', '')
+        date_param = self.date.replace("-", "")
 
         try:
             url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={date_param}"
@@ -193,23 +203,25 @@ class CheatSheetFetcher(BaseFetcher):
                 return set()
 
             data = response.json()
-            events = data.get('events', [])
+            events = data.get("events", [])
 
             # Build set of teams playing today
             teams_today = set()
             for event in events:
-                competitions = event.get('competitions', [])
+                competitions = event.get("competitions", [])
                 if not competitions:
                     continue
 
                 competition = competitions[0]
-                competitors = competition.get('competitors', [])
+                competitors = competition.get("competitors", [])
 
                 # Get game date from event and verify it matches requested date
-                game_date_str = event.get('date', '')
+                game_date_str = event.get("date", "")
                 if game_date_str:
                     try:
-                        game_date = datetime.fromisoformat(game_date_str.replace('Z', '+00:00')).strftime('%Y-%m-%d')
+                        game_date = datetime.fromisoformat(
+                            game_date_str.replace("Z", "+00:00")
+                        ).strftime("%Y-%m-%d")
                         # Only include teams if game is on requested date
                         if game_date != self.date:
                             continue
@@ -218,7 +230,7 @@ class CheatSheetFetcher(BaseFetcher):
 
                 # Add both teams
                 for competitor in competitors:
-                    team_abbrev = competitor.get('team', {}).get('abbreviation', '')
+                    team_abbrev = competitor.get("team", {}).get("abbreviation", "")
                     if team_abbrev:
                         team_abbrev = self._normalize_team_abbrev(team_abbrev)
                         teams_today.add(team_abbrev)
@@ -230,11 +242,7 @@ class CheatSheetFetcher(BaseFetcher):
             logger.error(f"Failed to fetch ESPN schedule: {e}")
             return set()
 
-    def fetch_market(
-        self,
-        market_name: str,
-        market_id: int
-    ) -> List[Dict[str, Any]]:
+    def fetch_market(self, market_name: str, market_id: int) -> List[Dict[str, Any]]:
         """
         Fetch all props for a single market with full cheat sheet data.
 
@@ -250,30 +258,27 @@ class CheatSheetFetcher(BaseFetcher):
 
         while True:
             params = {
-                'sport': 'NBA',
-                'date': self.date,
-                'market_id': market_id,
-                'limit': 500,
-                'page': page,
+                "sport": "NBA",
+                "date": self.date,
+                "market_id": market_id,
+                "limit": 500,
+                "page": page,
             }
 
             # Add book filter if fetching for specific platform
             if self.book_id is not None:
-                params['book_id'] = self.book_id
+                params["book_id"] = self.book_id
 
             response = self._make_request(
-                url=self.API_BASE_URL,
-                method='GET',
-                params=params,
-                headers=self.PREMIUM_HEADERS
+                url=self.API_BASE_URL, method="GET", params=params, headers=self.PREMIUM_HEADERS
             )
 
             if not response:
                 break
 
             # Validate response
-            content_type = response.headers.get('content-type', '').lower()
-            if 'application/json' not in content_type:
+            content_type = response.headers.get("content-type", "").lower()
+            if "application/json" not in content_type:
                 logger.warning(f"Invalid content-type for {market_name}: {content_type}")
                 break
 
@@ -287,7 +292,7 @@ class CheatSheetFetcher(BaseFetcher):
                 logger.error(f"JSON parse error for {market_name}: {e}")
                 break
 
-            page_props = data.get('props', [])
+            page_props = data.get("props", [])
             if not page_props:
                 break
 
@@ -301,8 +306,8 @@ class CheatSheetFetcher(BaseFetcher):
                 print(f"  {market_name} Page {page}: +{len(page_props)} props", flush=True)
 
             # Check pagination
-            pagination = data.get('_pagination', {})
-            total_pages = pagination.get('total_pages', 1)
+            pagination = data.get("_pagination", {})
+            total_pages = pagination.get("total_pages", 1)
 
             if page >= total_pages:
                 break
@@ -312,9 +317,7 @@ class CheatSheetFetcher(BaseFetcher):
         return props
 
     def _parse_cheatsheet_prop(
-        self,
-        raw_prop: Dict[str, Any],
-        market_name: str
+        self, raw_prop: Dict[str, Any], market_name: str
     ) -> Optional[Dict[str, Any]]:
         """
         Parse raw prop with FULL cheat sheet data.
@@ -334,73 +337,73 @@ class CheatSheetFetcher(BaseFetcher):
         """
         try:
             # Get player info
-            participant = raw_prop.get('participant', {})
-            player_name = participant.get('name', '')
+            participant = raw_prop.get("participant", {})
+            player_name = participant.get("name", "")
             if not player_name:
                 return None
 
             player_name = self.normalize_player_name(player_name)
-            player_info = participant.get('player', {})
-            player_team = player_info.get('team', '')
+            player_info = participant.get("player", {})
+            player_team = player_info.get("team", "")
 
             # Get over/under data
-            over_data = raw_prop.get('over', {})
-            under_data = raw_prop.get('under', {})
+            over_data = raw_prop.get("over", {})
+            under_data = raw_prop.get("under", {})
 
             # Get line
-            line = over_data.get('line') or over_data.get('consensus_line')
+            line = over_data.get("line") or over_data.get("consensus_line")
             if line is None:
                 return None
 
             # Get projection data (KEY CHEAT SHEET DATA)
-            projection = raw_prop.get('projection', {})
-            proj_value = projection.get('value')
-            proj_diff = projection.get('diff')
-            bet_rating = projection.get('bet_rating', 0)
-            expected_value = projection.get('expected_value', 0)
-            probability = projection.get('probability', 0.5)
-            recommended_side = projection.get('recommended_side', '')
+            projection = raw_prop.get("projection", {})
+            proj_value = projection.get("value")
+            proj_diff = projection.get("diff")
+            bet_rating = projection.get("bet_rating", 0)
+            expected_value = projection.get("expected_value", 0)
+            probability = projection.get("probability", 0.5)
+            recommended_side = projection.get("recommended_side", "")
 
             # Get opposition rank (OPP VS PROP)
-            extra = raw_prop.get('extra', {})
-            opp_rank_data = extra.get('opposition_rank', {})
-            opp_rank = opp_rank_data.get('rank')
-            opp_value = opp_rank_data.get('value')
+            extra = raw_prop.get("extra", {})
+            opp_rank_data = extra.get("opposition_rank", {})
+            opp_rank = opp_rank_data.get("rank")
+            opp_value = opp_rank_data.get("value")
 
             # Get hit rates (PERFORMANCE DATA)
-            performance = raw_prop.get('performance', {})
+            performance = raw_prop.get("performance", {})
 
             def calc_hit_rate(perf_data: Dict) -> Optional[float]:
                 """Calculate hit rate from performance data"""
-                over = perf_data.get('over', 0)
-                under = perf_data.get('under', 0)
+                over = perf_data.get("over", 0)
+                under = perf_data.get("under", 0)
                 total = over + under
                 if total > 0:
                     return round(over / total, 3)
                 return None
 
-            hit_rate_l5 = calc_hit_rate(performance.get('last_5', {}))
-            hit_rate_l15 = calc_hit_rate(performance.get('last_15', {}))
-            hit_rate_season = calc_hit_rate(performance.get('season', {}))
+            hit_rate_l5 = calc_hit_rate(performance.get("last_5", {}))
+            hit_rate_l15 = calc_hit_rate(performance.get("last_15", {}))
+            hit_rate_season = calc_hit_rate(performance.get("season", {}))
 
             # Get raw counts for analysis
-            l5_data = performance.get('last_5', {})
-            l15_data = performance.get('last_15', {})
-            season_data = performance.get('season', {})
+            l5_data = performance.get("last_5", {})
+            l15_data = performance.get("last_15", {})
+            season_data = performance.get("season", {})
 
             # Get game info
-            game_info = raw_prop.get('game', {})
+            game_info = raw_prop.get("game", {})
             if not game_info:
                 game_info = {}
-            game_id = game_info.get('id', '')
-            game_time = game_info.get('start', '')
+            game_id = game_info.get("id", "")
+            game_time = game_info.get("start", "")
 
             # Parse game date/time
             if game_time:
                 try:
-                    game_dt = datetime.fromisoformat(game_time.replace('Z', '+00:00'))
-                    game_date = game_dt.strftime('%Y-%m-%d')
-                    game_time_str = game_dt.strftime('%H:%M:%S')
+                    game_dt = datetime.fromisoformat(game_time.replace("Z", "+00:00"))
+                    game_date = game_dt.strftime("%Y-%m-%d")
+                    game_time_str = game_dt.strftime("%H:%M:%S")
                 except (ValueError, AttributeError):
                     game_date = self.date
                     game_time_str = None
@@ -409,8 +412,8 @@ class CheatSheetFetcher(BaseFetcher):
                 game_time_str = None
 
             # Get opponent and home/away
-            home_team = game_info.get('home_team', '')
-            away_team = game_info.get('away_team', '')
+            home_team = game_info.get("home_team", "")
+            away_team = game_info.get("away_team", "")
 
             if player_team == home_team:
                 opponent = away_team
@@ -431,59 +434,53 @@ class CheatSheetFetcher(BaseFetcher):
             # Build comprehensive prop with all cheat sheet data
             prop = {
                 # Basic prop info
-                'player_name': player_name,
-                'player_team': player_team,
-                'stat_type': stat_type,
-                'line': float(line),
-                'over_line': float(over_data.get('line', line)),
-                'over_odds': over_data.get('odds', -110),
-                'under_line': float(under_data.get('line', line)),
-                'under_odds': under_data.get('odds', -110),
-                'book_name': self.platform if self.book_id else 'consensus',
-
+                "player_name": player_name,
+                "player_team": player_team,
+                "stat_type": stat_type,
+                "line": float(line),
+                "over_line": float(over_data.get("line", line)),
+                "over_odds": over_data.get("odds", -110),
+                "under_line": float(under_data.get("line", line)),
+                "under_odds": under_data.get("odds", -110),
+                "book_name": self.platform if self.book_id else "consensus",
                 # Game info
-                'game_id': game_id,
-                'game_date': game_date,
-                'game_time': game_time_str,
-                'opponent_team': opponent,
-                'is_home': is_home,
-
+                "game_id": game_id,
+                "game_date": game_date,
+                "game_time": game_time_str,
+                "opponent_team": opponent,
+                "is_home": is_home,
                 # CHEAT SHEET DATA - Projection
-                'projection': proj_value,
-                'projection_diff': proj_diff,
-                'bet_rating': bet_rating,  # 1-5 stars
-                'expected_value': expected_value,  # EV as decimal
-                'ev_pct': round(expected_value * 100, 2) if expected_value else None,  # EV as %
-                'probability': probability,  # P(over)
-                'recommended_side': recommended_side,  # 'over' or 'under'
-
+                "projection": proj_value,
+                "projection_diff": proj_diff,
+                "bet_rating": bet_rating,  # 1-5 stars
+                "expected_value": expected_value,  # EV as decimal
+                "ev_pct": round(expected_value * 100, 2) if expected_value else None,  # EV as %
+                "probability": probability,  # P(over)
+                "recommended_side": recommended_side,  # 'over' or 'under'
                 # CHEAT SHEET DATA - Opposition
-                'opp_rank': opp_rank,  # OPP VS PROP rank
-                'opp_value': opp_value,  # Opponent's average
-
+                "opp_rank": opp_rank,  # OPP VS PROP rank
+                "opp_value": opp_value,  # Opponent's average
                 # CHEAT SHEET DATA - Hit Rates
-                'hit_rate_l5': hit_rate_l5,
-                'hit_rate_l15': hit_rate_l15,
-                'hit_rate_season': hit_rate_season,
-
+                "hit_rate_l5": hit_rate_l5,
+                "hit_rate_l15": hit_rate_l15,
+                "hit_rate_season": hit_rate_season,
                 # Raw hit rate data (for analysis)
-                'l5_over': l5_data.get('over', 0),
-                'l5_under': l5_data.get('under', 0),
-                'l15_over': l15_data.get('over', 0),
-                'l15_under': l15_data.get('under', 0),
-                'season_over': season_data.get('over', 0),
-                'season_under': season_data.get('under', 0),
-
+                "l5_over": l5_data.get("over", 0),
+                "l5_under": l5_data.get("under", 0),
+                "l15_over": l15_data.get("over", 0),
+                "l15_under": l15_data.get("under", 0),
+                "season_over": season_data.get("over", 0),
+                "season_under": season_data.get("under", 0),
                 # Metadata
-                'fetch_timestamp': datetime.now().isoformat(),
-                'source': f'bettingpros_{self.platform}',
+                "fetch_timestamp": datetime.now().isoformat(),
+                "source": f"bettingpros_{self.platform}",
             }
 
             # Add consensus data if available
-            consensus_line = over_data.get('consensus_line')
+            consensus_line = over_data.get("consensus_line")
             if consensus_line is not None and consensus_line != line:
-                prop['consensus_line'] = float(consensus_line)
-                prop['line_vs_consensus'] = float(line) - float(consensus_line)
+                prop["consensus_line"] = float(consensus_line)
+                prop["line_vs_consensus"] = float(line) - float(consensus_line)
 
             return prop
 
@@ -528,7 +525,7 @@ class CheatSheetFetcher(BaseFetcher):
         rejected_date = 0
 
         for prop in all_props:
-            prop_game_date = prop.get('game_date', '')
+            prop_game_date = prop.get("game_date", "")
             if prop_game_date and prop_game_date != self.date:
                 rejected_date += 1
                 continue
@@ -551,21 +548,25 @@ class CheatSheetFetcher(BaseFetcher):
         print("\nBy stat type:")
         stat_counts = {}
         for prop in deduped_props:
-            st = prop['stat_type']
+            st = prop["stat_type"]
             stat_counts[st] = stat_counts.get(st, 0) + 1
         for st, count in sorted(stat_counts.items()):
             print(f"  {st:25s}: {count:4d} props")
 
         # Sample high-rated picks
-        high_rated = [p for p in deduped_props if p.get('bet_rating', 0) >= 4]
+        high_rated = [p for p in deduped_props if p.get("bet_rating", 0) >= 4]
         if high_rated:
             print(f"\nHigh-rated picks (4+ stars): {len(high_rated)}")
-            for prop in sorted(high_rated, key=lambda x: x.get('expected_value', 0), reverse=True)[:5]:
-                ev_pct = prop.get('ev_pct', 0) or 0
-                print(f"  {prop['player_name']:20s} {prop['stat_type']:10s} "
-                      f"{prop['recommended_side'].upper():5s} {prop['line']:.1f} "
-                      f"(Proj: {prop.get('projection', 0):.1f}, EV: {ev_pct:+.1f}%, "
-                      f"Rating: {prop.get('bet_rating', 0)} stars)")
+            for prop in sorted(high_rated, key=lambda x: x.get("expected_value", 0), reverse=True)[
+                :5
+            ]:
+                ev_pct = prop.get("ev_pct", 0) or 0
+                print(
+                    f"  {prop['player_name']:20s} {prop['stat_type']:10s} "
+                    f"{prop['recommended_side'].upper():5s} {prop['line']:.1f} "
+                    f"(Proj: {prop.get('projection', 0):.1f}, EV: {ev_pct:+.1f}%, "
+                    f"Rating: {prop.get('bet_rating', 0)} stars)"
+                )
 
         print("=" * 70 + "\n", flush=True)
 
@@ -577,18 +578,18 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description='Fetch BettingPros cheat sheet data with projections and analytics'
+        description="Fetch BettingPros cheat sheet data with projections and analytics"
     )
-    parser.add_argument('--date', type=str, help='Date to fetch (YYYY-MM-DD)')
+    parser.add_argument("--date", type=str, help="Date to fetch (YYYY-MM-DD)")
     parser.add_argument(
-        '--platform',
+        "--platform",
         type=str,
-        choices=['underdog', 'all', 'draftkings', 'fanduel'],  # PrizePicks removed - no book_id
-        default='all',
-        help='Platform to fetch for'
+        choices=["underdog", "all", "draftkings", "fanduel"],  # PrizePicks removed - no book_id
+        default="all",
+        help="Platform to fetch for",
     )
-    parser.add_argument('--no-combos', action='store_true', help='Skip combo markets')
-    parser.add_argument('--quiet', action='store_true', help='Quiet mode')
+    parser.add_argument("--no-combos", action="store_true", help="Skip combo markets")
+    parser.add_argument("--quiet", action="store_true", help="Quiet mode")
 
     args = parser.parse_args()
 
@@ -596,7 +597,7 @@ def main():
         date=args.date,
         platform=args.platform,
         include_combos=not args.no_combos,
-        verbose=not args.quiet
+        verbose=not args.quiet,
     ) as fetcher:
         props = fetcher.fetch()
 
@@ -607,5 +608,5 @@ def main():
             print("\n[WARN] No props fetched!\n")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

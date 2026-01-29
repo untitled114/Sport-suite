@@ -12,36 +12,33 @@ Usage:
     python update_current_rosters.py --verify  # Dry run to see changes
 """
 
-import sys
-import os
 import argparse
 import logging
+import os
+import sys
+import time
 from typing import Dict, List, Set
+
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
-import time
 
 # Add utilities to path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utilities'))
-from nba_api_wrapper import NBAApiWrapper
-
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utilities"))
 # For roster data, we need to use the nba_api directly
 from nba_api.stats.endpoints.commonteamroster import CommonTeamRoster
+from nba_api_wrapper import NBAApiWrapper
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Database connection params
 DB_CONFIG = {
-    'host': 'localhost',
-    'port': 5536,
-    'database': 'nba_players',
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD')
+    "host": "localhost",
+    "port": 5536,
+    "database": "nba_players",
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
 }
 
 
@@ -87,10 +84,7 @@ class RosterUpdater:
             time.sleep(3)  # NBA API is sensitive, be conservative
 
             # Fetch roster using current season
-            roster = CommonTeamRoster(
-                team_id=team_id,
-                season="2025-26"  # Current season
-            )
+            roster = CommonTeamRoster(team_id=team_id, season="2025-26")  # Current season
 
             roster_df = roster.get_data_frames()[0]
 
@@ -99,7 +93,7 @@ class RosterUpdater:
                 return pd.DataFrame()
 
             # Add team abbreviation column
-            roster_df['TEAM_ABBREV'] = team_abbrev
+            roster_df["TEAM_ABBREV"] = team_abbrev
 
             logger.info(f"✅ Found {len(roster_df)} players on {team_abbrev}")
             return roster_df
@@ -124,8 +118,8 @@ class RosterUpdater:
         all_rosters = []
 
         for _, team in teams_df.iterrows():
-            team_id = team['id']
-            team_abbrev = team['abbreviation']
+            team_id = team["id"]
+            team_abbrev = team["abbreviation"]
 
             roster_df = self.fetch_team_roster(team_id, team_abbrev)
 
@@ -159,10 +153,7 @@ class RosterUpdater:
 
         current_rosters = {}
         for player_id, team_abbrev, full_name in cursor.fetchall():
-            current_rosters[player_id] = {
-                'team': team_abbrev,
-                'name': full_name
-            }
+            current_rosters[player_id] = {"team": team_abbrev, "name": full_name}
 
         logger.info(f"Current database has {len(current_rosters)} players with team assignments")
         return current_rosters
@@ -185,45 +176,51 @@ class RosterUpdater:
 
         # Check for updates and new players
         for _, row in api_rosters.iterrows():
-            player_id = int(row['PLAYER_ID'])
-            api_team = row['TEAM_ABBREV']
-            player_name = row.get('PLAYER', 'Unknown')
+            player_id = int(row["PLAYER_ID"])
+            api_team = row["TEAM_ABBREV"]
+            player_name = row.get("PLAYER", "Unknown")
 
             api_player_ids.add(player_id)
 
             if player_id in db_rosters:
                 # Existing player - check if team changed
-                db_team = db_rosters[player_id]['team']
-                db_name = db_rosters[player_id]['name']
+                db_team = db_rosters[player_id]["team"]
+                db_name = db_rosters[player_id]["name"]
 
                 if db_team != api_team:
-                    changes.append({
-                        'type': 'UPDATE',
-                        'player_id': player_id,
-                        'name': db_name,
-                        'old_team': db_team,
-                        'new_team': api_team
-                    })
+                    changes.append(
+                        {
+                            "type": "UPDATE",
+                            "player_id": player_id,
+                            "name": db_name,
+                            "old_team": db_team,
+                            "new_team": api_team,
+                        }
+                    )
             else:
                 # New player (drafted, signed, or previously not in DB)
-                changes.append({
-                    'type': 'NEW',
-                    'player_id': player_id,
-                    'name': player_name,
-                    'old_team': None,
-                    'new_team': api_team
-                })
+                changes.append(
+                    {
+                        "type": "NEW",
+                        "player_id": player_id,
+                        "name": player_name,
+                        "old_team": None,
+                        "new_team": api_team,
+                    }
+                )
 
         # Check for players no longer on rosters (free agents, retired, etc.)
         for player_id, player_info in db_rosters.items():
             if player_id not in api_player_ids:
-                changes.append({
-                    'type': 'REMOVED',
-                    'player_id': player_id,
-                    'name': player_info['name'],
-                    'old_team': player_info['team'],
-                    'new_team': None
-                })
+                changes.append(
+                    {
+                        "type": "REMOVED",
+                        "player_id": player_id,
+                        "name": player_info["name"],
+                        "old_team": player_info["team"],
+                        "new_team": None,
+                    }
+                )
 
         return changes
 
@@ -244,39 +241,50 @@ class RosterUpdater:
         new_players = 0
 
         for change in changes:
-            change_type = change['type']
-            player_id = change['player_id']
+            change_type = change["type"]
+            player_id = change["player_id"]
 
-            if change_type == 'UPDATE':
+            if change_type == "UPDATE":
                 # Update team assignment
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE player_profile
                     SET team_abbrev = %s
                     WHERE player_id = %s
-                """, (change['new_team'], player_id))
+                """,
+                    (change["new_team"], player_id),
+                )
                 updates += 1
 
                 logger.info(f"  ✏️  {change['name']}: {change['old_team']} → {change['new_team']}")
 
-            elif change_type == 'REMOVED':
+            elif change_type == "REMOVED":
                 # Set team to NULL (player no longer on active roster)
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE player_profile
                     SET team_abbrev = NULL
                     WHERE player_id = %s
-                """, (player_id,))
+                """,
+                    (player_id,),
+                )
                 removals += 1
 
-                logger.info(f"  ➖ {change['name']}: Removed from {change['old_team']} (inactive/FA)")
+                logger.info(
+                    f"  ➖ {change['name']}: Removed from {change['old_team']} (inactive/FA)"
+                )
 
-            elif change_type == 'NEW':
+            elif change_type == "NEW":
                 # Insert new player (this shouldn't happen often if we loaded rosters properly)
                 # For now, we'll just update if they exist, otherwise skip
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE player_profile
                     SET team_abbrev = %s
                     WHERE player_id = %s
-                """, (change['new_team'], player_id))
+                """,
+                    (change["new_team"], player_id),
+                )
 
                 if cursor.rowcount > 0:
                     new_players += 1
@@ -321,7 +329,7 @@ class RosterUpdater:
             # Show changes
             logger.info(f"\n📝 Found {len(changes)} changes:")
             for change in changes:
-                if change['type'] == 'UPDATE':
+                if change["type"] == "UPDATE":
                     logger.info(f"   {change['name']}: {change['old_team']} → {change['new_team']}")
 
             # Apply changes
@@ -353,27 +361,35 @@ class RosterUpdater:
         logger.info(f"\n🔍 Verifying specific players:")
 
         for name in player_names:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT player_id, full_name, team_abbrev
                 FROM player_profile
                 WHERE full_name LIKE %s
-            """, (f"%{name}%",))
+            """,
+                (f"%{name}%",),
+            )
 
             results = cursor.fetchall()
 
             if results:
-                for player_id, full_name, team_abbrev in results:
+                for _player_id, full_name, team_abbrev in results:
                     logger.info(f"   {full_name}: {team_abbrev}")
             else:
                 logger.warning(f"   {name}: NOT FOUND")
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Update current NBA rosters')
-    parser.add_argument('--verify', action='store_true',
-                       help='Dry run - show changes without applying')
-    parser.add_argument('--check-players', type=str, nargs='+',
-                       help='Check specific players (e.g., "Anfernee Simons" "Chris Boucher")')
+    parser = argparse.ArgumentParser(description="Update current NBA rosters")
+    parser.add_argument(
+        "--verify", action="store_true", help="Dry run - show changes without applying"
+    )
+    parser.add_argument(
+        "--check-players",
+        type=str,
+        nargs="+",
+        help='Check specific players (e.g., "Anfernee Simons" "Chris Boucher")',
+    )
 
     args = parser.parse_args()
 

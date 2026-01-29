@@ -42,14 +42,14 @@ def normalize_player_name(name: str) -> str:
     name = name.strip()
 
     # Remove periods
-    name = name.replace('.', '')
+    name = name.replace(".", "")
 
     # Standardize apostrophes
     name = name.replace("'", "'")
     name = name.replace("`", "'")
 
     # Remove extra whitespace
-    name = re.sub(r'\s+', ' ', name)
+    name = re.sub(r"\s+", " ", name)
 
     # Title case if all upper or all lower
     if name.isupper() or name.islower():
@@ -81,54 +81,47 @@ def normalize_stat_type(stat_type: str) -> str:
     # Mapping dictionary
     stat_map = {
         # Points
-        'points': 'POINTS',
-        'pts': 'POINTS',
-        'point': 'POINTS',
-
+        "points": "POINTS",
+        "pts": "POINTS",
+        "point": "POINTS",
         # Rebounds
-        'rebounds': 'REBOUNDS',
-        'rebound': 'REBOUNDS',
-        'reb': 'REBOUNDS',
-        'rebs': 'REBOUNDS',
-
+        "rebounds": "REBOUNDS",
+        "rebound": "REBOUNDS",
+        "reb": "REBOUNDS",
+        "rebs": "REBOUNDS",
         # Assists
-        'assists': 'ASSISTS',
-        'assist': 'ASSISTS',
-        'ast': 'ASSISTS',
-        'asts': 'ASSISTS',
-
+        "assists": "ASSISTS",
+        "assist": "ASSISTS",
+        "ast": "ASSISTS",
+        "asts": "ASSISTS",
         # Threes
-        'threes': 'THREES',
-        'three': 'THREES',
-        '3-pt made': 'THREES',
-        '3pm': 'THREES',
-        '3 pointers made': 'THREES',
-        'three pointers made': 'THREES',
-        '3-pointers': 'THREES',
-        '3 pt': 'THREES',
-        '3pt': 'THREES',
-
+        "threes": "THREES",
+        "three": "THREES",
+        "3-pt made": "THREES",
+        "3pm": "THREES",
+        "3 pointers made": "THREES",
+        "three pointers made": "THREES",
+        "3-pointers": "THREES",
+        "3 pt": "THREES",
+        "3pt": "THREES",
         # Steals
-        'steals': 'STEALS',
-        'steal': 'STEALS',
-        'stl': 'STEALS',
-
+        "steals": "STEALS",
+        "steal": "STEALS",
+        "stl": "STEALS",
         # Blocks
-        'blocks': 'BLOCKS',
-        'block': 'BLOCKS',
-        'blk': 'BLOCKS',
-        'blocked shots': 'BLOCKS',
-
+        "blocks": "BLOCKS",
+        "block": "BLOCKS",
+        "blk": "BLOCKS",
+        "blocked shots": "BLOCKS",
         # Turnovers
-        'turnovers': 'TURNOVERS',
-        'turnover': 'TURNOVERS',
-        'to': 'TURNOVERS',
-
+        "turnovers": "TURNOVERS",
+        "turnover": "TURNOVERS",
+        "to": "TURNOVERS",
         # Combos
-        'pts+rebs': 'PTS_REBS',
-        'pts+asts': 'PTS_ASTS',
-        'pts+rebs+asts': 'PTS_REBS_ASTS',
-        'rebs+asts': 'REBS_ASTS',
+        "pts+rebs": "PTS_REBS",
+        "pts+asts": "PTS_ASTS",
+        "pts+rebs+asts": "PTS_REBS_ASTS",
+        "rebs+asts": "REBS_ASTS",
     }
 
     return stat_map.get(stat_type, stat_type.upper())
@@ -155,22 +148,22 @@ def normalize_book_name(book_name: str) -> str:
     book_name = book_name.lower().strip()
 
     # Remove spaces, hyphens, underscores
-    book_name = book_name.replace(' ', '')
-    book_name = book_name.replace('-', '')
-    book_name = book_name.replace('_', '')
+    book_name = book_name.replace(" ", "")
+    book_name = book_name.replace("-", "")
+    book_name = book_name.replace("_", "")
 
     # Common variations
     book_map = {
-        'dk': 'draftkings',
-        'fd': 'fanduel',
-        'mgm': 'betmgm',
-        'czr': 'caesars',
-        'cz': 'caesars',
-        'br': 'betrivers',
-        'pb': 'pointsbet',
-        'ud': 'underdog',
-        'pp': 'prizepicks',
-        'bettingpros': 'consensus',
+        "dk": "draftkings",
+        "fd": "fanduel",
+        "mgm": "betmgm",
+        "czr": "caesars",
+        "cz": "caesars",
+        "br": "betrivers",
+        "pb": "pointsbet",
+        "ud": "underdog",
+        "pp": "prizepicks",
+        "bettingpros": "consensus",
     }
 
     return book_map.get(book_name, book_name)
@@ -199,25 +192,25 @@ def parse_game_date(date_string: str) -> Optional[str]:
 
     # Try ISO format first
     try:
-        dt = datetime.fromisoformat(date_string.replace('Z', '+00:00'))
-        return dt.strftime('%Y-%m-%d')
+        dt = datetime.fromisoformat(date_string.replace("Z", "+00:00"))
+        return dt.strftime("%Y-%m-%d")
     except (ValueError, AttributeError):
         pass
 
     # Try common formats
     formats = [
-        '%Y-%m-%d',
-        '%m/%d/%Y',
-        '%m-%d-%Y',
-        '%b %d, %Y',
-        '%B %d, %Y',
-        '%Y%m%d',
+        "%Y-%m-%d",
+        "%m/%d/%Y",
+        "%m-%d-%Y",
+        "%b %d, %Y",
+        "%B %d, %Y",
+        "%Y%m%d",
     ]
 
     for fmt in formats:
         try:
             dt = datetime.strptime(date_string, fmt)
-            return dt.strftime('%Y-%m-%d')
+            return dt.strftime("%Y-%m-%d")
         except ValueError:
             continue
 
@@ -282,10 +275,10 @@ def calculate_consensus(lines: list) -> Optional[float]:
 
     if n % 2 == 0:
         # Even number of lines - average middle two
-        return (sorted_lines[n//2 - 1] + sorted_lines[n//2]) / 2
+        return (sorted_lines[n // 2 - 1] + sorted_lines[n // 2]) / 2
     else:
         # Odd number - take middle
-        return sorted_lines[n//2]
+        return sorted_lines[n // 2]
 
 
 def calculate_line_spread(lines: list) -> float:
@@ -310,8 +303,9 @@ def calculate_line_spread(lines: list) -> float:
     return max(lines) - min(lines)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Run doctests
     import doctest
+
     doctest.testmod()
     print("✅ All utility function tests passed!")
