@@ -1,37 +1,122 @@
 # NBA Player Props ML System
 
-End-to-end machine learning pipeline for NBA player prop betting. Ingests live odds from 7 sportsbooks, extracts 102 features per prop, and generates calibrated predictions using a two-head LightGBM architecture.
+End-to-end machine learning pipeline for NBA player prop betting. Ingests live odds from 7 sportsbooks, extracts 166 features per prop, and generates calibrated predictions using stacked LightGBM architectures.
 
 ## What This Project Demonstrates
 
 - **ML Pipeline Design**: Feature extraction, model training, probability calibration
 - **Data Engineering**: Multi-source ingestion, PostgreSQL schema design, automated pipelines
-- **Production Thinking**: Validation methodology, stop-loss safeguards, monitoring
+- **Production Thinking**: Validation methodology, filtering strategies, monitoring
 
-## Results (Honest Framing)
+## Results (January 2026)
 
-### Backtested Performance
+### Live Performance
 
 | Metric | Value | Sample | Notes |
 |--------|-------|--------|-------|
-| **Backtest Win Rate** | 75.0% | 28 bets | 8-day holdout (Oct 30 - Nov 7, 2024) |
-| **Backtest ROI** | +43.2% | 28 bets | Temporal split, no lookahead |
-| **Line Shopping Lift** | +6.8% | 761 bets | vs. consensus baseline |
+| **Win Rate** | 60.3% | 232 bets | Jan 1-28, 2026 (filtered picks) |
+| **ROI** | +15.2% | 232 bets | At standard -110 odds |
+| **Units Profit** | +35.26u | 28 days | ~8 picks/day average |
+
+### By Market
+
+| Market | Bets | Win Rate | ROI |
+|--------|------|----------|-----|
+| POINTS | 115 | 60.0% | +14.5% |
+| REBOUNDS | 89 | 59.6% | +13.7% |
+| ASSISTS | 28 | 64.3% | +22.7% |
 
 **Important caveats:**
-- Backtesting ≠ live performance. Markets adapt, edges decay.
-- Small sample sizes (28 bets) have high variance. True edge likely lower.
-- Results are exploratory. No claim of guaranteed profitability.
+- Results from filtered picks only (edge thresholds, probability filters)
+- Past performance does not guarantee future results
+- Markets adapt; edges can decay over time
 
 ### Methodology
 
 ```
-Training:   Oct 2023 - Apr 2025 (~24,000 props per market)
-Validation: Oct 30 - Nov 7, 2024 (8 days, 28 filtered bets)
+Training:   Oct 2023 - Jan 2025 (~24,000 props per market)
+Validation: Jan 1-28, 2026 (232 filtered bets)
 Split:      Temporal (no future data leakage)
 ```
 
-Full validation details: [`nba/models/MODEL_REGISTRY.toml`](nba/models/MODEL_REGISTRY.toml)
+---
+
+## Model Architecture
+
+### Production Models (Jan 11, 2026)
+
+| Market | Features | R² | AUC | Architecture |
+|--------|----------|-----|-----|--------------|
+| **POINTS** | 166 | 0.537 | 0.736 | Two-head stacked |
+| **REBOUNDS** | 166 | 0.531 | 0.748 | Two-head stacked |
+| **ASSISTS** | 102 | - | - | Legacy (disabled) |
+| **THREES** | 102 | - | - | Legacy (disabled) |
+
+### Feature Breakdown (166 features)
+
+```
+Player Rolling Stats (42):
+├── EMA-weighted L3/L5/L10/L20 for 9 stats
+├── Plus/minus, FT rate, true shooting
+└── Points per minute, momentum, efficiency
+
+Team & Game Context (28):
+├── Team/opponent pace, ratings
+├── Rest days, B2B, games in L7
+├── Travel distance, altitude, season phase
+└── Starter flag, position, teammate usage
+
+Head-to-Head History (36):
+├── H2H averages for points/rebounds/assists/threes
+├── L3/L5/L10/L20 windows per stat
+├── Home/away splits
+└── Recency weight, sample quality
+
+Book Disagreement (22):
+├── Line spread, consensus, std dev
+├── Per-book deviations (8 books)
+├── Softest/hardest book IDs
+└── Books agree/disagree flags
+
+Prop History (12):
+├── Hit rates: L20, context, vs defense
+├── Line vs season avg, percentile
+└── Bayesian confidence, streaks
+
+Vegas & BettingPros (17):
+├── Vegas total, spread
+├── Team ATS/OU percentages
+└── BP projections, ratings, hit rates
+
+Computed (1):
+└── expected_diff (regressor prediction - line)
+```
+
+### Two-Head Stacked Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      TWO-HEAD STACKED MODEL                             │
+│                                                                         │
+│    ┌────────────────────┐        ┌────────────────────┐                │
+│    │  HEAD 1: Regressor │        │  HEAD 2: Classifier │                │
+│    │  (LightGBM)        │        │  (LightGBM)         │                │
+│    │                    │        │                     │                │
+│    │  Input: 166 feat   │───────▶│  Input: 166 feat    │                │
+│    │  Output: predicted │  diff  │  + expected_diff    │                │
+│    │          value     │        │  Output: P(OVER)    │                │
+│    └────────────────────┘        └─────────┬──────────┘                │
+│                                            │                            │
+│                                            ▼                            │
+│                              ┌────────────────────┐                     │
+│                              │  Isotonic          │                     │
+│                              │  Calibration       │                     │
+│                              └─────────┬──────────┘                     │
+│                                        │                                │
+│                                        ▼                                │
+│                    Blended: 60% classifier + 40% residual               │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -51,43 +136,7 @@ Full validation details: [`nba/models/MODEL_REGISTRY.toml`](nba/models/MODEL_REG
 │  │  nba_players:5536  nba_games:5537  nba_team:5538  nba_intel:5539│   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        FEATURE EXTRACTION (102 features)                │
-│                                                                         │
-│  Player (78)              Book (20)              Computed (4)           │
-│  ├─ Rolling stats L3/5/10 ├─ Line spread         ├─ is_home             │
-│  ├─ Team pace/ratings     ├─ Book deviations     ├─ line                │
-│  ├─ Matchup history       ├─ Consensus variance  ├─ opponent_team       │
-│  └─ Rest days, B2B        └─ Softest/hardest     └─ expected_diff       │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         TWO-HEAD MODEL                                  │
-│                                                                         │
-│    ┌────────────────────┐        ┌────────────────────┐                │
-│    │  Regressor Head    │        │  Classifier Head   │                │
-│    │  (LightGBM)        │        │  (LightGBM)        │                │
-│    │                    │        │                    │                │
-│    │  Input: 102 feat   │───────▶│  Input: 102 feat   │                │
-│    │  Output: predicted │  diff  │  + expected_diff   │                │
-│    │          value     │        │  Output: P(OVER)   │                │
-│    └────────────────────┘        └─────────┬──────────┘                │
-│                                            │                            │
-│                                            ▼                            │
-│                              ┌────────────────────┐                     │
-│                              │  Isotonic          │                     │
-│                              │  Calibration       │                     │
-│                              └─────────┬──────────┘                     │
-│                                        │                                │
-│                                        ▼                                │
-│                           Calibrated P(OVER) → Bet decision             │
-└─────────────────────────────────────────────────────────────────────────┘
 ```
-
-For detailed architecture: [`SYSTEM_DESIGN.md`](SYSTEM_DESIGN.md)
 
 ---
 
@@ -96,112 +145,30 @@ For detailed architecture: [`SYSTEM_DESIGN.md`](SYSTEM_DESIGN.md)
 ```
 nba/
 ├── betting_xl/
-│   ├── generate_xl_predictions.py   # Main prediction generator
 │   ├── xl_predictor.py              # Model loading + inference
-│   ├── validate_xl_models.py        # Backtest on historical data
+│   ├── validate_predictions.py      # Results validation
 │   ├── line_optimizer.py            # Bet filtering logic
-│   │
 │   ├── predictions/                 # Daily picks output
-│   │   └── xl_picks_YYYY-MM-DD.json # ← Model inference results
-│   ├── fetchers/                    # Data collection
-│   │   └── fetch_bettingpros.py     # 7-book prop fetcher
-│   └── logs/                        # Pipeline execution logs
+│   └── fetchers/                    # Data collection (7 books)
 │
 ├── models/
-│   ├── saved_xl/                    # Production model files
-│   │   ├── points_xl_regressor.pkl  # Regressor head
-│   │   ├── points_xl_classifier.pkl # Classifier head
-│   │   ├── points_xl_calibrator.pkl # Isotonic calibration
-│   │   ├── points_xl_features.pkl   # Feature names (102)
-│   │   └── points_xl_metadata.json  # Training metrics
-│   ├── train_market.py              # Model training script
-│   └── MODEL_REGISTRY.toml          # Validation history
+│   ├── saved_xl/                    # Production models
+│   │   ├── {market}_v3_*.pkl        # 3-head models (166 features)
+│   │   └── {market}_xl_*.pkl        # 2-head models (102 features)
+│   ├── train_market.py              # Model training
+│   └── model_cards/                 # Model documentation
 │
 ├── features/
-│   ├── build_xl_training_dataset.py # Creates training CSVs
-│   ├── extract_live_features_xl.py  # Live feature extraction
-│   └── datasets/                    # Training data (95k props)
+│   ├── extract_live_features_xl.py  # 166-feature extraction
+│   └── datasets/                    # Training data
+│
+├── core/
+│   ├── schemas.py                   # Pydantic validation
+│   ├── exceptions.py                # Custom exceptions
+│   ├── drift_detection.py           # Feature drift monitoring
+│   └── experiment_tracking.py       # MLflow integration
 │
 └── nba-predictions.sh               # Pipeline orchestrator
-```
-
----
-
-## Concrete Example
-
-**Input**: Stephen Curry POINTS prop, Jan 7, 2026
-
-```
-Player:   Stephen Curry
-Market:   POINTS
-Opponent: MIL (home game)
-Lines:    Underdog=27.5, FanDuel=28.5, BetMGM=29.5, ...
-```
-
-**Model Output**:
-
-```json
-{
-  "player_name": "Stephen Curry",
-  "stat_type": "POINTS",
-  "side": "OVER",
-  "prediction": 31.46,           // Regressor predicts 31.5 points
-  "p_over": 0.740,               // 74% probability of going over
-  "best_book": "underdog",       // Softest line found
-  "best_line": 27.5,             // 4 points below prediction
-  "edge": 3.96,                  // Points of edge
-  "reasoning": "Model predicts 31.5 vs softest line 27.5"
-}
-```
-
-**Interpretation**:
-- Model expects Curry to score ~31.5 points
-- Underdog has him at 27.5 (4 points lower than other books)
-- This creates a 14.4% edge opportunity
-- Bet OVER at Underdog if it passes filter thresholds
-
-Full schema: [`docs/PREDICTION_SCHEMA.md`](docs/PREDICTION_SCHEMA.md)
-
----
-
-## Validation Methodology
-
-### Data Leakage Prevention
-
-```python
-# From validate_xl_models.py:9
-# CRITICAL: Prevents data leakage by extracting features AS OF historical game date.
-```
-
-1. **Temporal Split**: Training data ends before validation period begins
-2. **Point-in-Time Features**: Rolling stats computed only with games before prediction date
-3. **No Lookahead**: Actual results loaded separately after predictions generated
-
-### How to Reproduce
-
-```bash
-# Run validation on historical holdout
-python3 nba/betting_xl/validate_xl_models.py \
-  --start-date 2024-10-30 \
-  --end-date 2024-11-07
-
-# Output: Market-by-market win rates, ROI, edge tier breakdowns
-```
-
-### Validation Results
-
-```
-Period: Oct 30 - Nov 7, 2024 (8 days)
-Strategy: Hybrid dual-filter (p_over >= 0.65 AND edge conditions)
-
-Market     Bets    Wins    Win Rate    Notes
-─────────────────────────────────────────────
-POINTS     18      12      66.7%       Strong
-REBOUNDS   10      9       90.0%       Excellent (small sample)
-ASSISTS    -       -       DISABLED    14.6% WR in testing
-THREES     -       -       DISABLED    46.5% WR in testing
-─────────────────────────────────────────────
-TOTAL      28      21      75.0%       +43.2% ROI
 ```
 
 ---
@@ -211,90 +178,75 @@ TOTAL      28      21      75.0%       +43.2% ROI
 ### Prerequisites
 - Python 3.10+
 - Docker (for PostgreSQL databases)
-- BettingPros API key (for live props)
+- BettingPros API key
 
 ### Setup
 
 ```bash
-# 1. Clone and configure
-git clone https://github.com/untitled114/nba-props-betting.git
-cd nba-props-ml
-cp .env.example .env
-# Edit .env with your credentials
+# Clone and configure
+git clone https://github.com/untitled114/Sport-suite.git
+cd Sport-suite
+cp .env.example .env  # Add your credentials
 
-# 2. Start databases
+# Start databases
 cd docker && docker-compose up -d
 
-# 3. Install dependencies
-pip install -r requirements.txt
+# Install
+pip install -e ".[dev]"
 
-# 4. Run predictions
+# Run predictions
 ./nba/nba-predictions.sh evening
 ```
 
-### Daily Workflow
+### Validate Results
 
 ```bash
-# Morning: Fetch latest props + update stats
-./nba/nba-predictions.sh morning
-
-# Evening: Generate predictions
-./nba/nba-predictions.sh evening
-
-# Output: nba/betting_xl/predictions/xl_picks_YYYY-MM-DD.json
+# Check recent performance
+python3 nba/betting_xl/validate_predictions.py \
+  --predictions-dir nba/betting_xl/predictions \
+  --start-date 2026-01-01 \
+  --end-date 2026-01-28
 ```
 
 ---
 
 ## Technical Details
 
-### Model Architecture
+### Training Metrics (Jan 11, 2026)
 
-| Component | Implementation |
-|-----------|----------------|
-| Regressor | LightGBM (predicts stat value) |
-| Classifier | LightGBM (predicts P(OVER)) |
-| Calibration | IsotonicRegression |
-| Blending | 60% classifier + 40% residual |
-
-### Training Metrics (POINTS market)
-
+**POINTS Market:**
 | Metric | Train | Test |
 |--------|-------|------|
-| RMSE | 6.13 | 6.84 |
-| MAE | - | 5.23 |
-| R² | - | 0.41 |
-| AUC | 0.96 | 0.77 |
+| RMSE | 4.78 | 6.13 |
+| MAE | - | 4.55 |
+| R² | - | 0.537 |
+| AUC | 0.80 | 0.736 |
 
-### Feature Engineering
+**REBOUNDS Market:**
+| Metric | Train | Test |
+|--------|-------|------|
+| RMSE | 1.80 | 2.42 |
+| MAE | - | 1.79 |
+| R² | - | 0.531 |
+| AUC | 0.83 | 0.748 |
 
-- **78 player features**: EMA-weighted rolling stats (L3/L5/L10/L20), team context, matchup history
-- **20 book features**: Line spread, variance, per-book deviations from consensus
-- **4 computed features**: is_home, line, opponent_team, expected_diff
+### Data Sources
 
-Full feature list: [`nba/features/README.md`](nba/features/README.md)
-
----
-
-## Technologies
-
-- **ML**: LightGBM, scikit-learn, pandas
-- **Database**: PostgreSQL 15 (4 databases, Docker)
-- **Data Sources**: BettingPros API (7 books), ESPN API, NBA Stats
-- **Pipeline**: Bash orchestration, Python data processing
+- **BettingPros API**: 7 sportsbooks (DraftKings, FanDuel, BetMGM, Caesars, BetRivers, ESPNBet, Underdog)
+- **ESPN API**: Game schedules, matchup data
+- **NBA Stats**: Box scores, player game logs
 
 ---
 
-## Why Certain Design Choices
+## Engineering Highlights
 
-**Why two-head architecture?**
-Separating value prediction (regressor) from probability estimation (classifier) allows better calibration. The regressor learns the expected stat value; the classifier learns when the model's edge is actually exploitable.
-
-**Why disable ASSISTS/THREES?**
-Backtesting showed these markets underperform (ASSISTS: 14.6% WR, THREES: 46.5% WR). Rather than deploy losing models, they're disabled pending retraining.
-
-**Why Isotonic Calibration?**
-Raw classifier probabilities are overconfident. Isotonic regression maps them to empirically accurate probabilities.
+- **390 tests** with pytest (unit + integration)
+- **Pydantic schemas** for data validation
+- **Custom exception hierarchy** for error handling
+- **Feature drift detection** with KS tests
+- **MLflow integration** for experiment tracking
+- **Pre-commit hooks** (black, isort, flake8, bandit)
+- **GitHub Actions CI/CD** for automated testing
 
 ---
 
