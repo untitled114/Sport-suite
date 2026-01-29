@@ -62,7 +62,8 @@ ENV/
 
 # Jupyter
 .ipynb_checkpoints/
-*.ipynb
+# Allow notebooks in notebooks/ directory
+!notebooks/*.ipynb
 
 # OS
 .DS_Store
