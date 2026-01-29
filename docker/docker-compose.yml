@@ -1,0 +1,218 @@
+version: '3.8'
+
+services:
+  # ==========================================================================
+  # NBA PLAYERS DATABASE - All NBA player data
+  # ==========================================================================
+  nba_players_db:
+    image: timescale/timescaledb:latest-pg15
+    container_name: nba_players_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nba_players
+      POSTGRES_USER: ${DB_USER:-nba_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - nba_players_data:/var/lib/postgresql/data
+      - ./nba_players_db/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      - ./nba_players_db/schema.sql:/docker-entrypoint-initdb.d/02_schema.sql:ro
+    ports:
+      - "${NBA_PLAYERS_PORT:-5536}:5432"
+    networks:
+      - nba_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-nba_user} -d nba_players"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # NBA GAMES DATABASE - Game schedules and box scores
+  # ==========================================================================
+  nba_games_db:
+    image: timescale/timescaledb:latest-pg15
+    container_name: nba_games_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nba_games
+      POSTGRES_USER: ${DB_USER:-nba_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - nba_games_data:/var/lib/postgresql/data
+      - ./nba_games_db/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      - ./nba_games_db/schema.sql:/docker-entrypoint-initdb.d/02_schema.sql:ro
+    ports:
+      - "${NBA_GAMES_PORT:-5537}:5432"
+    networks:
+      - nba_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-nba_user} -d nba_games"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # NBA TEAM DATABASE - Team profiles and stats
+  # ==========================================================================
+  nba_team_db:
+    image: timescale/timescaledb:latest-pg15
+    container_name: nba_team_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nba_team
+      POSTGRES_USER: ${DB_USER:-nba_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - nba_team_data:/var/lib/postgresql/data
+      - ./nba_team_db/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      - ./nba_team_db/schema.sql:/docker-entrypoint-initdb.d/02_schema.sql:ro
+    ports:
+      - "${NBA_TEAM_PORT:-5538}:5432"
+    networks:
+      - nba_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-nba_user} -d nba_team"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # NBA INTELLIGENCE DATABASE - Prop lines, injuries, picks tracking
+  # ==========================================================================
+  nba_intelligence_db:
+    image: timescale/timescaledb:latest-pg15
+    container_name: nba_intelligence_db
+    restart: unless-stopped
+    shm_size: '512m'
+    environment:
+      POSTGRES_DB: nba_intelligence
+      POSTGRES_USER: ${DB_USER:-nba_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - nba_intelligence_data:/var/lib/postgresql/data
+      - ./nba_intelligence_db/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      - ./nba_intelligence_db/schema.sql:/docker-entrypoint-initdb.d/02_schema.sql:ro
+    ports:
+      - "${NBA_INTELLIGENCE_PORT:-5539}:5432"
+    networks:
+      - nba_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-nba_user} -d nba_intelligence"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # NBA REFERENCE DATABASE - Consolidated database for XL predictions
+  # ==========================================================================
+  nba_reference_db:
+    image: timescale/timescaledb:latest-pg15
+    container_name: nba_reference_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nba_reference
+      POSTGRES_USER: ${DB_USER:-nba_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - nba_reference_data:/var/lib/postgresql/data
+      - ./nba_reference_db/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      - ./nba_reference_db/schema.sql:/docker-entrypoint-initdb.d/02_schema.sql:ro
+    ports:
+      - "${NBA_REFERENCE_PORT:-5540}:5432"
+    networks:
+      - nba_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-nba_user} -d nba_reference"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # MONGODB - Document store for multi-book prop lines (XL system)
+  # ==========================================================================
+  mongodb:
+    image: mongo:7.0
+    container_name: nba_mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-sports_user}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?MONGO_PASSWORD is required}
+      MONGO_INITDB_DATABASE: nba_betting_xl
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    networks:
+      - nba_network
+    command: ["--auth"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  nba_network:
+    name: nba_network
+    driver: bridge
+
+volumes:
+  # NBA Databases
+  nba_players_data:
+    name: nba_players_data
+    driver: local
+  nba_games_data:
+    name: nba_games_data
+    driver: local
+  nba_team_data:
+    name: nba_team_data
+    driver: local
+  nba_intelligence_data:
+    name: nba_intelligence_data
+    driver: local
+  nba_reference_data:
+    name: nba_reference_data
+    driver: local
+  # MongoDB
+  mongodb_data:
+    name: nba_mongodb_data
+    driver: local
+  mongodb_config:
+    name: nba_mongodb_config
+    driver: local

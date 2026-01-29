@@ -1,0 +1,149 @@
+# Sports Suite - Root .gitignore
+
+# ===========================================
+# SECURITY - NEVER COMMIT THESE
+# ===========================================
+# Claude AI instructions (contains internal workflow details)
+CLAUDE.md
+**/CLAUDE.md
+
+# API keys and secrets
+*api*.txt
+*secret*
+*credential*
+*.key
+!package*.json
+
+# The Odds API data directory (contains API keys)
+the-odds-api-data/
+
+# ===========================================
+# DATA FILES
+# ===========================================
+# Data files (large, regenerated)
+data/
+*.csv
+*.json
+*.har
+*.pkl
+*.joblib
+
+# Archive (very large - 735 MB+)
+archive/
+
+# Databases
+*.db
+*.sql
+mongodb/
+
+# Logs
+logs/
+*.log
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+*.env
+config/*.json
+config/*.toml
+!config/example.json
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+test-dir/
+dev-dir/
+
+# Model artifacts (except production)
+models/saved_*/
+!models/saved_live_fixed/
+!nba/models/saved_xl/
+nba/models/saved_xl_backup*/
+nba/models/saved_*INVALID/
+nba/models/archived_*/
+catboost_info/
+
+# Reports (generated)
+reports/
+
+# Docker volumes
+docker/*/data/
+
+# HAR files (sensitive)
+*.har
+HAR-files/
+
+# Test directories
+tests/output/
+tests/tmp/
+
+# MLflow
+mlruns/
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Large archives
+*.zip
+*.tar.gz
+*.tgz
+
+# Backup files
+*.bak
+*.backup
+bk.*
+*.save
+
+# NBA Betting XL - Predictions (generated daily)
+nba/betting_xl/predictions/
+
+# NBA Betting XL - Lines data (23GB+ of historical snapshots)
+nba/betting_xl/lines/
+
+# NBA Features - Training datasets (large CSVs)
+nba/features/datasets/
+
+# NBA Models - Calibration logs (generated)
+nba/models/calibration_logs/
+nba/models/online_learning_state/
+
+# Debug scripts (should not be committed)
+debug_*.py
+*_debug.py
+
+# Investigation/temporary docs
+*_INVESTIGATION*.md
+*_DIAGNOSIS*.md
+*_ASSESSMENT*.md
+QUICK_FIX*.md
+FIX_*.md

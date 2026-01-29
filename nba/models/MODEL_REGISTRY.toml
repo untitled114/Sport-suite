@@ -1,0 +1,211 @@
+# NBA XL Model Registry
+# Tracks production models, validation results, and deployment history
+
+[metadata]
+last_updated = "2025-11-08T17:00:00Z"
+registry_version = "2.0"
+
+# ============================================================================
+# PRODUCTION MODELS (Current Deployment)
+# ============================================================================
+
+[production]
+model_architecture = "stacked_two_head_calibrated_blended"
+deployment_date = "2025-11-08"
+deployment_status = "active"
+filtering_strategy = "hybrid_dual_filter"
+
+[production.points]
+status = "enabled"
+model_path = "nba/models/saved_xl/points_xl_*"
+trained_date = "2025-11-06T23:48:00Z"
+features_count = 102
+architecture = "LightGBM Regressor + Classifier + IsotonicCalibration + Blending"
+
+[production.points.metrics]
+# Training/Test Metrics (Nov 6, 2025)
+regressor_rmse_train = 6.128
+regressor_rmse_test = 6.841
+regressor_mae_test = 5.226
+regressor_r2_test = 0.410
+classifier_acc_train = 0.958
+classifier_acc_test = 0.901
+classifier_auc_test = 0.762
+classifier_auc_calibrated = 0.767
+classifier_auc_blended = 0.766
+
+# Validation Metrics (Oct 30 - Nov 7, 2024)
+validation_period = "2024-10-30 to 2024-11-07"
+validation_bets = 18
+validation_wins = 12
+validation_win_rate = 0.667
+validation_roi = 0.091  # Estimated (from 66.7% WR)
+validation_notes = "Hybrid dual-filter approach"
+
+[production.points.filtering]
+strategy = "hybrid_dual_filter"
+min_probability = 0.65
+min_edge_points = 2.0
+min_spread = 2.5
+description = "Requires p_over >= 0.65 AND (edge >= 2.0 OR spread >= 2.5) - AGGRESSIVE FILTER"
+
+[production.rebounds]
+status = "enabled"
+model_path = "nba/models/saved_xl/rebounds_xl_*"
+trained_date = "2025-11-06T23:48:00Z"
+features_count = 102
+architecture = "LightGBM Regressor + Classifier + IsotonicCalibration + Blending"
+
+[production.rebounds.metrics]
+# Training/Test Metrics (Nov 6, 2025)
+regressor_rmse_train = 2.183
+regressor_rmse_test = 2.356
+regressor_mae_test = 1.762
+regressor_r2_test = 0.403
+classifier_acc_train = 0.945
+classifier_acc_test = 0.894
+classifier_auc_test = 0.739
+classifier_auc_calibrated = 0.749
+classifier_auc_blended = 0.747
+
+# Validation Metrics (Oct 30 - Nov 7, 2024)
+validation_period = "2024-10-30 to 2024-11-07"
+validation_bets = 10
+validation_wins = 9
+validation_win_rate = 0.900
+validation_roi = 0.727  # Estimated (from 90.0% WR)
+validation_notes = "Hybrid dual-filter approach - excellent performance"
+
+[production.rebounds.filtering]
+strategy = "hybrid_dual_filter"
+min_probability = 0.65
+min_edge_points = 1.0
+min_spread = 2.5
+description = "Requires p_over >= 0.65 AND (edge >= 1.0 OR spread >= 2.5) - AGGRESSIVE FILTER"
+
+[production.assists]
+status = "disabled"
+reason = "Poor validation performance: 14.6% WR, -72.05% ROI"
+disabled_date = "2025-11-07"
+
+[production.threes]
+status = "disabled"
+reason = "Poor validation performance: 46.5% WR, -11.23% ROI"
+disabled_date = "2025-11-07"
+
+# ============================================================================
+# VALIDATION HISTORY
+# ============================================================================
+
+[[validation_runs]]
+date = "2024-11-08"
+period = "2024-10-30 to 2024-11-07"
+strategy = "hybrid_dual_filter"
+total_bets = 28
+total_wins = 21
+win_rate = 0.750
+roi = 0.4318
+profit_units = 12.09
+markets = ["POINTS", "REBOUNDS"]
+notes = "Best performing strategy. Balanced volume (3.5 bets/day) with exceptional win rate."
+
+[[validation_runs.market_results]]
+market = "POINTS"
+bets = 18
+wins = 12
+win_rate = 0.667
+notes = "Strong performance with dual-filter approach"
+
+[[validation_runs.market_results]]
+market = "REBOUNDS"
+bets = 10
+wins = 9
+win_rate = 0.900
+notes = "Exceptional performance - 9/10 wins"
+
+[[validation_runs]]
+date = "2024-11-08"
+period = "2024-10-30 to 2024-11-07"
+strategy = "production_point_value"
+total_bets = 20
+total_wins = 13
+win_rate = 0.650
+roi = 0.2409
+profit_units = 4.82
+markets = ["POINTS", "REBOUNDS"]
+notes = "Original production strategy. Too conservative (2.5 bets/day). POINTS underperformed."
+
+[[validation_runs]]
+date = "2024-11-08"
+period = "2024-10-30 to 2024-11-07"
+strategy = "validation_probability"
+total_bets = 1173
+total_wins = 605
+win_rate = 0.516
+roi = -0.0153
+profit_units = -17.99
+markets = ["POINTS", "REBOUNDS"]
+notes = "Original validation strategy. Too permissive (146 bets/day). LOSING STRATEGY."
+
+[[validation_runs]]
+date = "2024-11-07"
+period = "2024-10-23 to 2024-11-04"
+strategy = "line_shopping_tiered"
+total_bets = 761
+total_wins = 415
+win_rate = 0.545
+roi = 0.0416
+profit_units = 31.66
+markets = ["POINTS", "REBOUNDS", "ASSISTS", "THREES"]
+notes = "Initial validation using probability-based edges. Metrics were misleading due to edge calculation bug."
+
+# ============================================================================
+# ARCHIVED MODELS
+# ============================================================================
+
+[archived.home_only_invalid]
+status = "invalid"
+reason = "Trained on 100% home games (data leak)"
+archived_date = "2025-11-06"
+location = "nba/models/saved_home_only_INVALID/"
+notes = "Enrichment failed to get actual home/away status. All props defaulted to is_home=True."
+
+# ============================================================================
+# DEPLOYMENT GUIDELINES
+# ============================================================================
+
+[guidelines]
+min_validation_days = 7
+min_validation_bets = 20
+min_win_rate = 0.55
+min_roi = 0.05
+target_bets_per_day = "3-5"
+revalidation_frequency = "weekly"
+
+[guidelines.monitoring]
+alert_if_win_rate_below = 0.50
+alert_if_roi_below = 0.00
+alert_if_bets_per_day_below = 2
+alert_if_bets_per_day_above = 10
+rolling_window_days = 7
+stop_loss_days_below_breakeven = 3  # Pause after 3 consecutive days ROI < 0
+
+# ============================================================================
+# FILTERING STRATEGY EVOLUTION
+# ============================================================================
+
+[filtering_history.v1_point_value]
+dates = "2025-11-06 to 2025-11-08"
+description = "Point value edges with tiered thresholds"
+points_filter = "spread≥2.5 OR edge≥5.0pts OR (edge≥3.0pts AND spread≥1.5)"
+rebounds_filter = "edge≥1.0pts OR spread≥2.5"
+result = "Too conservative - only 2.5 bets/day"
+status = "deprecated"
+
+[filtering_history.v2_hybrid_dual_filter]
+dates = "2025-11-08 onwards"
+description = "Hybrid dual-filter: probability gate + point value gate"
+points_filter = "p_over≥0.53 AND (edge≥2.0pts OR spread≥2.5)"
+rebounds_filter = "p_over≥0.53 AND (edge≥1.0pts OR spread≥2.5)"
+validation_results = "28 bets, 75.0% WR, +43.18% ROI"
+status = "active"

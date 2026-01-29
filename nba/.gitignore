@@ -1,0 +1,51 @@
+# Data files
+*.csv
+*.json
+*.har
+
+# Model files (large binary)
+models/saved_*/
+models/datasets_*/
+!models/saved_live_fixed/
+
+# Archive (large)
+archive/
+
+# Logs
+logs/
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Environment
+.env
+*.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Database dumps
+*.sql
+*.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# HAR files (contain sensitive data)
+HAR-files/
+*.har
