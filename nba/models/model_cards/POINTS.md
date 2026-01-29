@@ -1,14 +1,15 @@
-# Model Card: NBA POINTS XL Predictor
+# Model Card: NBA POINTS Predictor
 
 ## Model Details
 
 | Property | Value |
 |----------|-------|
-| **Model Name** | POINTS XL Stacked Two-Head |
-| **Version** | 1.0.0 |
-| **Trained Date** | 2025-11-06 23:48:12 |
+| **Model Name** | POINTS Stacked Two-Head |
+| **Version** | 2.0.0 |
+| **Trained Date** | 2026-01-11 08:19:11 |
 | **Architecture** | Stacked Two-Head (Regressor + Classifier) |
 | **Framework** | LightGBM 4.x |
+| **Features** | 166 |
 | **Production Status** | DEPLOYED |
 
 ## Intended Use
@@ -31,8 +32,8 @@ Predict NBA player scoring prop outcomes (OVER/UNDER) with probability estimates
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     INPUT: 102 Features                      │
-│  (78 player + 20 book disagreement + 4 computed features)   │
+│                     INPUT: 166 Features                      │
+│  Player (42) + Team (28) + H2H (36) + Book (22) + More      │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -51,7 +52,7 @@ Predict NBA player scoring prop outcomes (OVER/UNDER) with probability estimates
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              HEAD 2: LightGBM Classifier                     │
-│              Input: 103 features (102 + expected_diff)      │
+│              Input: 166 features + expected_diff            │
 │              Output: P(actual > line)                       │
 └─────────────────────────────────────────────────────────────┘
                               │
@@ -75,7 +76,7 @@ Predict NBA player scoring prop outcomes (OVER/UNDER) with probability estimates
 |----------|-------|
 | **Source** | BettingPros historical props (2023-2025) |
 | **Samples** | ~24,316 POINTS props |
-| **Date Range** | Oct 2023 - Nov 2025 |
+| **Date Range** | Oct 2023 - Jan 2025 |
 | **Train/Test Split** | 70/30 temporal split |
 | **Home/Away Distribution** | 54.5% home / 45.5% away |
 
@@ -90,41 +91,38 @@ Predict NBA player scoring prop outcomes (OVER/UNDER) with probability estimates
 ### Regressor (Value Prediction)
 | Metric | Train | Test |
 |--------|-------|------|
-| RMSE | 6.14 | 6.84 |
-| MAE | - | 5.23 |
-| R² | - | 0.411 |
+| RMSE | 4.78 | 6.13 |
+| MAE | - | 4.55 |
+| R² | - | 0.537 |
 
 ### Classifier (OVER/UNDER Prediction)
 | Metric | Train | Test |
 |--------|-------|------|
-| Accuracy | 96.0% | 89.9% |
-| AUC (raw) | - | 0.757 |
-| AUC (calibrated) | - | 0.764 |
-| AUC (blended) | - | 0.765 |
-| Brier Score (before) | - | 0.088 |
-| Brier Score (after) | - | 0.072 |
+| Accuracy | 80.4% | 67.0% |
+| AUC (raw) | - | 0.732 |
+| AUC (calibrated) | - | 0.735 |
+| AUC (blended) | - | 0.736 |
+| Brier Score (before) | - | 0.209 |
+| Brier Score (after) | - | 0.207 |
 
-### Validation Results (Oct 23 - Nov 4, 2024)
-| Strategy | Bets | Win Rate | ROI |
-|----------|------|----------|-----|
-| Consensus baseline | 471 | 51.0% | -2.62% |
-| Line shopping | 471 | 56.7% | +8.27% |
-| High-spread (≥2.5) | 17 | 70.6% | +34.8% |
+### Live Validation (Jan 1-28, 2026)
+| Metric | Value |
+|--------|-------|
+| Total Bets | 115 |
+| Win Rate | 60.0% |
+| ROI | +14.5% |
 
-## Feature Importance
+## Feature Categories (166 total)
 
-Top 10 features by importance:
-
-1. `line` - The sportsbook prop line
-2. `ema_points_L5` - 5-game EMA of points
-3. `expected_diff` - Model prediction minus line
-4. `ema_points_L3` - 3-game EMA of points
-5. `ema_minutes_L5` - 5-game EMA of minutes
-6. `team_pace` - Team pace factor
-7. `consensus_line` - Median line across books
-8. `line_spread` - Max - min line across books
-9. `opponent_def_rating` - Opponent defensive rating
-10. `starter_flag` - Whether player is a starter
+| Category | Count | Examples |
+|----------|-------|----------|
+| Player Rolling Stats | 42 | ema_points_L3/L5/L10/L20, minutes, FG% |
+| Team & Game Context | 28 | pace, ratings, rest, B2B, travel |
+| Head-to-Head History | 36 | h2h_avg_points, L3/L5 vs opponent |
+| Book Disagreement | 22 | line_spread, consensus, deviations |
+| Prop History | 12 | hit_rate_L20, bayesian_confidence |
+| Vegas & BettingPros | 17 | vegas_total, bp_projection |
+| Computed | 1 | expected_diff |
 
 ## Limitations
 
@@ -144,78 +142,37 @@ Top 10 features by importance:
 ## Bias & Fairness Analysis
 
 ### Demographic Considerations
-This model predicts basketball statistics based on player performance data. While the model does not use demographic attributes (race, age, nationality) as direct features, potential bias sources include:
+This model predicts basketball statistics based on player performance data. While the model does not use demographic attributes as direct features, potential bias sources include:
 
 | Bias Type | Risk Level | Description |
 |-----------|------------|-------------|
-| **Sample Bias** | Medium | Training data weighted toward star players who appear more frequently in prop markets |
-| **Position Bias** | Low | Guards may have different prediction accuracy than centers due to scoring pattern differences |
-| **Team Context Bias** | Medium | Players on high-scoring teams may have inflated feature values |
-| **Recency Bias** | Low | EMA features naturally weight recent games more heavily |
-
-### Fairness Metrics
-
-We evaluate model performance across player segments:
-
-| Player Segment | Sample Size | AUC | Accuracy | Notes |
-|----------------|-------------|-----|----------|-------|
-| Star players (>25 PPG) | ~15% | 0.78 | 91% | Slightly better performance |
-| Starters (15-25 PPG) | ~35% | 0.76 | 89% | Core performance tier |
-| Role players (<15 PPG) | ~50% | 0.74 | 88% | Slightly lower accuracy |
+| **Sample Bias** | Medium | Training data weighted toward star players |
+| **Position Bias** | Low | Guards may differ from centers |
+| **Team Context Bias** | Medium | High-scoring teams may inflate features |
+| **Recency Bias** | Low | EMA features weight recent games |
 
 ### Mitigation Strategies
-1. **Class weighting**: Training uses balanced class weights to prevent majority class bias
-2. **Feature normalization**: All features are scaled to prevent dominance by high-variance features
-3. **Temporal validation**: Test set is temporally separated to ensure generalization
-4. **Regular monitoring**: Performance tracked across player tiers during production
-
-### Recommendations for Fair Use
-- Monitor performance metrics separately for different player tiers
-- Be cautious with predictions for players with limited historical data
-- Consider that props for star players may have sharper lines (less edge)
-
-## Ethical Considerations
-
-### Risks
-- **Gambling harm**: Model outputs should not encourage problem gambling
-- **Overconfidence**: Probabilities are estimates, not guarantees
-- **Financial risk**: Users should never bet more than they can afford to lose
-
-### Mitigations
-- Model outputs include confidence levels
-- Documentation emphasizes uncertainty
-- No guarantees of profitability are made
-
-## Caveats and Recommendations
-
-1. **Always use line shopping**: Performance is best when betting at the softest available line
-2. **Prioritize high-spread props**: Props with ≥2.5 point spread show best performance
-3. **Monitor for drift**: Feature distributions should be checked periodically
-4. **Retrain seasonally**: Model should be retrained at least once per season
+1. **Class weighting**: Balanced class weights during training
+2. **Feature normalization**: All features scaled
+3. **Temporal validation**: Test set temporally separated
+4. **Regular monitoring**: Performance tracked across player tiers
 
 ## Model Files
 
 ```
 nba/models/saved_xl/
-├── points_xl_regressor.pkl      # LightGBM regressor
-├── points_xl_classifier.pkl     # LightGBM classifier
-├── points_xl_calibrator.pkl     # Isotonic calibration
-├── points_xl_imputer.pkl        # Feature imputer
-├── points_xl_scaler.pkl         # Feature scaler
-├── points_xl_features.pkl       # Feature name list
-└── points_xl_metadata.json      # This model's metadata
-```
-
-## Citation
-
-```
-NBA Props ML System - POINTS Model
-Trained: November 6, 2025
-Architecture: Stacked Two-Head LightGBM with Isotonic Calibration
+├── points_market_regressor.pkl     # LightGBM regressor
+├── points_market_classifier.pkl    # LightGBM classifier
+├── points_market_calibrator.pkl    # Isotonic calibration
+├── points_market_imputer.pkl       # Feature imputer
+├── points_market_scaler.pkl        # Feature scaler
+├── points_market_features.pkl      # Feature name list (166)
+└── points_market_metadata.json     # Model metadata
 ```
 
 ## Changelog
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.0.0 | 2025-11-06 | Initial production release |
+| 2.0.0 | 2026-01-11 | Upgraded to 166 features, added H2H/prop history |
+| 1.0.0 | 2025-11-06 | Initial production release (102 features) |

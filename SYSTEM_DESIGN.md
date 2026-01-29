@@ -72,21 +72,22 @@ This document explains how data flows through the system, why architectural deci
 │   │   ├── injuries              → teammate injury impact                │  │
 │   │   └── nba_prop_lines        → multi-book line data                  │  │
 │   │                                                                     │  │
-│   │   Output: 102-dimension feature vector                              │  │
+│   │   Output: 166-dimension feature vector                              │  │
 │   └─────────────────────────────────────────────────────────────────────┘  │
 │                                                                             │
-│   Feature Categories:                                                       │
+│   Feature Categories (166 total):                                           │
 │   ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐           │
-│   │ Player (78)      │ │ Book (20)        │ │ Computed (4)     │           │
-│   │                  │ │                  │ │                  │           │
-│   │ ema_points_L3    │ │ line_spread      │ │ is_home          │           │
-│   │ ema_points_L5    │ │ line_std         │ │ line             │           │
-│   │ ema_points_L10   │ │ dk_deviation     │ │ opponent_team    │           │
-│   │ ema_rebounds_L3  │ │ fd_deviation     │ │ expected_diff    │           │
-│   │ team_pace        │ │ mgm_deviation    │ │                  │           │
-│   │ opp_def_rating   │ │ softest_vs_cons  │ │                  │           │
-│   │ rest_days        │ │ num_books        │ │                  │           │
-│   │ ...              │ │ ...              │ │                  │           │
+│   │ Player (42)      │ │ Team/Game (28)   │ │ H2H History (36) │           │
+│   │ ema_points_L3/5  │ │ team_pace        │ │ h2h_avg_points   │           │
+│   │ ema_rebounds_L10 │ │ opp_def_rating   │ │ h2h_L3_rebounds  │           │
+│   │ ema_minutes_L20  │ │ rest_days, B2B   │ │ h2h_home/away    │           │
+│   │ fg_pct, ft_rate  │ │ travel_distance  │ │ sample_quality   │           │
+│   └──────────────────┘ └──────────────────┘ └──────────────────┘           │
+│   ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐           │
+│   │ Book (22)        │ │ Prop History (12)│ │ Vegas/BP (17+1)  │           │
+│   │ line_spread      │ │ hit_rate_L20     │ │ vegas_total      │           │
+│   │ dk/fd_deviation  │ │ bayesian_conf    │ │ bp_projection    │           │
+│   │ softest_vs_cons  │ │ consecutive_hits │ │ expected_diff    │           │
 │   └──────────────────┘ └──────────────────┘ └──────────────────┘           │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -102,7 +103,7 @@ This document explains how data flows through the system, why architectural deci
 │   │                     nba/betting_xl/xl_predictor.py                  │  │
 │   │                                                                     │  │
 │   │                                                                     │  │
-│   │   Feature Vector (102)                                              │  │
+│   │   Feature Vector (166)                                              │  │
 │   │          │                                                          │  │
 │   │          ▼                                                          │  │
 │   │   ┌──────────────┐                                                  │  │
@@ -119,7 +120,7 @@ This document explains how data flows through the system, why architectural deci
 │   │   │  REGRESSOR   │          │  CLASSIFIER  │                        │  │
 │   │   │  (LightGBM)  │          │  (LightGBM)  │                        │  │
 │   │   │              │          │              │                        │  │
-│   │   │  Predicts    │ ───────▶ │  Input: 102  │                        │  │
+│   │   │  Predicts    │ ───────▶ │  Input: 166  │                        │  │
 │   │   │  stat value  │ exp_diff │  + exp_diff  │                        │  │
 │   │   │              │          │              │                        │  │
 │   │   │  Output:     │          │  Output:     │                        │  │
@@ -258,7 +259,7 @@ python3 build_xl_training_dataset.py --output datasets/
 **What it does:**
 1. Queries `nba_prop_lines` for historical props with `actual_result IS NOT NULL`
 2. Enriches `is_home` from `player_game_logs` (90.5% match rate)
-3. Extracts 102 features for each prop using point-in-time data
+3. Extracts 166 features for each prop using point-in-time data
 4. Outputs: `xl_training_POINTS_2023_2025.csv` (24,316 rows)
 
 **Data Leakage Prevention:**
@@ -375,7 +376,7 @@ features = extractor.extract(
     is_home=True,
     stat_type="REBOUNDS"
 )
-# Returns 102-dim vector
+# Returns 166-dim vector
 ```
 
 Key features extracted:
@@ -467,7 +468,7 @@ def validate_props_freshness(game_date):
 | `nba/betting_xl/xl_predictor.py` | Model loading and inference |
 | `nba/betting_xl/line_optimizer.py` | Bet filtering logic |
 | `nba/betting_xl/validate_xl_models.py` | Historical backtesting |
-| `nba/features/extract_live_features_xl.py` | Feature extraction (102 features) |
+| `nba/features/extract_live_features_xl.py` | Feature extraction (166 features) |
 | `nba/features/build_xl_training_dataset.py` | Training data builder |
 | `nba/models/train_market.py` | Model training script |
 | `nba/models/MODEL_REGISTRY.toml` | Validation history and metrics |
