@@ -13,43 +13,41 @@ Usage:
     python3 backfill_props_xl_actuals.py --all
 """
 
-import psycopg2
-from datetime import datetime
 import argparse
 import logging
 import os
+from datetime import datetime
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+import psycopg2
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Database configs
 PLAYERS_DB = {
-    'host': 'localhost',
-    'port': 5536,
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD'),
-    'database': 'nba_players'
+    "host": "localhost",
+    "port": 5536,
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
+    "database": "nba_players",
 }
 
 INTEL_DB = {
-    'host': 'localhost',
-    'port': 5539,
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD'),
-    'database': 'nba_intelligence'
+    "host": "localhost",
+    "port": 5539,
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
+    "database": "nba_intelligence",
 }
 
 # Stat type mapping from nba_props_xl to player_game_logs columns
 STAT_MAP = {
-    'POINTS': 'points',
-    'REBOUNDS': 'rebounds',
-    'ASSISTS': 'assists',
-    'THREES': 'three_pointers_made',
-    'STEALS': 'steals',
-    'BLOCKS': 'blocks'
+    "POINTS": "points",
+    "REBOUNDS": "rebounds",
+    "ASSISTS": "assists",
+    "THREES": "three_pointers_made",
+    "STEALS": "steals",
+    "BLOCKS": "blocks",
 }
 
 
@@ -65,10 +63,10 @@ def normalize_player_name(name):
     normalized = name.strip().lower()
 
     # Handle common suffixes
-    suffixes = [' jr.', ' jr', ' sr.', ' sr', ' iii', ' ii', ' iv']
+    suffixes = [" jr.", " jr", " sr.", " sr", " iii", " ii", " iv"]
     for suffix in suffixes:
         if normalized.endswith(suffix):
-            normalized = normalized[:-len(suffix)].strip()
+            normalized = normalized[: -len(suffix)].strip()
 
     return normalized
 
@@ -159,7 +157,9 @@ def backfill_results(start_date=None, end_date=None, specific_date=None):
             """
 
             cursor_update = conn_intel.cursor()
-            cursor_update.execute(update_query, (actual_value, player_name, prop_game_date, stat_type))
+            cursor_update.execute(
+                update_query, (actual_value, player_name, prop_game_date, stat_type)
+            )
             rows_updated = cursor_update.rowcount
             cursor_update.close()
 
@@ -186,18 +186,18 @@ def backfill_results(start_date=None, end_date=None, specific_date=None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Backfill actual_value for nba_props_xl from player_game_logs'
+        description="Backfill actual_value for nba_props_xl from player_game_logs"
     )
-    parser.add_argument('--date', help='Specific date to backfill (YYYY-MM-DD)')
-    parser.add_argument('--start-date', help='Start date (YYYY-MM-DD)')
-    parser.add_argument('--end-date', help='End date (YYYY-MM-DD)')
-    parser.add_argument('--all', action='store_true', help='Backfill all missing actual_value')
+    parser.add_argument("--date", help="Specific date to backfill (YYYY-MM-DD)")
+    parser.add_argument("--start-date", help="Start date (YYYY-MM-DD)")
+    parser.add_argument("--end-date", help="End date (YYYY-MM-DD)")
+    parser.add_argument("--all", action="store_true", help="Backfill all missing actual_value")
 
     args = parser.parse_args()
 
-    logger.info("="*80)
+    logger.info("=" * 80)
     logger.info("BACKFILL ACTUAL VALUES FOR NBA_PROPS_XL")
-    logger.info("="*80)
+    logger.info("=" * 80)
 
     if args.all:
         logger.info("Mode: Backfill ALL missing actual_value")
@@ -216,5 +216,5 @@ def main():
     logger.info("")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

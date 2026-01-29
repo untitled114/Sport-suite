@@ -8,39 +8,40 @@ Usage:
     python load_bettingpros_to_db.py --input-dir nba/data/bettingpros_props/ --dry-run
 """
 
-import json
-import glob
-import os
 import argparse
-import psycopg2
+import glob
+import json
+import os
 from datetime import datetime
+
+import psycopg2
 
 # Database connection
 DB_CONFIG = {
-    'host': 'localhost',
-    'port': 5539,
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD'),
-    'database': 'nba_intelligence'
+    "host": "localhost",
+    "port": 5539,
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
+    "database": "nba_intelligence",
 }
 
 # Player database for lookups
 PLAYERS_DB_CONFIG = {
-    'host': 'localhost',
-    'port': 5536,
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD'),
-    'database': 'nba_players'
+    "host": "localhost",
+    "port": 5536,
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
+    "database": "nba_players",
 }
 
 # Stat type mapping
 STAT_TYPE_MAP = {
-    'points': 'POINTS',
-    'rebounds': 'REBOUNDS',
-    'assists': 'ASSISTS',
-    'threes': 'THREES',
-    'steals': 'STEALS',
-    'blocks': 'BLOCKS'
+    "points": "POINTS",
+    "rebounds": "REBOUNDS",
+    "assists": "ASSISTS",
+    "threes": "THREES",
+    "steals": "STEALS",
+    "blocks": "BLOCKS",
 }
 
 
@@ -62,27 +63,33 @@ def get_player_id(player_slug, conn):
     # Try multiple approaches
 
     # Approach 1: Direct match on full_name (convert slug to name)
-    name_parts = player_slug.split('-')
+    name_parts = player_slug.split("-")
     first_name = name_parts[0].capitalize()
-    last_name = ' '.join(p.capitalize() for p in name_parts[1:])
+    last_name = " ".join(p.capitalize() for p in name_parts[1:])
     full_name = f"{first_name} {last_name}"
 
-    cursor.execute("""
+    cursor.execute(
+        """
         SELECT player_id FROM player_profile
         WHERE LOWER(full_name) = LOWER(%s)
         LIMIT 1
-    """, (full_name,))
+    """,
+        (full_name,),
+    )
 
     result = cursor.fetchone()
     if result:
         return result[0]
 
     # Approach 2: Try last name match (common for unique players)
-    cursor.execute("""
+    cursor.execute(
+        """
         SELECT player_id FROM player_profile
         WHERE LOWER(full_name) LIKE LOWER(%s)
         LIMIT 1
-    """, (f'%{last_name}%',))
+    """,
+        (f"%{last_name}%",),
+    )
 
     result = cursor.fetchone()
     if result:
@@ -99,54 +106,54 @@ def parse_bettingpros_file(filepath):
     Returns:
         List of prop dicts with: player_slug, stat_type, game_date, line, actual, projection, etc.
     """
-    with open(filepath, 'r') as f:
+    with open(filepath, "r") as f:
         data = json.load(f)
 
     # Extract player slug and stat type from filename
     # Format: {player-slug}_{stat-type}_{season}.json
     basename = os.path.basename(filepath)
-    parts = basename.replace('.json', '').split('_')
+    parts = basename.replace(".json", "").split("_")
 
     if len(parts) < 3:
         print(f"⚠️  Skipping malformed filename: {basename}")
         return []
 
     # Player slug is everything before the last 2 parts
-    player_slug = '_'.join(parts[:-2])
+    player_slug = "_".join(parts[:-2])
     stat_type = parts[-2]
     season = parts[-1]
 
     # Canonical stat type
     stat_canonical = STAT_TYPE_MAP.get(stat_type, stat_type.upper())
 
-    analyses = data.get('analyses', [])
+    analyses = data.get("analyses", [])
 
     props = []
     for analysis in analyses:
-        event = analysis.get('event', {})
-        prop_offer = analysis.get('propOffer', {})
+        event = analysis.get("event", {})
+        prop_offer = analysis.get("propOffer", {})
 
         # Skip if missing critical data
-        line = prop_offer.get('line')
-        actual = prop_offer.get('score')
+        line = prop_offer.get("line")
+        actual = prop_offer.get("score")
 
         if line is None:
             continue  # No line offered
 
         # Extract fields
         prop = {
-            'player_slug': player_slug,
-            'stat_type': stat_canonical,
-            'game_date': prop_offer.get('date'),
-            'line': line,
-            'actual': actual,
-            'over_odds': prop_offer.get('cost_inverse'),
-            'under_odds': prop_offer.get('cost'),
-            'bettingpros_projection': prop_offer.get('projection'),
-            'bettingpros_recommendation': prop_offer.get('recommendation'),
-            'season': int(season) if season.isdigit() else None,
-            'event_id': event.get('id'),
-            'raw_json': json.dumps(analysis)
+            "player_slug": player_slug,
+            "stat_type": stat_canonical,
+            "game_date": prop_offer.get("date"),
+            "line": line,
+            "actual": actual,
+            "over_odds": prop_offer.get("cost_inverse"),
+            "under_odds": prop_offer.get("cost"),
+            "bettingpros_projection": prop_offer.get("projection"),
+            "bettingpros_recommendation": prop_offer.get("recommendation"),
+            "season": int(season) if season.isdigit() else None,
+            "event_id": event.get("id"),
+            "raw_json": json.dumps(analysis),
         }
 
         props.append(prop)
@@ -176,7 +183,7 @@ def load_props_to_database(props, players_conn, intel_conn, dry_run=False):
     for prop in props:
         try:
             # Get player_id
-            player_id = get_player_id(prop['player_slug'], players_conn)
+            player_id = get_player_id(prop["player_slug"], players_conn)
 
             if player_id is None:
                 print(f"⚠️  Player not found: {prop['player_slug']}")
@@ -184,13 +191,16 @@ def load_props_to_database(props, players_conn, intel_conn, dry_run=False):
                 continue
 
             # Check if already exists
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT COUNT(*) FROM nba_prop_lines
                 WHERE player_id = %s
                   AND game_date = %s
                   AND stat_type = %s
                   AND source = 'bettingpros'
-            """, (player_id, prop['game_date'], prop['stat_type']))
+            """,
+                (player_id, prop["game_date"], prop["stat_type"]),
+            )
 
             exists = cursor.fetchone()[0] > 0
 
@@ -199,7 +209,8 @@ def load_props_to_database(props, players_conn, intel_conn, dry_run=False):
                 continue
 
             # Insert
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO nba_prop_lines (
                     source,
                     player_id,
@@ -217,19 +228,21 @@ def load_props_to_database(props, players_conn, intel_conn, dry_run=False):
                     'bettingpros',
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
-            """, (
-                player_id,
-                prop['stat_type'],
-                prop['line'],
-                prop['actual'],
-                prop['over_odds'],
-                prop['under_odds'],
-                prop['game_date'],
-                prop['bettingpros_projection'],
-                prop['bettingpros_recommendation'],
-                prop['season'],
-                prop['raw_json']
-            ))
+            """,
+                (
+                    player_id,
+                    prop["stat_type"],
+                    prop["line"],
+                    prop["actual"],
+                    prop["over_odds"],
+                    prop["under_odds"],
+                    prop["game_date"],
+                    prop["bettingpros_projection"],
+                    prop["bettingpros_recommendation"],
+                    prop["season"],
+                    prop["raw_json"],
+                ),
+            )
 
             inserted += 1
 
@@ -245,9 +258,9 @@ def load_props_to_database(props, players_conn, intel_conn, dry_run=False):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Load NBA BettingPros props to database')
-    parser.add_argument('--input-dir', required=True, help='Directory with BettingPros JSON files')
-    parser.add_argument('--dry-run', action='store_true', help='Parse but don\'t insert')
+    parser = argparse.ArgumentParser(description="Load NBA BettingPros props to database")
+    parser.add_argument("--input-dir", required=True, help="Directory with BettingPros JSON files")
+    parser.add_argument("--dry-run", action="store_true", help="Parse but don't insert")
 
     args = parser.parse_args()
 
@@ -256,7 +269,7 @@ def main():
     print("=" * 80)
 
     # Find all JSON files
-    pattern = os.path.join(args.input_dir, '*.json')
+    pattern = os.path.join(args.input_dir, "*.json")
     files = glob.glob(pattern)
 
     print(f"\nFound {len(files)} JSON files in {args.input_dir}")
@@ -288,10 +301,7 @@ def main():
     # Load to database
     print(f"\nLoading props to database...")
     inserted, skipped, errors = load_props_to_database(
-        all_props,
-        players_conn,
-        intel_conn,
-        dry_run=args.dry_run
+        all_props, players_conn, intel_conn, dry_run=args.dry_run
     )
 
     print("\n" + "=" * 80)
@@ -312,5 +322,5 @@ def main():
     intel_conn.close()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

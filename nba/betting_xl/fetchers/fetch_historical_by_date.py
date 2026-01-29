@@ -36,14 +36,14 @@ Usage:
       --end-date 2024-10-31
 """
 
-import sys
-import json
-import time
 import argparse
-from pathlib import Path
-from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+import json
 import os
+import sys
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent))
@@ -53,28 +53,28 @@ from base_fetcher import BaseFetcher
 API_BASE_URL = "https://api.bettingpros.com/v3/props"
 
 PREMIUM_HEADERS = {
-    'x-api-key': os.getenv('BETTINGPROS_API_KEY'),
-    'x-level': 'cHJlbWl1bQ==',  # base64 for "premium"
-    'accept': 'application/json'
+    "x-api-key": os.getenv("BETTINGPROS_API_KEY"),
+    "x-level": "cHJlbWl1bQ==",  # base64 for "premium"
+    "accept": "application/json",
 }
 
 # Market IDs - FIXED 2026-01-03: ASSISTS was 160 (STEALS), correct is 151
 MARKETS = {
-    'POINTS': 156,
-    'REBOUNDS': 157,
-    'ASSISTS': 151,  # FIXED: Was 160 (steals)
-    'THREES': 162,
+    "POINTS": 156,
+    "REBOUNDS": 157,
+    "ASSISTS": 151,  # FIXED: Was 160 (steals)
+    "THREES": 162,
 }
 
 # Priority sportsbooks (book_id → book_name)
 PRIORITY_BOOKS = {
-    12: 'draftkings',
-    10: 'fanduel',
-    19: 'betmgm',
-    13: 'caesars',
-    24: 'bet365',
-    18: 'betrivers',
-    14: 'fanatics',
+    12: "draftkings",
+    10: "fanduel",
+    19: "betmgm",
+    13: "caesars",
+    24: "bet365",
+    18: "betrivers",
+    14: "fanatics",
 }
 
 
@@ -89,11 +89,11 @@ class HistoricalDateFetcher(BaseFetcher):
             verbose: Enable verbose logging
         """
         super().__init__(
-            source_name='bettingpros_historical_date',
+            source_name="bettingpros_historical_date",
             rate_limit=1.0,  # 1 request per second (conservative)
             max_retries=3,
             timeout=30,
-            verbose=verbose
+            verbose=verbose,
         )
 
         self.api_base_url = API_BASE_URL
@@ -102,12 +102,7 @@ class HistoricalDateFetcher(BaseFetcher):
         self.total_props_fetched = 0
 
     def fetch_date_market_book(
-        self,
-        date: str,
-        market_id: int,
-        market_name: str,
-        book_id: int,
-        book_name: str
+        self, date: str, market_id: int, market_name: str, book_id: int, book_name: str
     ) -> List[Dict[str, Any]]:
         """
         Fetch historical props for one date, one market, one book.
@@ -132,14 +127,14 @@ class HistoricalDateFetcher(BaseFetcher):
             # NOTE: ev_threshold=false is CRITICAL to get ALL players
             # Without it, API filters out players without projection data (e.g., Jokic, Giddey)
             params = {
-                'sport': 'NBA',
-                'date': date,
-                'market_id': market_id,
-                'book_id': book_id,
-                'limit': 500,  # Max per page
-                'page': page,
-                'ev_threshold': 'false',  # Get ALL players, not just those with EV data
-                'include_injured': 'true',  # Include injured players
+                "sport": "NBA",
+                "date": date,
+                "market_id": market_id,
+                "book_id": book_id,
+                "limit": 500,  # Max per page
+                "page": page,
+                "ev_threshold": "false",  # Get ALL players, not just those with EV data
+                "include_injured": "true",  # Include injured players
             }
 
             if self.verbose and page == 1:
@@ -147,10 +142,7 @@ class HistoricalDateFetcher(BaseFetcher):
 
             # Make API request
             response = self._make_request(
-                url=self.api_base_url,
-                method='GET',
-                params=params,
-                headers=self.premium_headers
+                url=self.api_base_url, method="GET", params=params, headers=self.premium_headers
             )
 
             self.total_api_calls += 1
@@ -173,7 +165,7 @@ class HistoricalDateFetcher(BaseFetcher):
                 break
 
             # Extract props from response
-            props = data.get('props', [])
+            props = data.get("props", [])
 
             if not props:
                 # No more props on this page
@@ -183,10 +175,7 @@ class HistoricalDateFetcher(BaseFetcher):
             for raw_prop in props:
                 try:
                     parsed_prop = self._parse_prop(
-                        raw_prop=raw_prop,
-                        date=date,
-                        market_name=market_name,
-                        book_name=book_name
+                        raw_prop=raw_prop, date=date, market_name=market_name, book_name=book_name
                     )
 
                     if parsed_prop:
@@ -198,8 +187,8 @@ class HistoricalDateFetcher(BaseFetcher):
                     continue
 
             # Check if there are more pages
-            pagination = data.get('_pagination', {})
-            total_pages = pagination.get('total_pages', 1)
+            pagination = data.get("_pagination", {})
+            total_pages = pagination.get("total_pages", 1)
 
             if page >= total_pages:
                 break
@@ -214,11 +203,7 @@ class HistoricalDateFetcher(BaseFetcher):
         return all_props
 
     def _parse_prop(
-        self,
-        raw_prop: Dict[str, Any],
-        date: str,
-        market_name: str,
-        book_name: str
+        self, raw_prop: Dict[str, Any], date: str, market_name: str, book_name: str
     ) -> Optional[Dict[str, Any]]:
         """
         Parse API response prop into standardized format with FULL cheatsheet data.
@@ -247,143 +232,135 @@ class HistoricalDateFetcher(BaseFetcher):
         """
         try:
             # Extract participant fields
-            participant = raw_prop.get('participant', {})
-            player_name = participant.get('name')
-            player_data = participant.get('player', {})
-            player_team = player_data.get('team')
+            participant = raw_prop.get("participant", {})
+            player_name = participant.get("name")
+            player_data = participant.get("player", {})
+            player_team = player_data.get("team")
 
             # Extract over/under fields
-            over = raw_prop.get('over', {})
-            under = raw_prop.get('under', {})
-            over_line = over.get('line')
-            over_odds = over.get('odds', -110)
-            under_line = under.get('line')
-            under_odds = under.get('odds', -110)
-            consensus_line = over.get('consensus_line')
+            over = raw_prop.get("over", {})
+            under = raw_prop.get("under", {})
+            over_line = over.get("line")
+            over_odds = over.get("odds", -110)
+            under_line = under.get("line")
+            under_odds = under.get("odds", -110)
+            consensus_line = over.get("consensus_line")
 
             # Extract scoring (actual result)
-            scoring = raw_prop.get('scoring', {})
-            actual_value = scoring.get('actual')
+            scoring = raw_prop.get("scoring", {})
+            actual_value = scoring.get("actual")
 
-            event_id = raw_prop.get('event_id')
+            event_id = raw_prop.get("event_id")
 
             # Validate required fields
             if not all([player_name, over_line]):
                 return None
 
             # ========== CHEATSHEET DATA: Projection ==========
-            projection = raw_prop.get('projection', {})
-            proj_value = projection.get('value')
-            proj_diff = projection.get('diff')
-            bet_rating = projection.get('bet_rating')
-            expected_value = projection.get('expected_value')
-            probability = projection.get('probability')
-            recommended_side = projection.get('recommended_side')
+            projection = raw_prop.get("projection", {})
+            proj_value = projection.get("value")
+            proj_diff = projection.get("diff")
+            bet_rating = projection.get("bet_rating")
+            expected_value = projection.get("expected_value")
+            probability = projection.get("probability")
+            recommended_side = projection.get("recommended_side")
 
             # ========== CHEATSHEET DATA: Opposition Rank ==========
-            extra = raw_prop.get('extra', {})
-            opp_rank_data = extra.get('opposition_rank', {})
-            opp_rank = opp_rank_data.get('rank')
-            opp_value = opp_rank_data.get('value')
-            opp_tied = opp_rank_data.get('tied')
+            extra = raw_prop.get("extra", {})
+            opp_rank_data = extra.get("opposition_rank", {})
+            opp_rank = opp_rank_data.get("rank")
+            opp_value = opp_rank_data.get("value")
+            opp_tied = opp_rank_data.get("tied")
 
             # ========== CHEATSHEET DATA: Performance / Hit Rates ==========
-            performance = raw_prop.get('performance', {})
+            performance = raw_prop.get("performance", {})
 
             def calc_hit_rate(perf_data: Dict) -> Optional[float]:
                 """Calculate hit rate from performance data"""
-                over_count = perf_data.get('over', 0)
-                under_count = perf_data.get('under', 0)
+                over_count = perf_data.get("over", 0)
+                under_count = perf_data.get("under", 0)
                 total = over_count + under_count
                 if total > 0:
                     return round(over_count / total, 3)
                 return None
 
             # Extract all performance windows
-            last_1 = performance.get('last_1', {})
-            last_5 = performance.get('last_5', {})
-            last_10 = performance.get('last_10', {})
-            last_15 = performance.get('last_15', {})
-            last_20 = performance.get('last_20', {})
-            season_perf = performance.get('season', {})
-            prior_season = performance.get('prior_season', {})
-            h2h = performance.get('h2h', {})
-            streak = performance.get('streak')
-            streak_type = performance.get('streak_type')
+            last_1 = performance.get("last_1", {})
+            last_5 = performance.get("last_5", {})
+            last_10 = performance.get("last_10", {})
+            last_15 = performance.get("last_15", {})
+            last_20 = performance.get("last_20", {})
+            season_perf = performance.get("season", {})
+            prior_season = performance.get("prior_season", {})
+            h2h = performance.get("h2h", {})
+            streak = performance.get("streak")
+            streak_type = performance.get("streak_type")
 
             # Build comprehensive prop with ALL cheatsheet fields
             prop = {
                 # === Basic Prop Info ===
-                'player_name': player_name,
-                'player_team': player_team,
-                'stat_type': market_name,
-                'book_name': book_name,
-                'game_date': date,
-                'game_id': str(event_id) if event_id else '',
-
+                "player_name": player_name,
+                "player_team": player_team,
+                "stat_type": market_name,
+                "book_name": book_name,
+                "game_date": date,
+                "game_id": str(event_id) if event_id else "",
                 # === Line Data ===
-                'line': float(over_line),
-                'over_line': float(over_line),
-                'under_line': float(under_line) if under_line else float(over_line),
-                'over_odds': over_odds,
-                'under_odds': under_odds,
-                'consensus_line': float(consensus_line) if consensus_line else None,
-
+                "line": float(over_line),
+                "over_line": float(over_line),
+                "under_line": float(under_line) if under_line else float(over_line),
+                "over_odds": over_odds,
+                "under_odds": under_odds,
+                "consensus_line": float(consensus_line) if consensus_line else None,
                 # === Actual Result ===
-                'actual_value': float(actual_value) if actual_value is not None else None,
-
+                "actual_value": float(actual_value) if actual_value is not None else None,
                 # === Projection (Cheatsheet) ===
-                'projection': float(proj_value) if proj_value is not None else None,
-                'projection_diff': float(proj_diff) if proj_diff is not None else None,
-                'bet_rating': bet_rating,
-                'expected_value': expected_value,
-                'ev_pct': round(expected_value * 100, 2) if expected_value else None,
-                'probability': probability,
-                'recommended_side': recommended_side,
-
+                "projection": float(proj_value) if proj_value is not None else None,
+                "projection_diff": float(proj_diff) if proj_diff is not None else None,
+                "bet_rating": bet_rating,
+                "expected_value": expected_value,
+                "ev_pct": round(expected_value * 100, 2) if expected_value else None,
+                "probability": probability,
+                "recommended_side": recommended_side,
                 # === Opposition Rank (Cheatsheet) ===
-                'opp_rank': opp_rank,
-                'opp_value': opp_value,
-                'opp_tied': opp_tied,
-
+                "opp_rank": opp_rank,
+                "opp_value": opp_value,
+                "opp_tied": opp_tied,
                 # === Hit Rates (Cheatsheet) ===
-                'hit_rate_l1': calc_hit_rate(last_1),
-                'hit_rate_l5': calc_hit_rate(last_5),
-                'hit_rate_l10': calc_hit_rate(last_10),
-                'hit_rate_l15': calc_hit_rate(last_15),
-                'hit_rate_l20': calc_hit_rate(last_20),
-                'hit_rate_season': calc_hit_rate(season_perf),
-                'hit_rate_prior_season': calc_hit_rate(prior_season),
-                'hit_rate_h2h': calc_hit_rate(h2h),
-
+                "hit_rate_l1": calc_hit_rate(last_1),
+                "hit_rate_l5": calc_hit_rate(last_5),
+                "hit_rate_l10": calc_hit_rate(last_10),
+                "hit_rate_l15": calc_hit_rate(last_15),
+                "hit_rate_l20": calc_hit_rate(last_20),
+                "hit_rate_season": calc_hit_rate(season_perf),
+                "hit_rate_prior_season": calc_hit_rate(prior_season),
+                "hit_rate_h2h": calc_hit_rate(h2h),
                 # === Raw Performance Counts ===
-                'l1_over': last_1.get('over', 0),
-                'l1_under': last_1.get('under', 0),
-                'l5_over': last_5.get('over', 0),
-                'l5_under': last_5.get('under', 0),
-                'l10_over': last_10.get('over', 0),
-                'l10_under': last_10.get('under', 0),
-                'l15_over': last_15.get('over', 0),
-                'l15_under': last_15.get('under', 0),
-                'l20_over': last_20.get('over', 0),
-                'l20_under': last_20.get('under', 0),
-                'season_over': season_perf.get('over', 0),
-                'season_under': season_perf.get('under', 0),
-                'prior_season_over': prior_season.get('over', 0),
-                'prior_season_under': prior_season.get('under', 0),
-                'h2h_over': h2h.get('over', 0),
-                'h2h_under': h2h.get('under', 0),
-
+                "l1_over": last_1.get("over", 0),
+                "l1_under": last_1.get("under", 0),
+                "l5_over": last_5.get("over", 0),
+                "l5_under": last_5.get("under", 0),
+                "l10_over": last_10.get("over", 0),
+                "l10_under": last_10.get("under", 0),
+                "l15_over": last_15.get("over", 0),
+                "l15_under": last_15.get("under", 0),
+                "l20_over": last_20.get("over", 0),
+                "l20_under": last_20.get("under", 0),
+                "season_over": season_perf.get("over", 0),
+                "season_under": season_perf.get("under", 0),
+                "prior_season_over": prior_season.get("over", 0),
+                "prior_season_under": prior_season.get("under", 0),
+                "h2h_over": h2h.get("over", 0),
+                "h2h_under": h2h.get("under", 0),
                 # === Streak Info ===
-                'streak': streak,
-                'streak_type': streak_type,
-
+                "streak": streak,
+                "streak_type": streak_type,
                 # === Metadata ===
-                'opponent_team': '',  # Will be enriched later
-                'is_home': None,  # Will be enriched later
-                'season': int(date.split('-')[0]) if date else None,
-                'fetch_timestamp': datetime.now().isoformat(),
-                'source': 'bettingpros_historical'
+                "opponent_team": "",  # Will be enriched later
+                "is_home": None,  # Will be enriched later
+                "season": int(date.split("-")[0]) if date else None,
+                "fetch_timestamp": datetime.now().isoformat(),
+                "source": "bettingpros_historical",
             }
 
             return prop
@@ -394,10 +371,7 @@ class HistoricalDateFetcher(BaseFetcher):
             return None
 
     def fetch_date_all_markets_all_books(
-        self,
-        date: str,
-        markets: Optional[List[str]] = None,
-        books: Optional[Dict[int, str]] = None
+        self, date: str, markets: Optional[List[str]] = None, books: Optional[Dict[int, str]] = None
     ) -> List[Dict[str, Any]]:
         """
         Fetch historical props for one date across all markets and books.
@@ -437,7 +411,7 @@ class HistoricalDateFetcher(BaseFetcher):
                     market_id=market_id,
                     market_name=market_name,
                     book_id=book_id,
-                    book_name=book_name
+                    book_name=book_name,
                 )
 
                 all_props.extend(props)
@@ -452,7 +426,7 @@ class HistoricalDateFetcher(BaseFetcher):
         end_date: str,
         markets: Optional[List[str]] = None,
         books: Optional[Dict[int, str]] = None,
-        save_frequency: int = 7  # Save every 7 days (week)
+        save_frequency: int = 7,  # Save every 7 days (week)
     ) -> List[Dict[str, Any]]:
         """
         Fetch historical props for date range.
@@ -470,14 +444,14 @@ class HistoricalDateFetcher(BaseFetcher):
         all_props = []
 
         # Parse dates
-        start = datetime.strptime(start_date, '%Y-%m-%d')
-        end = datetime.strptime(end_date, '%Y-%m-%d')
+        start = datetime.strptime(start_date, "%Y-%m-%d")
+        end = datetime.strptime(end_date, "%Y-%m-%d")
 
         # Generate date list
         dates = []
         current = start
         while current <= end:
-            dates.append(current.strftime('%Y-%m-%d'))
+            dates.append(current.strftime("%Y-%m-%d"))
             current += timedelta(days=1)
 
         print(f"\n{'='*70}")
@@ -486,8 +460,12 @@ class HistoricalDateFetcher(BaseFetcher):
         print(f"Date range: {len(dates)} days")
         print(f"Markets: {len(markets) if markets else 4}")
         print(f"Books: {len(books) if books else 7}")
-        print(f"Expected API calls: {len(dates) * (len(markets) if markets else 4) * (len(books) if books else 7)}")
-        print(f"Estimated time: {len(dates) * (len(markets) if markets else 4) * (len(books) if books else 7) / 60:.1f} minutes")
+        print(
+            f"Expected API calls: {len(dates) * (len(markets) if markets else 4) * (len(books) if books else 7)}"
+        )
+        print(
+            f"Estimated time: {len(dates) * (len(markets) if markets else 4) * (len(books) if books else 7) / 60:.1f} minutes"
+        )
         print(f"{'='*70}\n")
 
         # Loop through dates
@@ -496,9 +474,7 @@ class HistoricalDateFetcher(BaseFetcher):
 
             # Fetch this date
             date_props = self.fetch_date_all_markets_all_books(
-                date=date,
-                markets=markets,
-                books=books
+                date=date, markets=markets, books=books
             )
 
             all_props.extend(date_props)
@@ -506,8 +482,7 @@ class HistoricalDateFetcher(BaseFetcher):
             # Save checkpoint every N days
             if i % save_frequency == 0:
                 checkpoint_file = self.save_to_json(
-                    props=all_props,
-                    suffix=f"{start_date}_to_{date}_checkpoint"
+                    props=all_props, suffix=f"{start_date}_to_{date}_checkpoint"
                 )
                 print(f"\n💾 Checkpoint saved: {checkpoint_file}")
 
@@ -529,13 +504,24 @@ class HistoricalDateFetcher(BaseFetcher):
 
 def main():
     """Main execution"""
-    parser = argparse.ArgumentParser(description='Fetch historical multi-book NBA props by date range')
-    parser.add_argument('--start-date', type=str, required=True, help='Start date (YYYY-MM-DD)')
-    parser.add_argument('--end-date', type=str, required=True, help='End date (YYYY-MM-DD)')
-    parser.add_argument('--markets', type=str, nargs='+', help='Markets to fetch (POINTS REBOUNDS ASSISTS THREES)')
-    parser.add_argument('--books', type=str, nargs='+', help='Books to fetch (draftkings fanduel betmgm caesars bet365 betrivers fanatics)')
-    parser.add_argument('--save-frequency', type=int, default=7, help='Save checkpoint every N days')
-    parser.add_argument('--quiet', action='store_true', help='Quiet mode')
+    parser = argparse.ArgumentParser(
+        description="Fetch historical multi-book NBA props by date range"
+    )
+    parser.add_argument("--start-date", type=str, required=True, help="Start date (YYYY-MM-DD)")
+    parser.add_argument("--end-date", type=str, required=True, help="End date (YYYY-MM-DD)")
+    parser.add_argument(
+        "--markets", type=str, nargs="+", help="Markets to fetch (POINTS REBOUNDS ASSISTS THREES)"
+    )
+    parser.add_argument(
+        "--books",
+        type=str,
+        nargs="+",
+        help="Books to fetch (draftkings fanduel betmgm caesars bet365 betrivers fanatics)",
+    )
+    parser.add_argument(
+        "--save-frequency", type=int, default=7, help="Save checkpoint every N days"
+    )
+    parser.add_argument("--quiet", action="store_true", help="Quiet mode")
 
     args = parser.parse_args()
 
@@ -561,15 +547,14 @@ def main():
             end_date=args.end_date,
             markets=markets,
             books=books,
-            save_frequency=args.save_frequency
+            save_frequency=args.save_frequency,
         )
 
         elapsed = time.time() - start_time
 
         # Save final output
         output_file = fetcher.save_to_json(
-            props=all_props,
-            suffix=f"{args.start_date}_to_{args.end_date}_COMPLETE"
+            props=all_props, suffix=f"{args.start_date}_to_{args.end_date}_COMPLETE"
         )
 
         # Final summary
@@ -587,5 +572,5 @@ def main():
         fetcher.close()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

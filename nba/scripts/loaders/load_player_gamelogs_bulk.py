@@ -11,32 +11,30 @@ Usage:
     python load_player_gamelogs_bulk.py --season 2021-22 2022-23 2023-24 2024-25
 """
 
-import sys
-import os
 import argparse
 import logging
+import os
+import sys
+import time
+
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
-import time
 
 # Add utilities to path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utilities'))
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utilities"))
 from nba_api_wrapper import NBAApiWrapper
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Database connection
 DB_CONFIG = {
-    'host': 'localhost',
-    'port': 5536,
-    'database': 'nba_players',
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD')
+    "host": "localhost",
+    "port": 5536,
+    "database": "nba_players",
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
 }
 
 
@@ -67,11 +65,11 @@ def load_game_logs_for_season(season: str, min_minutes: int = 100, limit: int = 
 
         # Filter players by minimum minutes per game and get top N
         # MIN column is per-game minutes, not total
-        if 'MIN' in stats_df.columns:
-            stats_df['MPG'] = pd.to_numeric(stats_df['MIN'], errors='coerce').fillna(0)
+        if "MIN" in stats_df.columns:
+            stats_df["MPG"] = pd.to_numeric(stats_df["MIN"], errors="coerce").fillna(0)
             min_mpg = 1.0  # At least 1 minute per game average
-            filtered = stats_df[stats_df['MPG'] >= min_mpg]
-            top_players = filtered.nlargest(limit, 'MPG')
+            filtered = stats_df[stats_df["MPG"] >= min_mpg]
+            top_players = filtered.nlargest(limit, "MPG")
         else:
             top_players = stats_df.head(limit)
 
@@ -89,12 +87,14 @@ def load_game_logs_for_season(season: str, min_minutes: int = 100, limit: int = 
         failed = 0
 
         for idx, (_, player) in enumerate(top_players.iterrows(), 1):
-            player_id = int(player['PLAYER_ID'])
-            player_name = player.get('PLAYER_NAME', f'Player {player_id}')
+            player_id = int(player["PLAYER_ID"])
+            player_name = player.get("PLAYER_NAME", f"Player {player_id}")
 
             # Skip if not in profile table
             if player_id not in existing_ids:
-                logger.warning(f"[{idx}/{len(top_players)}] Skipping {player_name} (ID={player_id}) - not in profile table")
+                logger.warning(
+                    f"[{idx}/{len(top_players)}] Skipping {player_name} (ID={player_id}) - not in profile table"
+                )
                 skipped += 1
                 continue
 
@@ -110,52 +110,62 @@ def load_game_logs_for_season(season: str, min_minutes: int = 100, limit: int = 
 
                 # Prepare data for insertion
                 insert_data = []
-                season_year = int(season.split('-')[0])
+                season_year = int(season.split("-")[0])
 
                 for _, row in logs_df.iterrows():
                     try:
                         # Parse matchup (e.g., "LAL vs. BOS" or "LAL @ BOS")
-                        matchup = row.get('MATCHUP', '')
-                        is_home = 'vs.' in matchup
+                        matchup = row.get("MATCHUP", "")
+                        is_home = "vs." in matchup
 
                         # Extract team_abbrev and opponent from matchup
                         team_abbrev = None
                         opponent_abbrev = None
 
-                        if '@' in matchup:
+                        if "@" in matchup:
                             # Away game: "LAL @ BOS"
-                            parts = matchup.split('@')
+                            parts = matchup.split("@")
                             team_abbrev = parts[0].strip()
                             opponent_abbrev = parts[-1].strip()
-                        elif 'vs.' in matchup:
+                        elif "vs." in matchup:
                             # Home game: "LAL vs. BOS"
-                            parts = matchup.split('vs.')
+                            parts = matchup.split("vs.")
                             team_abbrev = parts[0].strip()
                             opponent_abbrev = parts[-1].strip()
 
-                        insert_data.append((
-                            player_id,
-                            row.get('Game_ID', ''),
-                            pd.to_datetime(row.get('GAME_DATE')),
-                            season_year,
-                            team_abbrev,  # Extracted from MATCHUP
-                            opponent_abbrev,
-                            is_home,
-                            int(row.get('MIN', 0)) if pd.notna(row.get('MIN')) and str(row.get('MIN', '')).strip() else 0,
-                            int(row.get('PTS', 0)),
-                            int(row.get('REB', 0)),
-                            int(row.get('AST', 0)),
-                            int(row.get('STL', 0)),
-                            int(row.get('BLK', 0)),
-                            int(row.get('TOV', 0)),
-                            int(row.get('FG3M', 0)),
-                            int(row.get('FGM', 0)),
-                            int(row.get('FGA', 0)),
-                            int(row.get('FG3A', 0)),  # ADDED: 3-point attempts
-                            int(row.get('FTM', 0)),   # ADDED: Free throws made
-                            int(row.get('FTA', 0)),   # ADDED: Free throw attempts
-                            int(row.get('PLUS_MINUS', 0)) if pd.notna(row.get('PLUS_MINUS')) else 0
-                        ))
+                        insert_data.append(
+                            (
+                                player_id,
+                                row.get("Game_ID", ""),
+                                pd.to_datetime(row.get("GAME_DATE")),
+                                season_year,
+                                team_abbrev,  # Extracted from MATCHUP
+                                opponent_abbrev,
+                                is_home,
+                                (
+                                    int(row.get("MIN", 0))
+                                    if pd.notna(row.get("MIN")) and str(row.get("MIN", "")).strip()
+                                    else 0
+                                ),
+                                int(row.get("PTS", 0)),
+                                int(row.get("REB", 0)),
+                                int(row.get("AST", 0)),
+                                int(row.get("STL", 0)),
+                                int(row.get("BLK", 0)),
+                                int(row.get("TOV", 0)),
+                                int(row.get("FG3M", 0)),
+                                int(row.get("FGM", 0)),
+                                int(row.get("FGA", 0)),
+                                int(row.get("FG3A", 0)),  # ADDED: 3-point attempts
+                                int(row.get("FTM", 0)),  # ADDED: Free throws made
+                                int(row.get("FTA", 0)),  # ADDED: Free throw attempts
+                                (
+                                    int(row.get("PLUS_MINUS", 0))
+                                    if pd.notna(row.get("PLUS_MINUS"))
+                                    else 0
+                                ),
+                            )
+                        )
                     except Exception as e:
                         logger.warning(f"  Skipping game log row: {e}")
                         continue
@@ -223,9 +233,14 @@ def load_game_logs_for_season(season: str, min_minutes: int = 100, limit: int = 
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Load NBA player game logs (bulk)')
-    parser.add_argument('--season', type=str, nargs='+', default=['2023-24'],
-                       help='NBA seasons to load (e.g., 2021-22 2022-23)')
+    parser = argparse.ArgumentParser(description="Load NBA player game logs (bulk)")
+    parser.add_argument(
+        "--season",
+        type=str,
+        nargs="+",
+        default=["2023-24"],
+        help="NBA seasons to load (e.g., 2021-22 2022-23)",
+    )
 
     args = parser.parse_args()
 

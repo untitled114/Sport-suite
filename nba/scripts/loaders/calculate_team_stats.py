@@ -15,28 +15,29 @@ Usage:
 
 import argparse
 import logging
-import psycopg2
-from psycopg2.extras import execute_values
 import os
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+import psycopg2
+from psycopg2.extras import execute_values
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Database connections
 GAMES_DB = {
-    'host': 'localhost',
-    'port': 5537,
-    'database': 'nba_games',
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD')
+    "host": "localhost",
+    "port": 5537,
+    "database": "nba_games",
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
 }
 
 TEAM_DB = {
-    'host': 'localhost',
-    'port': 5538,
-    'database': 'nba_team',
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD')
+    "host": "localhost",
+    "port": 5538,
+    "database": "nba_team",
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
 }
 
 
@@ -55,12 +56,15 @@ def calculate_team_season_stats(seasons: list):
             # Get all teams for this season
             # Use 'season' column, not EXTRACT(YEAR FROM game_date)
             # NBA 2025-26 season (season=2026) has games from Oct 2025 to Apr 2026
-            games_cur.execute("""
+            games_cur.execute(
+                """
                 SELECT DISTINCT team_abbrev
                 FROM team_game_logs
                 WHERE season = %s
                 ORDER BY team_abbrev
-            """, (season,))
+            """,
+                (season,),
+            )
             teams = [row[0] for row in games_cur.fetchall()]
 
             if not teams:
@@ -73,7 +77,8 @@ def calculate_team_season_stats(seasons: list):
                 # Calculate team stats from games table
                 # Get home games (team scored = home_score, opponent = away_score)
                 # Note: pace may be NULL for current season - use COALESCE to default to 100
-                games_cur.execute("""
+                games_cur.execute(
+                    """
                     SELECT
                         COUNT(*) as games,
                         AVG(g.home_score) as avg_points_scored,
@@ -84,11 +89,14 @@ def calculate_team_season_stats(seasons: list):
                     WHERE g.home_team = %s
                       AND g.season = %s
                       AND g.home_score IS NOT NULL
-                """, (team, team, season))
+                """,
+                    (team, team, season),
+                )
                 home_data = games_cur.fetchone()
 
                 # Get away games (team scored = away_score, opponent = home_score)
-                games_cur.execute("""
+                games_cur.execute(
+                    """
                     SELECT
                         COUNT(*) as games,
                         AVG(g.away_score) as avg_points_scored,
@@ -99,7 +107,9 @@ def calculate_team_season_stats(seasons: list):
                     WHERE g.away_team = %s
                       AND g.season = %s
                       AND g.away_score IS NOT NULL
-                """, (team, team, season))
+                """,
+                    (team, team, season),
+                )
                 away_data = games_cur.fetchone()
 
                 # Combine home and away stats
@@ -114,19 +124,25 @@ def calculate_team_season_stats(seasons: list):
                 away_games = away_data[0] or 0
 
                 avg_points_scored = (
-                    (home_data[1] or 0) * home_games +
-                    (away_data[1] or 0) * away_games
-                ) / total_games if total_games > 0 else 0
+                    ((home_data[1] or 0) * home_games + (away_data[1] or 0) * away_games)
+                    / total_games
+                    if total_games > 0
+                    else 0
+                )
 
                 avg_points_allowed = (
-                    (home_data[2] or 0) * home_games +
-                    (away_data[2] or 0) * away_games
-                ) / total_games if total_games > 0 else 0
+                    ((home_data[2] or 0) * home_games + (away_data[2] or 0) * away_games)
+                    / total_games
+                    if total_games > 0
+                    else 0
+                )
 
                 avg_pace = (
-                    (home_data[3] or 0) * home_games +
-                    (away_data[3] or 0) * away_games
-                ) / total_games if total_games > 0 else 100.0
+                    ((home_data[3] or 0) * home_games + (away_data[3] or 0) * away_games)
+                    / total_games
+                    if total_games > 0
+                    else 100.0
+                )
 
                 # Calculate offensive and defensive rating
                 # Rating = Points per 100 possessions
@@ -137,21 +153,25 @@ def calculate_team_season_stats(seasons: list):
                 offensive_rating = (avg_points_scored / avg_pace) * 100 if avg_pace > 0 else None
                 defensive_rating = (avg_points_allowed / avg_pace) * 100 if avg_pace > 0 else None
 
-                insert_data.append((
-                    team,
-                    season,
-                    round(avg_pace, 2),
-                    round(offensive_rating, 2) if offensive_rating else None,
-                    round(defensive_rating, 2) if defensive_rating else None,
-                    None,  # def_rating_vs_pg (requires positional data)
-                    None,  # def_rating_vs_sg
-                    None,  # def_rating_vs_sf
-                    None,  # def_rating_vs_pf
-                    None,  # def_rating_vs_c
-                    None   # pace_neutral_off_rating
-                ))
+                insert_data.append(
+                    (
+                        team,
+                        season,
+                        round(avg_pace, 2),
+                        round(offensive_rating, 2) if offensive_rating else None,
+                        round(defensive_rating, 2) if defensive_rating else None,
+                        None,  # def_rating_vs_pg (requires positional data)
+                        None,  # def_rating_vs_sg
+                        None,  # def_rating_vs_sf
+                        None,  # def_rating_vs_pf
+                        None,  # def_rating_vs_c
+                        None,  # pace_neutral_off_rating
+                    )
+                )
 
-                logger.debug(f"  {team}: {total_games} games, Pace={avg_pace:.1f}, OffRtg={offensive_rating:.1f}, DefRtg={defensive_rating:.1f}")
+                logger.debug(
+                    f"  {team}: {total_games} games, Pace={avg_pace:.1f}, OffRtg={offensive_rating:.1f}, DefRtg={defensive_rating:.1f}"
+                )
 
             # Insert into team database
             if insert_data:
@@ -172,7 +192,9 @@ def calculate_team_season_stats(seasons: list):
                 execute_values(team_cur, insert_query, insert_data)
                 team_conn.commit()
 
-                logger.info(f"✅ Calculated and inserted {len(insert_data)} team season stats for {season}")
+                logger.info(
+                    f"✅ Calculated and inserted {len(insert_data)} team season stats for {season}"
+                )
             else:
                 logger.warning(f"No team stats calculated for {season}")
 
@@ -185,9 +207,14 @@ def calculate_team_season_stats(seasons: list):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Calculate team season stats from game logs')
-    parser.add_argument('--season', type=int, nargs='+', default=[2020, 2021, 2022, 2023, 2024],
-                       help='Seasons to calculate (years, e.g., 2020 2021 2022)')
+    parser = argparse.ArgumentParser(description="Calculate team season stats from game logs")
+    parser.add_argument(
+        "--season",
+        type=int,
+        nargs="+",
+        default=[2020, 2021, 2022, 2023, 2024],
+        help="Seasons to calculate (years, e.g., 2020 2021 2022)",
+    )
 
     args = parser.parse_args()
 

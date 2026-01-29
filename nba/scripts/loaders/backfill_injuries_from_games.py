@@ -17,38 +17,39 @@ Usage:
 """
 
 import argparse
-import psycopg2
-from datetime import datetime, timedelta
-from collections import defaultdict
 import logging
 import os
+from collections import defaultdict
+from datetime import datetime, timedelta
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+import psycopg2
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Database configs
 DB_PLAYERS = {
-    'host': 'localhost',
-    'port': 5536,
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD'),
-    'database': 'nba_players'
+    "host": "localhost",
+    "port": 5536,
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
+    "database": "nba_players",
 }
 
 DB_GAMES = {
-    'host': 'localhost',
-    'port': 5537,
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD'),
-    'database': 'nba_games'
+    "host": "localhost",
+    "port": 5537,
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
+    "database": "nba_games",
 }
 
 DB_INTELLIGENCE = {
-    'host': 'localhost',
-    'port': 5539,
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD'),
-    'database': 'nba_intelligence'
+    "host": "localhost",
+    "port": 5539,
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
+    "database": "nba_intelligence",
 }
 
 # Players must have played within this window to be considered "active"
@@ -80,12 +81,15 @@ class InjuryBackfiller:
     def get_game_dates(self, start_date: str, end_date: str) -> list:
         """Get all unique game dates in the range"""
         cur = self.conn_games.cursor()
-        cur.execute("""
+        cur.execute(
+            """
             SELECT DISTINCT game_date
             FROM games
             WHERE game_date BETWEEN %s AND %s
             ORDER BY game_date
-        """, (start_date, end_date))
+        """,
+            (start_date, end_date),
+        )
         dates = [row[0] for row in cur.fetchall()]
         cur.close()
         return dates
@@ -93,11 +97,14 @@ class InjuryBackfiller:
     def get_teams_playing_on_date(self, game_date) -> set:
         """Get all teams that played on a given date"""
         cur = self.conn_games.cursor()
-        cur.execute("""
+        cur.execute(
+            """
             SELECT home_team, away_team
             FROM games
             WHERE game_date = %s
-        """, (game_date,))
+        """,
+            (game_date,),
+        )
         teams = set()
         for home, away in cur.fetchall():
             teams.add(home)
@@ -105,7 +112,9 @@ class InjuryBackfiller:
         cur.close()
         return teams
 
-    def get_active_players_for_team(self, team_abbrev: str, as_of_date, window_days: int = ACTIVE_WINDOW_DAYS) -> dict:
+    def get_active_players_for_team(
+        self, team_abbrev: str, as_of_date, window_days: int = ACTIVE_WINDOW_DAYS
+    ) -> dict:
         """
         Get players who were active (played recently) for a team.
         Returns dict of {player_id: player_name}
@@ -113,7 +122,8 @@ class InjuryBackfiller:
         start_window = as_of_date - timedelta(days=window_days)
 
         cur = self.conn_players.cursor()
-        cur.execute("""
+        cur.execute(
+            """
             SELECT pgl.player_id, pp.full_name, COUNT(*) as games_played
             FROM player_game_logs pgl
             JOIN player_profile pp ON pgl.player_id = pp.player_id
@@ -123,7 +133,9 @@ class InjuryBackfiller:
               AND pgl.minutes_played > 0
             GROUP BY pgl.player_id, pp.full_name
             HAVING COUNT(*) >= %s
-        """, (team_abbrev, start_window, as_of_date, MIN_GAMES_TO_BE_ACTIVE))
+        """,
+            (team_abbrev, start_window, as_of_date, MIN_GAMES_TO_BE_ACTIVE),
+        )
 
         active_players = {row[0]: row[1] for row in cur.fetchall()}
         cur.close()
@@ -132,13 +144,16 @@ class InjuryBackfiller:
     def get_players_who_played(self, team_abbrev: str, game_date) -> set:
         """Get player_ids who actually played in a game"""
         cur = self.conn_players.cursor()
-        cur.execute("""
+        cur.execute(
+            """
             SELECT DISTINCT player_id
             FROM player_game_logs
             WHERE team_abbrev = %s
               AND game_date = %s
               AND minutes_played > 0
-        """, (team_abbrev, game_date))
+        """,
+            (team_abbrev, game_date),
+        )
         players = {row[0] for row in cur.fetchall()}
         cur.close()
         return players
@@ -175,7 +190,7 @@ class InjuryBackfiller:
 
         if dry_run:
             logger.info(f"  [DRY RUN] Would insert {len(injuries)} injuries for {game_date}")
-            for pid, name, team in injuries[:5]:
+            for _pid, name, team in injuries[:5]:
                 logger.info(f"    - {name} ({team})")
             if len(injuries) > 5:
                 logger.info(f"    ... and {len(injuries) - 5} more")
@@ -185,13 +200,16 @@ class InjuryBackfiller:
 
         # Insert injuries (ON CONFLICT DO NOTHING to avoid duplicates)
         insert_count = 0
-        for player_id, player_name, team in injuries:
+        for player_id, player_name, _team in injuries:
             try:
-                cur.execute("""
+                cur.execute(
+                    """
                     INSERT INTO injury_report (player_id, report_date, status, injury_type, confidence)
                     VALUES (%s, %s, 'OUT', 'Inferred from DNP', 0.70)
                     ON CONFLICT DO NOTHING
-                """, (player_id, game_date))
+                """,
+                    (player_id, game_date),
+                )
                 insert_count += cur.rowcount
             except Exception as e:
                 logger.debug(f"Error inserting injury for {player_name}: {e}")
@@ -202,14 +220,14 @@ class InjuryBackfiller:
 
     def backfill(self, start_date: str, end_date: str, dry_run: bool = False):
         """Main backfill process"""
-        logger.info("="*80)
+        logger.info("=" * 80)
         logger.info("INJURY DATA BACKFILL")
-        logger.info("="*80)
+        logger.info("=" * 80)
         logger.info(f"Date range: {start_date} to {end_date}")
         logger.info(f"Mode: {'DRY RUN' if dry_run else 'LIVE'}")
         logger.info(f"Active window: {ACTIVE_WINDOW_DAYS} days")
         logger.info(f"Min games to be active: {MIN_GAMES_TO_BE_ACTIVE}")
-        logger.info("="*80)
+        logger.info("=" * 80)
 
         self.connect()
 
@@ -227,23 +245,27 @@ class InjuryBackfiller:
                 dates_processed += 1
 
                 if dates_processed % 50 == 0:
-                    logger.info(f"  Processed {dates_processed}/{len(game_dates)} dates, {total_injuries} injuries found")
+                    logger.info(
+                        f"  Processed {dates_processed}/{len(game_dates)} dates, {total_injuries} injuries found"
+                    )
 
-            logger.info("="*80)
+            logger.info("=" * 80)
             logger.info(f"COMPLETE: Processed {dates_processed} dates")
             logger.info(f"Total injuries inferred: {total_injuries}")
             logger.info(f"Average per game day: {total_injuries / max(dates_processed, 1):.1f}")
-            logger.info("="*80)
+            logger.info("=" * 80)
 
         finally:
             self.close()
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Backfill historical injury data')
-    parser.add_argument('--start', type=str, required=True, help='Start date (YYYY-MM-DD)')
-    parser.add_argument('--end', type=str, required=True, help='End date (YYYY-MM-DD)')
-    parser.add_argument('--dry-run', action='store_true', help='Show what would be inserted without making changes')
+    parser = argparse.ArgumentParser(description="Backfill historical injury data")
+    parser.add_argument("--start", type=str, required=True, help="Start date (YYYY-MM-DD)")
+    parser.add_argument("--end", type=str, required=True, help="End date (YYYY-MM-DD)")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would be inserted without making changes"
+    )
 
     args = parser.parse_args()
 

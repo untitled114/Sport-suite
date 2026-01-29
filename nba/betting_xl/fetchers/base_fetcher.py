@@ -15,18 +15,19 @@ Features:
 All XL fetchers inherit from this class.
 """
 
-import time
-import random
-import logging
-import requests
 import json
+import logging
+import random
+import time
+from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
+
+import requests
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -35,12 +36,12 @@ class BaseFetcher(ABC):
 
     # User agents to rotate
     USER_AGENTS = [
-        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
     ]
 
     def __init__(
@@ -49,7 +50,7 @@ class BaseFetcher(ABC):
         rate_limit: float = 1.0,
         max_retries: int = 3,
         timeout: int = 30,
-        verbose: bool = True
+        verbose: bool = True,
     ):
         """
         Initialize base fetcher.
@@ -74,18 +75,18 @@ class BaseFetcher(ABC):
         self.session = requests.Session()
 
         # Output directory
-        self.output_dir = Path(__file__).parent.parent / 'lines'
+        self.output_dir = Path(__file__).parent.parent / "lines"
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_headers(self) -> Dict[str, str]:
         """Get headers with random user agent"""
         return {
-            'User-Agent': random.choice(self.USER_AGENTS),
-            'Accept': 'application/json, text/html, */*',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Cache-Control': 'no-cache',
+            "User-Agent": random.choice(self.USER_AGENTS),
+            "Accept": "application/json, text/html, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Cache-Control": "no-cache",
         }
 
     def _enforce_rate_limit(self):
@@ -101,10 +102,10 @@ class BaseFetcher(ABC):
     def _make_request(
         self,
         url: str,
-        method: str = 'GET',
+        method: str = "GET",
         params: Optional[Dict] = None,
         data: Optional[Dict] = None,
-        headers: Optional[Dict] = None
+        headers: Optional[Dict] = None,
     ) -> Optional[requests.Response]:
         """
         Make HTTP request with retry logic and exponential backoff.
@@ -131,7 +132,9 @@ class BaseFetcher(ABC):
 
                 # Make request
                 if self.verbose:
-                    logger.info(f"[{self.source_name}] Request: {method} {url} (attempt {attempt + 1}/{self.max_retries})")
+                    logger.info(
+                        f"[{self.source_name}] Request: {method} {url} (attempt {attempt + 1}/{self.max_retries})"
+                    )
 
                 response = self.session.request(
                     method=method,
@@ -139,14 +142,16 @@ class BaseFetcher(ABC):
                     params=params,
                     data=data,
                     headers=request_headers,
-                    timeout=self.timeout
+                    timeout=self.timeout,
                 )
 
                 # Check status
                 response.raise_for_status()
 
                 if self.verbose:
-                    logger.info(f"[{self.source_name}] Success: {response.status_code} ({len(response.content)} bytes)")
+                    logger.info(
+                        f"[{self.source_name}] Success: {response.status_code} ({len(response.content)} bytes)"
+                    )
 
                 return response
 
@@ -155,7 +160,9 @@ class BaseFetcher(ABC):
 
                 # Don't retry on 4xx errors (client errors)
                 if 400 <= e.response.status_code < 500:
-                    logger.error(f"[{self.source_name}] Client error, not retrying: {e.response.status_code}")
+                    logger.error(
+                        f"[{self.source_name}] Client error, not retrying: {e.response.status_code}"
+                    )
                     return None
 
             except requests.exceptions.Timeout as e:
@@ -166,7 +173,7 @@ class BaseFetcher(ABC):
 
             # Exponential backoff before retry
             if attempt < self.max_retries - 1:
-                backoff_time = 2 ** attempt + random.uniform(0, 1)
+                backoff_time = 2**attempt + random.uniform(0, 1)
                 logger.info(f"[{self.source_name}] Retrying in {backoff_time:.2f}s...")
                 time.sleep(backoff_time)
 
@@ -202,7 +209,7 @@ class BaseFetcher(ABC):
         name = name.strip()
 
         # Handle common variations
-        name = name.replace('.', '')  # Remove periods (J.R. Smith -> JR Smith)
+        name = name.replace(".", "")  # Remove periods (J.R. Smith -> JR Smith)
         name = name.replace("'", "'")  # Standardize apostrophes
 
         # Title case (handles "LEBRON JAMES" -> "Lebron James")
@@ -226,32 +233,32 @@ class BaseFetcher(ABC):
 
         # Mapping dictionary
         stat_map = {
-            'points': 'POINTS',
-            'pts': 'POINTS',
-            'point': 'POINTS',
-            'rebounds': 'REBOUNDS',
-            'rebound': 'REBOUNDS',
-            'reb': 'REBOUNDS',
-            'rebounds': 'REBOUNDS',
-            'assists': 'ASSISTS',
-            'assist': 'ASSISTS',
-            'ast': 'ASSISTS',
-            'threes': 'THREES',
-            'three': 'THREES',
-            '3-pt made': 'THREES',
-            '3pm': 'THREES',
-            '3 pointers made': 'THREES',
-            'three pointers made': 'THREES',
-            'steals': 'STEALS',
-            'steal': 'STEALS',
-            'stl': 'STEALS',
-            'blocks': 'BLOCKS',
-            'block': 'BLOCKS',
-            'blk': 'BLOCKS',
-            'blocked shots': 'BLOCKS',
-            'turnovers': 'TURNOVERS',
-            'turnover': 'TURNOVERS',
-            'to': 'TURNOVERS',
+            "points": "POINTS",
+            "pts": "POINTS",
+            "point": "POINTS",
+            "rebounds": "REBOUNDS",
+            "rebound": "REBOUNDS",
+            "reb": "REBOUNDS",
+            "rebs": "REBOUNDS",
+            "assists": "ASSISTS",
+            "assist": "ASSISTS",
+            "ast": "ASSISTS",
+            "threes": "THREES",
+            "three": "THREES",
+            "3-pt made": "THREES",
+            "3pm": "THREES",
+            "3 pointers made": "THREES",
+            "three pointers made": "THREES",
+            "steals": "STEALS",
+            "steal": "STEALS",
+            "stl": "STEALS",
+            "blocks": "BLOCKS",
+            "block": "BLOCKS",
+            "blk": "BLOCKS",
+            "blocked shots": "BLOCKS",
+            "turnovers": "TURNOVERS",
+            "turnover": "TURNOVERS",
+            "to": "TURNOVERS",
         }
 
         return stat_map.get(stat_type, stat_type.upper())
@@ -267,7 +274,7 @@ class BaseFetcher(ABC):
         Returns:
             Path to saved file
         """
-        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         filename = f"{self.source_name}_{timestamp}"
         if suffix:
             filename = f"{filename}_{suffix}"
@@ -276,13 +283,13 @@ class BaseFetcher(ABC):
         output_file = self.output_dir / filename
 
         output_data = {
-            'source': self.source_name,
-            'fetch_timestamp': datetime.now().isoformat(),
-            'total_props': len(props),
-            'props': props
+            "source": self.source_name,
+            "fetch_timestamp": datetime.now().isoformat(),
+            "total_props": len(props),
+            "props": props,
         }
 
-        with open(output_file, 'w') as f:
+        with open(output_file, "w") as f:
             json.dump(output_data, f, indent=2)
 
         if self.verbose:
@@ -300,7 +307,7 @@ class BaseFetcher(ABC):
         Returns:
             True if valid, False otherwise
         """
-        required_fields = ['player_name', 'stat_type', 'line', 'book_name']
+        required_fields = ["player_name", "stat_type", "line", "book_name"]
 
         for field in required_fields:
             if field not in prop or prop[field] is None:
@@ -310,10 +317,12 @@ class BaseFetcher(ABC):
 
         # Validate line is numeric
         try:
-            float(prop['line'])
+            float(prop["line"])
         except (ValueError, TypeError):
             if self.verbose:
-                logger.warning(f"[{self.source_name}] Invalid prop: line not numeric: {prop.get('line')}")
+                logger.warning(
+                    f"[{self.source_name}] Invalid prop: line not numeric: {prop.get('line')}"
+                )
             return False
 
         return True
@@ -333,10 +342,10 @@ class BaseFetcher(ABC):
 
         for prop in props:
             key = (
-                prop.get('player_name', '').lower(),
-                prop.get('stat_type', '').upper(),
-                prop.get('book_name', '').lower(),
-                float(prop.get('line', 0))
+                prop.get("player_name", "").lower(),
+                prop.get("stat_type", "").upper(),
+                prop.get("book_name", "").lower(),
+                float(prop.get("line", 0)),
             )
 
             if key not in seen:

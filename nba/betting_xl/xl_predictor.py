@@ -9,38 +9,39 @@ Returns: {player, market, prediction, p_over, edge, confidence}
 Part of Phase 5: XL Betting Pipeline
 """
 
-import pickle
 import json
+import logging
+import pickle
+import warnings
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
-from typing import Dict, Optional, Any, List, Union
-from datetime import datetime
-import logging
-import warnings
-import sys
 
 # Suppress sklearn feature name warnings
-warnings.filterwarnings('ignore', message='.*feature names.*')
-warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
+warnings.filterwarnings("ignore", message=".*feature names.*")
+warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
 
 logger = logging.getLogger(__name__)
 
-MODELS_DIR = Path(__file__).parent.parent / 'models' / 'saved_xl'
-BOOK_INTELLIGENCE_DIR = Path(__file__).parent.parent / 'models' / 'saved_book_intelligence'
+MODELS_DIR = Path(__file__).parent.parent / "models" / "saved_xl"
+BOOK_INTELLIGENCE_DIR = Path(__file__).parent.parent / "models" / "saved_book_intelligence"
 
 # Import calibrators - prefer JSONCalibrator (uses real predictions from JSON files)
-sys.path.insert(0, str(Path(__file__).parent.parent / 'models'))
 try:
-    from json_calibrator import JSONCalibrator
+    from nba.models.json_calibrator import JSONCalibrator
+
     DYNAMIC_CALIBRATION_AVAILABLE = True
-    CALIBRATOR_TYPE = 'json'
+    CALIBRATOR_TYPE = "json"
     logger.info("JSONCalibrator loaded - using REAL predictions from JSON files")
 except ImportError:
     try:
-        from dynamic_calibrator import DynamicCalibrator as JSONCalibrator
+        from nba.models.dynamic_calibrator import DynamicCalibrator as JSONCalibrator
+
         DYNAMIC_CALIBRATION_AVAILABLE = True
-        CALIBRATOR_TYPE = 'dynamic'
+        CALIBRATOR_TYPE = "dynamic"
         logger.warning("JSONCalibrator not available, falling back to DynamicCalibrator")
     except ImportError:
         DYNAMIC_CALIBRATION_AVAILABLE = False
@@ -83,17 +84,16 @@ class BookIntelligencePredictor:
         try:
             model_prefix = BOOK_INTELLIGENCE_DIR / f"{self.market_lower}_book_intelligence"
 
-            with open(f"{model_prefix}_classifier.pkl", 'rb') as f:
+            with open(f"{model_prefix}_classifier.pkl", "rb") as f:
                 self.classifier = pickle.load(f)
-            with open(f"{model_prefix}_calibrator.pkl", 'rb') as f:
+            with open(f"{model_prefix}_calibrator.pkl", "rb") as f:
                 self.calibrator = pickle.load(f)
 
             # Load metadata (optional)
             try:
-                import json
-                with open(f"{model_prefix}_metadata.json", 'r') as f:
+                with open(f"{model_prefix}_metadata.json", "r") as f:
                     self.metadata = json.load(f)
-            except (FileNotFoundError, json.JSONDecodeError, OSError):
+            except (json.JSONDecodeError, OSError):
                 self.metadata = None
 
             logger.info(f"[OK] {self.market}: Loaded book intelligence model")
@@ -122,15 +122,17 @@ class BookIntelligencePredictor:
         try:
             # Expected features
             expected_features = [
-                'softest_book_historical_accuracy',
-                'line_spread',
-                'books_in_agreement',
-                'softest_vs_consensus'
+                "softest_book_historical_accuracy",
+                "line_spread",
+                "books_in_agreement",
+                "softest_vs_consensus",
             ]
 
             # Check if all features present
             if not all(feat in book_features for feat in expected_features):
-                logger.debug(f"Book intelligence features missing: {set(expected_features) - set(book_features.keys())}")
+                logger.debug(
+                    f"Book intelligence features missing: {set(expected_features) - set(book_features.keys())}"
+                )
                 return None
 
             # Build feature vector
@@ -187,7 +189,7 @@ class XLPredictor:
         as_of_date: Optional[datetime] = None,
         backtest_mode: bool = False,
         predictions_dir: Optional[str] = None,
-        model_version: str = 'xl'
+        model_version: str = "xl",
     ) -> None:
         """
         Initialize XL predictor for a specific market.
@@ -213,7 +215,9 @@ class XLPredictor:
         self.use_3head = use_3head
         self.model_version = model_version  # 'xl' for legacy, 'v3' for new models
         self.enable_book_intelligence = enable_book_intelligence
-        self.enable_dynamic_calibration = enable_dynamic_calibration and DYNAMIC_CALIBRATION_AVAILABLE
+        self.enable_dynamic_calibration = (
+            enable_dynamic_calibration and DYNAMIC_CALIBRATION_AVAILABLE
+        )
 
         # Model components (2-head legacy)
         self.regressor = None
@@ -249,15 +253,17 @@ class XLPredictor:
                     market=self.market,
                     lookback_days=dynamic_lookback_days,
                     predictions_dir=self.predictions_dir,  # Custom dir for backtest, None for production
-                    as_of_date=self.as_of_date,            # Temporal boundary for lookback
-                    db_only=False,                         # NEVER use db_only (fake p_over)
-                    model_version=self.model_version       # Calibrate per model (xl vs v3)
+                    as_of_date=self.as_of_date,  # Temporal boundary for lookback
+                    db_only=False,  # NEVER use db_only (fake p_over)
+                    model_version=self.model_version,  # Calibrate per model (xl vs v3)
                 )
                 # Pre-fetch metrics to warm up the cache
                 self.dynamic_calibrator.get_recent_performance()
-                cal_type = CALIBRATOR_TYPE or 'unknown'
+                cal_type = CALIBRATOR_TYPE or "unknown"
                 dir_str = self.predictions_dir or "default"
-                logger.info(f"   {self.market}: Calibration enabled ({cal_type}, lookback={dynamic_lookback_days} days, dir={dir_str})")
+                logger.info(
+                    f"   {self.market}: Calibration enabled ({cal_type}, lookback={dynamic_lookback_days} days, dir={dir_str})"
+                )
             except Exception as e:
                 logger.warning(f"   {self.market}: Dynamic calibration failed to initialize: {e}")
                 self.dynamic_calibrator = None
@@ -277,35 +283,36 @@ class XLPredictor:
         try:
             # Determine model prefix based on version
             # 'xl' = legacy (*_xl_*.pkl), 'v3' = new (*_market_*.pkl)
-            if self.model_version == 'v3':
+            if self.model_version == "v3":
                 model_prefix = MODELS_DIR / f"{self.market_lower}_market"
                 version_label = "V3"
             else:
                 model_prefix = MODELS_DIR / f"{self.market_lower}_xl"
                 version_label = "XL"
 
-            with open(f"{model_prefix}_regressor.pkl", 'rb') as f:
+            with open(f"{model_prefix}_regressor.pkl", "rb") as f:
                 self.regressor = pickle.load(f)
-            with open(f"{model_prefix}_classifier.pkl", 'rb') as f:
+            with open(f"{model_prefix}_classifier.pkl", "rb") as f:
                 self.classifier = pickle.load(f)
-            with open(f"{model_prefix}_calibrator.pkl", 'rb') as f:
+            with open(f"{model_prefix}_calibrator.pkl", "rb") as f:
                 self.calibrator = pickle.load(f)
-            with open(f"{model_prefix}_imputer.pkl", 'rb') as f:
+            with open(f"{model_prefix}_imputer.pkl", "rb") as f:
                 self.imputer = pickle.load(f)
-            with open(f"{model_prefix}_scaler.pkl", 'rb') as f:
+            with open(f"{model_prefix}_scaler.pkl", "rb") as f:
                 self.scaler = pickle.load(f)
-            with open(f"{model_prefix}_features.pkl", 'rb') as f:
+            with open(f"{model_prefix}_features.pkl", "rb") as f:
                 self.features = pickle.load(f)
 
             # Load metadata (optional)
             try:
-                import json
-                with open(f"{model_prefix}_metadata.json", 'r') as f:
+                with open(f"{model_prefix}_metadata.json", "r") as f:
                     self.metadata = json.load(f)
-            except (FileNotFoundError, json.JSONDecodeError, OSError):
+            except (json.JSONDecodeError, OSError):
                 self.metadata = None
 
-            logger.info(f"[OK] {self.market}: Loaded {version_label} model ({len(self.features)} features)")
+            logger.info(
+                f"[OK] {self.market}: Loaded {version_label} model ({len(self.features)} features)"
+            )
 
         except Exception as e:
             logger.error(f"[ERROR] {self.market}: Failed to load model: {e}")
@@ -314,47 +321,46 @@ class XLPredictor:
     def load_3head_models(self):
         """Load 3-head matchup architecture: base regressor + matchup head + enhanced classifier"""
         try:
-            import json
             model_prefix = MODELS_DIR / f"{self.market_lower}"
 
             # HEAD 1: Base Regressor (uses 102 base features)
-            with open(f"{model_prefix}_xl_regressor.pkl", 'rb') as f:
+            with open(f"{model_prefix}_xl_regressor.pkl", "rb") as f:
                 self.regressor = pickle.load(f)
-            with open(f"{model_prefix}_xl_imputer.pkl", 'rb') as f:
+            with open(f"{model_prefix}_xl_imputer.pkl", "rb") as f:
                 self.imputer = pickle.load(f)
-            with open(f"{model_prefix}_xl_scaler.pkl", 'rb') as f:
+            with open(f"{model_prefix}_xl_scaler.pkl", "rb") as f:
                 self.scaler = pickle.load(f)
-            with open(f"{model_prefix}_xl_features.pkl", 'rb') as f:
+            with open(f"{model_prefix}_xl_features.pkl", "rb") as f:
                 self.features = pickle.load(f)
 
             # HEAD 2: Matchup Head (uses 32 H2H features)
-            with open(f"{model_prefix}_matchup_head.pkl", 'rb') as f:
+            with open(f"{model_prefix}_matchup_head.pkl", "rb") as f:
                 self.matchup_head = pickle.load(f)
-            with open(f"{model_prefix}_matchup_imputer.pkl", 'rb') as f:
+            with open(f"{model_prefix}_matchup_imputer.pkl", "rb") as f:
                 self.matchup_imputer = pickle.load(f)
-            with open(f"{model_prefix}_matchup_scaler.pkl", 'rb') as f:
+            with open(f"{model_prefix}_matchup_scaler.pkl", "rb") as f:
                 self.matchup_scaler = pickle.load(f)
-            with open(f"{model_prefix}_matchup_features.pkl", 'rb') as f:
+            with open(f"{model_prefix}_matchup_features.pkl", "rb") as f:
                 self.matchup_features = pickle.load(f)
 
             # HEAD 3: Enhanced Classifier (uses all 142 features + expected_diff)
-            with open(f"{model_prefix}_matchup_classifier.pkl", 'rb') as f:
+            with open(f"{model_prefix}_matchup_classifier.pkl", "rb") as f:
                 self.enhanced_classifier = pickle.load(f)
-            with open(f"{model_prefix}_matchup_calibrator.pkl", 'rb') as f:
+            with open(f"{model_prefix}_matchup_calibrator.pkl", "rb") as f:
                 self.enhanced_calibrator = pickle.load(f)
-            with open(f"{model_prefix}_matchup_classifier_imputer.pkl", 'rb') as f:
+            with open(f"{model_prefix}_matchup_classifier_imputer.pkl", "rb") as f:
                 self.enhanced_imputer = pickle.load(f)
-            with open(f"{model_prefix}_matchup_classifier_scaler.pkl", 'rb') as f:
+            with open(f"{model_prefix}_matchup_classifier_scaler.pkl", "rb") as f:
                 self.enhanced_scaler = pickle.load(f)
-            with open(f"{model_prefix}_matchup_classifier_features.pkl", 'rb') as f:
+            with open(f"{model_prefix}_matchup_classifier_features.pkl", "rb") as f:
                 self.enhanced_features = pickle.load(f)
 
             # Load blend config from metadata
             try:
-                with open(f"{model_prefix}_matchup_classifier_metadata.json", 'r') as f:
+                with open(f"{model_prefix}_matchup_classifier_metadata.json", "r") as f:
                     self.metadata = json.load(f)
-                    self.blend_config = self.metadata.get('blend_config', None)
-            except (FileNotFoundError, json.JSONDecodeError, OSError):
+                    self.blend_config = self.metadata.get("blend_config", None)
+            except (json.JSONDecodeError, OSError):
                 self.metadata = None
                 self.blend_config = None
 
@@ -376,7 +382,7 @@ class XLPredictor:
         """Load book intelligence model (third head) if available"""
         try:
             # Only POINTS and REBOUNDS have book intelligence models
-            if self.market not in ['POINTS', 'REBOUNDS']:
+            if self.market not in ["POINTS", "REBOUNDS"]:
                 logger.info(f"   {self.market}: Book intelligence not available for this market")
                 self.enable_book_intelligence = False
                 return
@@ -385,7 +391,9 @@ class XLPredictor:
             logger.info(f"   {self.market}: Book intelligence enabled (ensemble mode)")
 
         except FileNotFoundError:
-            logger.warning(f"   {self.market}: Book intelligence model not found - using base model only")
+            logger.warning(
+                f"   {self.market}: Book intelligence model not found - using base model only"
+            )
             self.enable_book_intelligence = False
         except Exception as e:
             logger.error(f"   {self.market}: Failed to load book intelligence: {e}")
@@ -397,7 +405,7 @@ class XLPredictor:
         line: float,
         book_features: Optional[Dict[str, float]] = None,
         player_name: Optional[str] = None,
-        game_date: Optional[str] = None
+        game_date: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Generate prediction using loaded model architecture (2-head or 3-head).
@@ -424,15 +432,25 @@ class XLPredictor:
         try:
             # Route to appropriate prediction pipeline
             if self.use_3head:
-                return self._predict_3head(features_dict, line, book_features, player_name, game_date)
+                return self._predict_3head(
+                    features_dict, line, book_features, player_name, game_date
+                )
             else:
-                return self._predict_2head(features_dict, line, book_features, player_name, game_date)
+                return self._predict_2head(
+                    features_dict, line, book_features, player_name, game_date
+                )
         except Exception as e:
             logger.error(f"Prediction error for {self.market}: {e}")
             return None
 
-    def _predict_2head(self, features_dict: Dict, line: float, book_features: Optional[Dict] = None,
-                        player_name: str = None, game_date: str = None) -> Dict:
+    def _predict_2head(
+        self,
+        features_dict: Dict,
+        line: float,
+        book_features: Optional[Dict] = None,
+        player_name: str = None,
+        game_date: str = None,
+    ) -> Dict:
         """Legacy 2-head prediction pipeline (regressor + classifier)"""
         try:
             # Ensure line is float (PostgreSQL NUMERIC returns Decimal)
@@ -443,7 +461,7 @@ class XLPredictor:
             # since it can only be computed AFTER the regressor runs
             feature_vector = []
             for feat in self.features:
-                if feat == 'expected_diff':
+                if feat == "expected_diff":
                     # Use 0 as placeholder for first pass (will be corrected for classifier)
                     feature_vector.append(0.0)
                 else:
@@ -463,7 +481,7 @@ class XLPredictor:
             # CRITICAL: Now compute and inject the REAL expected_diff
             expected_diff = predicted_value - line
             X_cls_df = pd.DataFrame(X_scaled, columns=self.features)
-            X_cls_df['expected_diff'] = expected_diff
+            X_cls_df["expected_diff"] = expected_diff
             X_cls = X_cls_df.values
 
             prob_over_raw = self.classifier.predict_proba(X_cls)[0, 1]
@@ -484,13 +502,13 @@ class XLPredictor:
                         raw_prob=prob_over_base,
                         player_name=player_name,
                         game_date=game_date,
-                        line=line
+                        line=line,
                     )
-                    prob_over_base = adjustment_result['adjusted_prob']
+                    prob_over_base = adjustment_result["adjusted_prob"]
                     dynamic_adjustment = {
-                        'adjustment': adjustment_result['adjustment_applied'],
-                        'reason': adjustment_result['reason'],
-                        'was_adjusted': adjustment_result['was_adjusted']
+                        "adjustment": adjustment_result["adjustment_applied"],
+                        "reason": adjustment_result["reason"],
+                        "was_adjusted": adjustment_result["was_adjusted"],
                     }
                 except Exception as e:
                     logger.debug(f"Dynamic calibration failed: {e}")
@@ -502,10 +520,12 @@ class XLPredictor:
                     # Extract book intelligence features from features_dict if not provided separately
                     if book_features is None:
                         book_features = {
-                            'softest_book_historical_accuracy': features_dict.get('softest_book_historical_accuracy'),
-                            'line_spread': features_dict.get('line_spread'),
-                            'books_in_agreement': features_dict.get('books_in_agreement'),
-                            'softest_vs_consensus': features_dict.get('softest_vs_consensus')
+                            "softest_book_historical_accuracy": features_dict.get(
+                                "softest_book_historical_accuracy"
+                            ),
+                            "line_spread": features_dict.get("line_spread"),
+                            "books_in_agreement": features_dict.get("books_in_agreement"),
+                            "softest_vs_consensus": features_dict.get("softest_vs_consensus"),
                         }
 
                     # Only predict if all features are present
@@ -529,27 +549,27 @@ class XLPredictor:
 
             # Determine confidence level
             if abs(edge) >= 5.0:
-                confidence = 'HIGH'
+                confidence = "HIGH"
             elif abs(edge) >= 3.0:
-                confidence = 'MEDIUM'
+                confidence = "MEDIUM"
             else:
-                confidence = 'LOW'
+                confidence = "LOW"
 
             result = {
-                'predicted_value': float(predicted_value),
-                'p_over': float(prob_over_final),
-                'p_over_base': float(prob_over_base),
-                'edge': float(edge),
-                'confidence': confidence
+                "predicted_value": float(predicted_value),
+                "p_over": float(prob_over_final),
+                "p_over_base": float(prob_over_base),
+                "edge": float(edge),
+                "confidence": confidence,
             }
 
             # Add book intelligence prob if available
             if prob_over_book is not None:
-                result['p_over_book'] = float(prob_over_book)
+                result["p_over_book"] = float(prob_over_book)
 
             # Add dynamic calibration info if available
             if dynamic_adjustment is not None:
-                result['dynamic_adjustment'] = dynamic_adjustment
+                result["dynamic_adjustment"] = dynamic_adjustment
 
             return result
 
@@ -557,8 +577,14 @@ class XLPredictor:
             logger.error(f"2-head prediction error for {self.market}: {e}")
             return None
 
-    def _predict_3head(self, features_dict: Dict, line: float, book_features: Optional[Dict] = None,
-                       player_name: str = None, game_date: str = None) -> Dict:
+    def _predict_3head(
+        self,
+        features_dict: Dict,
+        line: float,
+        book_features: Optional[Dict] = None,
+        player_name: str = None,
+        game_date: str = None,
+    ) -> Dict:
         """3-head matchup prediction pipeline (base + matchup + enhanced classifier)"""
         try:
             # Ensure line is float (PostgreSQL NUMERIC returns Decimal)
@@ -585,9 +611,11 @@ class XLPredictor:
             # STAGE 3: Enhanced classifier (uses all 142 features + expected_diff)
             # Add expected_diff to features
             features_with_diff = features_dict.copy()
-            features_with_diff['expected_diff'] = expected_diff
+            features_with_diff["expected_diff"] = expected_diff
 
-            classifier_vector = [features_with_diff.get(feat, np.nan) for feat in self.enhanced_features]
+            classifier_vector = [
+                features_with_diff.get(feat, np.nan) for feat in self.enhanced_features
+            ]
             X_classifier = pd.DataFrame([classifier_vector], columns=self.enhanced_features)
             X_classifier_imputed = self.enhanced_imputer.transform(X_classifier)
             X_classifier_scaled = self.enhanced_scaler.transform(X_classifier_imputed)
@@ -598,15 +626,17 @@ class XLPredictor:
 
             # Optional blending (if configured in metadata)
             if self.blend_config:
-                residual_scale = self.blend_config.get('residual_scale_factor', 5.0)
-                classifier_weight = self.blend_config.get('classifier_weight', 0.6)
-                residual_weight = self.blend_config.get('residual_weight', 0.4)
+                residual_scale = self.blend_config.get("residual_scale_factor", 5.0)
+                classifier_weight = self.blend_config.get("classifier_weight", 0.6)
+                residual_weight = self.blend_config.get("residual_weight", 0.4)
 
                 # Sigmoid of expected_diff
                 residual_prob = 1 / (1 + np.exp(-expected_diff / residual_scale))
 
                 # Weighted blend
-                prob_over_base = classifier_weight * prob_over_calibrated + residual_weight * residual_prob
+                prob_over_base = (
+                    classifier_weight * prob_over_calibrated + residual_weight * residual_prob
+                )
                 prob_over_base = np.clip(prob_over_base, 0.01, 0.99)
             else:
                 prob_over_base = np.clip(prob_over_calibrated, 0.01, 0.99)
@@ -619,13 +649,13 @@ class XLPredictor:
                         raw_prob=prob_over_base,
                         player_name=player_name,
                         game_date=game_date,
-                        line=line
+                        line=line,
                     )
-                    prob_over_base = adjustment_result['adjusted_prob']
+                    prob_over_base = adjustment_result["adjusted_prob"]
                     dynamic_adjustment = {
-                        'adjustment': adjustment_result['adjustment_applied'],
-                        'reason': adjustment_result['reason'],
-                        'was_adjusted': adjustment_result['was_adjusted']
+                        "adjustment": adjustment_result["adjustment_applied"],
+                        "reason": adjustment_result["reason"],
+                        "was_adjusted": adjustment_result["was_adjusted"],
                     }
                 except Exception as e:
                     logger.debug(f"Dynamic calibration failed: {e}")
@@ -636,10 +666,12 @@ class XLPredictor:
                 try:
                     if book_features is None:
                         book_features = {
-                            'softest_book_historical_accuracy': features_dict.get('softest_book_historical_accuracy'),
-                            'line_spread': features_dict.get('line_spread'),
-                            'books_in_agreement': features_dict.get('books_in_agreement'),
-                            'softest_vs_consensus': features_dict.get('softest_vs_consensus')
+                            "softest_book_historical_accuracy": features_dict.get(
+                                "softest_book_historical_accuracy"
+                            ),
+                            "line_spread": features_dict.get("line_spread"),
+                            "books_in_agreement": features_dict.get("books_in_agreement"),
+                            "softest_vs_consensus": features_dict.get("softest_vs_consensus"),
                         }
 
                     if all(v is not None for v in book_features.values()):
@@ -660,29 +692,29 @@ class XLPredictor:
 
             # Determine confidence level
             if abs(edge) >= 5.0:
-                confidence = 'HIGH'
+                confidence = "HIGH"
             elif abs(edge) >= 3.0:
-                confidence = 'MEDIUM'
+                confidence = "MEDIUM"
             else:
-                confidence = 'LOW'
+                confidence = "LOW"
 
             result = {
-                'predicted_value': float(predicted_value),
-                'base_prediction': float(base_prediction),
-                'matchup_adjustment': float(matchup_adjustment),
-                'p_over': float(prob_over_final),
-                'p_over_base': float(prob_over_base),
-                'edge': float(edge),
-                'confidence': confidence
+                "predicted_value": float(predicted_value),
+                "base_prediction": float(base_prediction),
+                "matchup_adjustment": float(matchup_adjustment),
+                "p_over": float(prob_over_final),
+                "p_over_base": float(prob_over_base),
+                "edge": float(edge),
+                "confidence": confidence,
             }
 
             # Add book intelligence prob if available
             if prob_over_book is not None:
-                result['p_over_book'] = float(prob_over_book)
+                result["p_over_book"] = float(prob_over_book)
 
             # Add dynamic calibration info if available
             if dynamic_adjustment is not None:
-                result['dynamic_adjustment'] = dynamic_adjustment
+                result["dynamic_adjustment"] = dynamic_adjustment
 
             return result
 
@@ -715,12 +747,12 @@ class XLPredictor:
         return self.dynamic_calibrator.get_adjustment_summary()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Test XL predictor
     print("Testing XL Predictor...")
 
     # Test loading all markets
-    for market in ['POINTS', 'REBOUNDS', 'ASSISTS', 'THREES']:
+    for market in ["POINTS", "REBOUNDS", "ASSISTS", "THREES"]:
         try:
             predictor = XLPredictor(market)
             print(f"  {market}: {len(predictor.features)} features loaded (base model)")
@@ -729,7 +761,7 @@ if __name__ == '__main__':
 
     # Test loading with book intelligence
     print("\nTesting XL Predictor with Book Intelligence...")
-    for market in ['POINTS', 'REBOUNDS']:
+    for market in ["POINTS", "REBOUNDS"]:
         try:
             predictor = XLPredictor(market, enable_book_intelligence=True)
             if predictor.book_intelligence_predictor:
@@ -741,16 +773,18 @@ if __name__ == '__main__':
 
     # Test dynamic calibration
     print("\nTesting Dynamic Calibration...")
-    for market in ['POINTS', 'REBOUNDS', 'ASSISTS', 'THREES']:
+    for market in ["POINTS", "REBOUNDS", "ASSISTS", "THREES"]:
         try:
             predictor = XLPredictor(market, enable_dynamic_calibration=True)
             if predictor.dynamic_calibrator:
                 status = predictor.get_dynamic_calibration_status()
-                if status and status.get('status') == 'ok':
-                    bias = status.get('bias', 0) * 100
-                    win_rate = status.get('win_rate', 0) * 100
-                    print(f"  {market}: Dynamic calibration enabled "
-                          f"(WR: {win_rate:.1f}%, Bias: {bias:+.1f}%)")
+                if status and status.get("status") == "ok":
+                    bias = status.get("bias", 0) * 100
+                    win_rate = status.get("win_rate", 0) * 100
+                    print(
+                        f"  {market}: Dynamic calibration enabled "
+                        f"(WR: {win_rate:.1f}%, Bias: {bias:+.1f}%)"
+                    )
                 else:
                     print(f"  {market}: Dynamic calibration enabled (insufficient data)")
             else:

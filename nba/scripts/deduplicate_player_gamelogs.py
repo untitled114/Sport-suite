@@ -13,25 +13,23 @@ Strategy:
 3. Delete duplicates: DELETE FROM WHERE id NOT IN (kept_ids)
 """
 
-import psycopg2
-import sys
 import logging
 import os
+import sys
+
+import psycopg2
 
 # Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Database config
 DB_CONFIG = {
-    'host': 'localhost',
-    'port': 5536,
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD'),
-    'database': 'nba_players'
+    "host": "localhost",
+    "port": 5536,
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
+    "database": "nba_players",
 }
 
 
@@ -236,8 +234,13 @@ def verify_cleanup(conn):
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description='Deduplicate player_game_logs table')
-    parser.add_argument('--dry-run', action='store_true', help='Show what would be deleted without actually deleting')
+
+    parser = argparse.ArgumentParser(description="Deduplicate player_game_logs table")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be deleted without actually deleting",
+    )
     args = parser.parse_args()
 
     try:
@@ -267,9 +270,9 @@ def main():
         return 1
 
     finally:
-        if 'conn' in locals():
+        if "conn" in locals():
             conn.close()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())

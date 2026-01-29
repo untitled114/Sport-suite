@@ -13,32 +13,30 @@ Usage:
     python load_nba_players.py --player-id 2544 --season 2023-24
 """
 
-import sys
-import os
 import argparse
 import logging
+import os
+import sys
 from typing import List, Optional
+
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
 
 # Add utilities to path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utilities'))
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utilities"))
 from nba_api_wrapper import NBAApiWrapper
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Database connection params
 DB_CONFIG = {
-    'host': 'localhost',
-    'port': 5536,
-    'database': 'nba_players',
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD')
+    "host": "localhost",
+    "port": 5536,
+    "database": "nba_players",
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
 }
 
 
@@ -86,15 +84,17 @@ class NBAPlayerLoader:
         # Prepare data for insertion
         insert_data = []
         for _, row in players_df.iterrows():
-            insert_data.append((
-                row['id'],
-                row['full_name'],
-                None,  # position (not in static API, will update later)
-                None,  # height_inches
-                None,  # weight_lbs
-                None,  # draft_year
-                None   # team_abbrev
-            ))
+            insert_data.append(
+                (
+                    row["id"],
+                    row["full_name"],
+                    None,  # position (not in static API, will update later)
+                    None,  # height_inches
+                    None,  # weight_lbs
+                    None,  # draft_year
+                    None,  # team_abbrev
+                )
+            )
 
         # Insert into database using UPSERT
         cursor = self.conn.cursor()
@@ -140,27 +140,27 @@ class NBAPlayerLoader:
         # Map API columns to database columns
         # Note: Column names vary by API endpoint, adjust as needed
         column_mapping = {
-            'PLAYER_ID': 'player_id',
-            'GP': 'games_played',
-            'PTS': 'ppg',
-            'REB': 'rpg',
-            'AST': 'apg',
-            'MIN': 'mpg',
-            'FG_PCT': 'fg_pct',
-            'FG3_PCT': 'three_pt_pct',
-            'FT_PCT': 'ft_pct',
-            'USG_PCT': 'usage_rate',
-            'TS_PCT': 'true_shooting_pct',
+            "PLAYER_ID": "player_id",
+            "GP": "games_played",
+            "PTS": "ppg",
+            "REB": "rpg",
+            "AST": "apg",
+            "MIN": "mpg",
+            "FG_PCT": "fg_pct",
+            "FG3_PCT": "three_pt_pct",
+            "FT_PCT": "ft_pct",
+            "USG_PCT": "usage_rate",
+            "TS_PCT": "true_shooting_pct",
             # 'PER': 'per'  # PER not in this endpoint
         }
 
         # Prepare data for insertion
         insert_data = []
-        season_year = int(season.split('-')[0])  # "2023-24" -> 2023
+        season_year = int(season.split("-")[0])  # "2023-24" -> 2023
 
         for _, row in stats_df.iterrows():
             try:
-                player_id = int(row.get('PLAYER_ID', 0))
+                player_id = int(row.get("PLAYER_ID", 0))
 
                 # Skip players not in player_profile table
                 if player_id not in valid_player_ids:
@@ -170,58 +170,69 @@ class NBAPlayerLoader:
                 ppg_per100 = None
                 rpg_per100 = None
                 apg_per100 = None
-                if 'MIN' in row and row['MIN'] > 0:
-                    factor = 100.0 / row['MIN']
-                    if 'PTS' in row:
-                        ppg_per100 = float(row['PTS']) * factor
-                    if 'REB' in row:
-                        rpg_per100 = float(row['REB']) * factor
-                    if 'AST' in row:
-                        apg_per100 = float(row['AST']) * factor
+                if "MIN" in row and row["MIN"] > 0:
+                    factor = 100.0 / row["MIN"]
+                    if "PTS" in row:
+                        ppg_per100 = float(row["PTS"]) * factor
+                    if "REB" in row:
+                        rpg_per100 = float(row["REB"]) * factor
+                    if "AST" in row:
+                        apg_per100 = float(row["AST"]) * factor
 
                 # Calculate True Shooting % if not provided: TS% = PTS / (2 * (FGA + 0.44 * FTA))
-                ts_pct = row.get('TS_PCT') if pd.notna(row.get('TS_PCT')) else None
-                if ts_pct is None and 'FGA' in row and 'FTA' in row:
-                    fga = float(row.get('FGA', 0))
-                    fta = float(row.get('FTA', 0))
-                    pts = float(row.get('PTS', 0))
+                ts_pct = row.get("TS_PCT") if pd.notna(row.get("TS_PCT")) else None
+                if ts_pct is None and "FGA" in row and "FTA" in row:
+                    fga = float(row.get("FGA", 0))
+                    fta = float(row.get("FTA", 0))
+                    pts = float(row.get("PTS", 0))
                     denominator = 2 * (fga + 0.44 * fta)
                     if denominator > 0:
                         ts_pct = pts / denominator
 
                 # Usage % - try from API first, calculate if not available
-                usage_pct = row.get('USG_PCT') if pd.notna(row.get('USG_PCT')) else None
+                usage_pct = row.get("USG_PCT") if pd.notna(row.get("USG_PCT")) else None
                 # If not available, leave as None (requires team stats to calculate properly)
 
                 # PER - simplified approximation (full PER requires team stats)
                 per = None
-                if 'MIN' in row and row['MIN'] > 0:
+                if "MIN" in row and row["MIN"] > 0:
                     # Simplified PER = (PTS + REB + AST + STL + BLK - TOV) / MIN * 15
-                    per = (float(row.get('PTS', 0)) + float(row.get('REB', 0)) +
-                           float(row.get('AST', 0)) + float(row.get('STL', 0)) +
-                           float(row.get('BLK', 0)) - float(row.get('TOV', 0))) / float(row['MIN']) * 15
+                    per = (
+                        (
+                            float(row.get("PTS", 0))
+                            + float(row.get("REB", 0))
+                            + float(row.get("AST", 0))
+                            + float(row.get("STL", 0))
+                            + float(row.get("BLK", 0))
+                            - float(row.get("TOV", 0))
+                        )
+                        / float(row["MIN"])
+                        * 15
+                    )
 
-                insert_data.append((
-                    player_id,
-                    season_year,
-                    int(row.get('GP', 0)),
-                    float(row.get('MIN', 0.0)),  # minutes_per_game
-                    float(row.get('PTS', 0.0)),
-                    float(row.get('REB', 0.0)),
-                    float(row.get('AST', 0.0)),
-                    float(row.get('STL', 0.0)) if 'STL' in row else 0.0,
-                    float(row.get('BLK', 0.0)) if 'BLK' in row else 0.0,
-                    float(row.get('TOV', 0.0)) if 'TOV' in row else 0.0,
-                    float(row.get('FG_PCT', 0.0)) if pd.notna(row.get('FG_PCT')) else None,
-                    float(row.get('FG3_PCT', 0.0)) if pd.notna(row.get('FG3_PCT')) else None,
-                    float(row.get('FT_PCT', 0.0)) if pd.notna(row.get('FT_PCT')) else None,
-                    usage_pct,
-                    ts_pct,
-                    per,
-                    ppg_per100,
-                    rpg_per100,
-                    apg_per100
-                ))
+                insert_data.append(
+                    (
+                        player_id,
+                        season_year,
+                        int(row.get("GP", 0)),
+                        float(row.get("MIN", 0.0)),  # minutes_per_game
+                        float(row.get("PTS", 0.0)),
+                        float(row.get("REB", 0.0)),
+                        float(row.get("AST", 0.0)),
+                        float(row.get("STL", 0.0)) if "STL" in row else 0.0,
+                        float(row.get("BLK", 0.0)) if "BLK" in row else 0.0,
+                        float(row.get("TOV", 0.0)) if "TOV" in row else 0.0,
+                        float(row.get("FG_PCT", 0.0)) if pd.notna(row.get("FG_PCT")) else None,
+                        float(row.get("FG3_PCT", 0.0)) if pd.notna(row.get("FG3_PCT")) else None,
+                        float(row.get("FT_PCT", 0.0)) if pd.notna(row.get("FT_PCT")) else None,
+                        usage_pct,
+                        ts_pct,
+                        per,
+                        ppg_per100,
+                        rpg_per100,
+                        apg_per100,
+                    )
+                )
             except Exception as e:
                 logger.warning(f"Skipping player {row.get('PLAYER_ID', 'unknown')}: {e}")
                 continue
@@ -286,41 +297,47 @@ class NBAPlayerLoader:
 
         # Prepare data for insertion
         insert_data = []
-        season_year = int(season.split('-')[0])
+        season_year = int(season.split("-")[0])
 
         for _, row in logs_df.iterrows():
             try:
                 # Parse matchup (e.g., "LAL vs. BOS" or "LAL @ BOS")
-                matchup = row.get('MATCHUP', '')
-                is_home = 'vs.' in matchup
+                matchup = row.get("MATCHUP", "")
+                is_home = "vs." in matchup
 
                 # Get opponent abbreviation
                 opponent_abbrev = None
-                if '@' in matchup:
-                    opponent_abbrev = matchup.split('@')[-1].strip()
-                elif 'vs.' in matchup:
-                    opponent_abbrev = matchup.split('vs.')[-1].strip()
+                if "@" in matchup:
+                    opponent_abbrev = matchup.split("@")[-1].strip()
+                elif "vs." in matchup:
+                    opponent_abbrev = matchup.split("vs.")[-1].strip()
 
-                insert_data.append((
-                    player_id,
-                    row.get('Game_ID', ''),
-                    pd.to_datetime(row.get('GAME_DATE')),
-                    season_year,
-                    row.get('TEAM_ABBREVIATION', ''),
-                    opponent_abbrev,
-                    is_home,
-                    int(row.get('MIN', 0)) if pd.notna(row.get('MIN')) and row.get('MIN', '') != '' else 0,
-                    int(row.get('PTS', 0)),
-                    int(row.get('REB', 0)),
-                    int(row.get('AST', 0)),
-                    int(row.get('STL', 0)),
-                    int(row.get('BLK', 0)),
-                    int(row.get('TOV', 0)),
-                    int(row.get('FG3M', 0)),
-                    int(row.get('FGM', 0)),
-                    int(row.get('FGA', 0)),
-                    int(row.get('PLUS_MINUS', 0)) if pd.notna(row.get('PLUS_MINUS')) else 0
-                ))
+                insert_data.append(
+                    (
+                        player_id,
+                        row.get("Game_ID", ""),
+                        pd.to_datetime(row.get("GAME_DATE")),
+                        season_year,
+                        row.get("TEAM_ABBREVIATION", ""),
+                        opponent_abbrev,
+                        is_home,
+                        (
+                            int(row.get("MIN", 0))
+                            if pd.notna(row.get("MIN")) and row.get("MIN", "") != ""
+                            else 0
+                        ),
+                        int(row.get("PTS", 0)),
+                        int(row.get("REB", 0)),
+                        int(row.get("AST", 0)),
+                        int(row.get("STL", 0)),
+                        int(row.get("BLK", 0)),
+                        int(row.get("TOV", 0)),
+                        int(row.get("FG3M", 0)),
+                        int(row.get("FGM", 0)),
+                        int(row.get("FGA", 0)),
+                        int(row.get("PLUS_MINUS", 0)) if pd.notna(row.get("PLUS_MINUS")) else 0,
+                    )
+                )
             except Exception as e:
                 logger.warning(f"Skipping game {row.get('Game_ID', 'unknown')}: {e}")
                 continue
@@ -380,7 +397,7 @@ class NBAPlayerLoader:
             return 0
 
         # Get top N players by minutes played
-        top_players = stats_df.nlargest(sample_size, 'MIN')['PLAYER_ID'].tolist()
+        top_players = stats_df.nlargest(sample_size, "MIN")["PLAYER_ID"].tolist()
 
         total_logs = 0
         for player_id in top_players:
@@ -396,14 +413,24 @@ class NBAPlayerLoader:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Load NBA player data into database')
-    parser.add_argument('--season', type=str, nargs='+', default=['2023-24'],
-                       help='NBA seasons to load (e.g., 2023-24)')
-    parser.add_argument('--player-id', type=int, help='Load specific player by ID')
-    parser.add_argument('--sample-size', type=int, default=10,
-                       help='Number of players to sample for game logs (default: 10)')
-    parser.add_argument('--full', action='store_true',
-                       help='Load full game logs for all players (slow)')
+    parser = argparse.ArgumentParser(description="Load NBA player data into database")
+    parser.add_argument(
+        "--season",
+        type=str,
+        nargs="+",
+        default=["2023-24"],
+        help="NBA seasons to load (e.g., 2023-24)",
+    )
+    parser.add_argument("--player-id", type=int, help="Load specific player by ID")
+    parser.add_argument(
+        "--sample-size",
+        type=int,
+        default=10,
+        help="Number of players to sample for game logs (default: 10)",
+    )
+    parser.add_argument(
+        "--full", action="store_true", help="Load full game logs for all players (slow)"
+    )
 
     args = parser.parse_args()
 

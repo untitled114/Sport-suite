@@ -16,32 +16,30 @@ Usage:
     python load_nba_games_incremental.py --season 2025-26
 """
 
-import sys
-import os
 import argparse
 import logging
+import os
+import sys
+from datetime import datetime
+
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
-from datetime import datetime
 
 # Add utilities to path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utilities'))
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utilities"))
 from nba_api_wrapper import NBAApiWrapper
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Database connection params
 DB_CONFIG = {
-    'host': 'localhost',
-    'port': 5537,
-    'database': 'nba_games',
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD')
+    "host": "localhost",
+    "port": 5537,
+    "database": "nba_games",
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
 }
 
 
@@ -63,8 +61,8 @@ def get_latest_game_date(conn) -> str:
     cursor.close()
 
     if result:
-        return result.strftime('%Y-%m-%d')
-    return '2000-01-01'  # If empty, load everything
+        return result.strftime("%Y-%m-%d")
+    return "2000-01-01"  # If empty, load everything
 
 
 def load_games_incremental(season: str = None) -> int:
@@ -96,12 +94,12 @@ def load_games_incremental(season: str = None) -> int:
             return 0
 
         # Deduplicate (API returns one row per team)
-        games_unique = games_df.drop_duplicates(subset=['GAME_ID']).copy()
+        games_unique = games_df.drop_duplicates(subset=["GAME_ID"]).copy()
         logger.info(f"API returned {len(games_unique)} unique games for season")
 
         # Filter to only new games
-        games_unique['GAME_DATE'] = pd.to_datetime(games_unique['GAME_DATE'])
-        new_games = games_unique[games_unique['GAME_DATE'] > latest_date]
+        games_unique["GAME_DATE"] = pd.to_datetime(games_unique["GAME_DATE"])
+        new_games = games_unique[games_unique["GAME_DATE"] > latest_date]
 
         if len(new_games) == 0:
             logger.info("✅ Database is up-to-date, no new games to load")
@@ -110,7 +108,7 @@ def load_games_incremental(season: str = None) -> int:
         logger.info(f"Found {len(new_games)} new games to load")
 
         # Parse season year
-        season_year = int(season.split('-')[0]) + 1  # 2025-26 -> 2026
+        season_year = int(season.split("-")[0]) + 1  # 2025-26 -> 2026
 
         # Prepare games data
         games_insert = []
@@ -118,62 +116,66 @@ def load_games_incremental(season: str = None) -> int:
 
         for _, row in games_df.iterrows():
             try:
-                game_date = pd.to_datetime(row.get('GAME_DATE'))
+                game_date = pd.to_datetime(row.get("GAME_DATE"))
 
                 # Skip old games
-                if game_date.strftime('%Y-%m-%d') <= latest_date:
+                if game_date.strftime("%Y-%m-%d") <= latest_date:
                     continue
 
                 # Parse matchup
-                matchup = row.get('MATCHUP', '')
-                team_abbrev = row.get('TEAM_ABBREVIATION', '')
-                is_home = 'vs.' in matchup
+                matchup = row.get("MATCHUP", "")
+                team_abbrev = row.get("TEAM_ABBREVIATION", "")
+                is_home = "vs." in matchup
 
                 # Get opponent
-                if '@' in matchup:
-                    opponent = matchup.split('@')[-1].strip()
+                if "@" in matchup:
+                    opponent = matchup.split("@")[-1].strip()
                     home_team = opponent
                     away_team = team_abbrev
-                elif 'vs.' in matchup:
-                    opponent = matchup.split('vs.')[-1].strip()
+                elif "vs." in matchup:
+                    opponent = matchup.split("vs.")[-1].strip()
                     home_team = team_abbrev
                     away_team = opponent
                 else:
                     continue
 
-                pts = int(row.get('PTS', 0))
-                game_id = row.get('GAME_ID')
+                pts = int(row.get("PTS", 0))
+                game_id = row.get("GAME_ID")
 
                 # Add to games insert (home perspective only to avoid duplicates)
                 if is_home:
-                    games_insert.append((
+                    games_insert.append(
+                        (
+                            game_id,
+                            game_date,
+                            season_year,
+                            home_team,
+                            away_team,
+                            pts,  # home_score
+                            None,  # away_score (will be updated from away team row)
+                            None,  # total_possessions
+                            None,  # pace
+                            None,  # vegas_total
+                            None,  # vegas_spread
+                        )
+                    )
+
+                # Add to team_game_logs (both teams)
+                team_logs_insert.append(
+                    (
+                        team_abbrev,
                         game_id,
                         game_date,
                         season_year,
-                        home_team,
-                        away_team,
-                        pts,  # home_score
-                        None,  # away_score (will be updated from away team row)
-                        None,  # total_possessions
+                        opponent,
+                        is_home,
+                        pts,
+                        None,  # possessions
                         None,  # pace
-                        None,  # vegas_total
-                        None   # vegas_spread
-                    ))
-
-                # Add to team_game_logs (both teams)
-                team_logs_insert.append((
-                    team_abbrev,
-                    game_id,
-                    game_date,
-                    season_year,
-                    opponent,
-                    is_home,
-                    pts,
-                    None,  # possessions
-                    None,  # pace
-                    None,  # offensive_rating
-                    None   # defensive_rating
-                ))
+                        None,  # offensive_rating
+                        None,  # defensive_rating
+                    )
+                )
 
             except Exception as e:
                 logger.warning(f"Skipping game: {e}")
@@ -225,9 +227,13 @@ def load_games_incremental(season: str = None) -> int:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Incremental NBA games loader')
-    parser.add_argument('--season', type=str, default=None,
-                       help='NBA season (e.g., 2025-26). Auto-detects if not specified.')
+    parser = argparse.ArgumentParser(description="Incremental NBA games loader")
+    parser.add_argument(
+        "--season",
+        type=str,
+        default=None,
+        help="NBA season (e.g., 2025-26). Auto-detects if not specified.",
+    )
 
     args = parser.parse_args()
 

@@ -27,28 +27,23 @@ Exit codes:
     1 = Failed (< 95% coverage - cannot guarantee prediction quality)
 """
 
-import sys
-import os
 import argparse
-import re
-import requests
-import psycopg2
 import logging
-from typing import Dict, List, Tuple
+import os
+import re
+import sys
 from datetime import datetime
-from pathlib import Path
+from typing import Dict, List, Tuple
 
-# Add parent directory to path for imports
-script_dir = Path(__file__).resolve().parent
-parent_dir = script_dir.parent
-if str(parent_dir) not in sys.path:
-    sys.path.insert(0, str(parent_dir))
+import psycopg2
+import requests
 
-from utils.team_utils import normalize_team_abbrev
-from betting_xl.utils.logging_config import setup_logging, get_logger, add_logging_args
+from nba.betting_xl.utils.logging_config import add_logging_args, get_logger, setup_logging
+from nba.utils.team_utils import normalize_team_abbrev
 
 # Logger will be configured in main()
 logger = get_logger(__name__)
+
 
 def get_current_season():
     """
@@ -59,33 +54,34 @@ def get_current_season():
     now = datetime.now()
     return now.year + 1 if now.month >= 10 else now.year
 
+
 # Database configs - Use environment variables with fallback defaults
 # This allows the script to work both standalone and when called from pipeline
-DB_DEFAULT_USER = os.getenv('NBA_DB_USER', os.getenv('DB_USER', 'nba_user'))
-DB_DEFAULT_PASSWORD = os.getenv('NBA_DB_PASSWORD', os.getenv('DB_PASSWORD'))
+DB_DEFAULT_USER = os.getenv("NBA_DB_USER", os.getenv("DB_USER", "nba_user"))
+DB_DEFAULT_PASSWORD = os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
 
 DB_INTELLIGENCE = {
-    'host': os.getenv('NBA_INT_DB_HOST', 'localhost'),
-    'port': int(os.getenv('NBA_INT_DB_PORT', 5539)),
-    'user': os.getenv('NBA_INT_DB_USER', DB_DEFAULT_USER),
-    'password': os.getenv('NBA_INT_DB_PASSWORD', DB_DEFAULT_PASSWORD),
-    'database': os.getenv('NBA_INT_DB_NAME', 'nba_intelligence')
+    "host": os.getenv("NBA_INT_DB_HOST", "localhost"),
+    "port": int(os.getenv("NBA_INT_DB_PORT", 5539)),
+    "user": os.getenv("NBA_INT_DB_USER", DB_DEFAULT_USER),
+    "password": os.getenv("NBA_INT_DB_PASSWORD", DB_DEFAULT_PASSWORD),
+    "database": os.getenv("NBA_INT_DB_NAME", "nba_intelligence"),
 }
 
 DB_PLAYERS = {
-    'host': os.getenv('NBA_PLAYERS_DB_HOST', 'localhost'),
-    'port': int(os.getenv('NBA_PLAYERS_DB_PORT', 5536)),
-    'user': os.getenv('NBA_PLAYERS_DB_USER', DB_DEFAULT_USER),
-    'password': os.getenv('NBA_PLAYERS_DB_PASSWORD', DB_DEFAULT_PASSWORD),
-    'database': os.getenv('NBA_PLAYERS_DB_NAME', 'nba_players')
+    "host": os.getenv("NBA_PLAYERS_DB_HOST", "localhost"),
+    "port": int(os.getenv("NBA_PLAYERS_DB_PORT", 5536)),
+    "user": os.getenv("NBA_PLAYERS_DB_USER", DB_DEFAULT_USER),
+    "password": os.getenv("NBA_PLAYERS_DB_PASSWORD", DB_DEFAULT_PASSWORD),
+    "database": os.getenv("NBA_PLAYERS_DB_NAME", "nba_players"),
 }
 
 # BettingPros API - Use PREMIUM credentials that work with /v3/events
 BETTINGPROS_BASE_URL = "https://api.bettingpros.com/v3"
 BETTINGPROS_PREMIUM_HEADERS = {
-    'x-api-key': os.getenv('BETTINGPROS_API_KEY'),
-    'x-level': 'cHJlbWl1bQ==',  # base64 for "premium"
-    'accept': 'application/json'
+    "x-api-key": os.getenv("BETTINGPROS_API_KEY"),
+    "x-level": "cHJlbWl1bQ==",  # base64 for "premium"
+    "accept": "application/json",
 }
 
 # Coverage threshold for production readiness
@@ -128,51 +124,53 @@ class PropsMatchupEnricher:
 
         # Use /v3/events endpoint to get today's games
         url = f"{BETTINGPROS_BASE_URL}/events"
-        params = {
-            "sport": "NBA",
-            "date": self.game_date,
-            "limit": "50"  # Fetch up to 50 games
-        }
+        params = {"sport": "NBA", "date": self.game_date, "limit": "50"}  # Fetch up to 50 games
 
         try:
-            response = requests.get(url, headers=BETTINGPROS_PREMIUM_HEADERS, params=params, timeout=30)
+            response = requests.get(
+                url, headers=BETTINGPROS_PREMIUM_HEADERS, params=params, timeout=30
+            )
             response.raise_for_status()
             data = response.json()
 
             games_map = {}
 
             # Check if response has 'events' key (v3/events endpoint)
-            if 'events' in data:
-                for event in data['events']:
-                    participants = event.get('participants', [])
+            if "events" in data:
+                for event in data["events"]:
+                    participants = event.get("participants", [])
                     if len(participants) < 2:
                         continue
 
                     # participants[0] = away team, participants[1] = home team
-                    away_team = participants[0].get('abbreviation') or participants[0].get('team', {}).get('abbreviation')
-                    home_team = participants[1].get('abbreviation') or participants[1].get('team', {}).get('abbreviation')
+                    away_team = participants[0].get("abbreviation") or participants[0].get(
+                        "team", {}
+                    ).get("abbreviation")
+                    home_team = participants[1].get("abbreviation") or participants[1].get(
+                        "team", {}
+                    ).get("abbreviation")
 
                     if not away_team or not home_team:
                         continue
 
                     # Map both teams
-                    games_map[away_team] = {'opponent': home_team, 'is_home': False}
-                    games_map[home_team] = {'opponent': away_team, 'is_home': True}
+                    games_map[away_team] = {"opponent": home_team, "is_home": False}
+                    games_map[home_team] = {"opponent": away_team, "is_home": True}
 
             # Or if response has 'offers' key (v3/offers endpoint)
-            elif 'offers' in data:
-                for offer in data['offers']:
-                    participants = offer.get('participants', [])
+            elif "offers" in data:
+                for offer in data["offers"]:
+                    participants = offer.get("participants", [])
                     if len(participants) < 2:
                         continue
 
                     # participants[0] = away team, participants[1] = home team
-                    away_team = participants[0]['team']['abbreviation']
-                    home_team = participants[1]['team']['abbreviation']
+                    away_team = participants[0]["team"]["abbreviation"]
+                    home_team = participants[1]["team"]["abbreviation"]
 
                     # Map both teams
-                    games_map[away_team] = {'opponent': home_team, 'is_home': False}
-                    games_map[home_team] = {'opponent': away_team, 'is_home': True}
+                    games_map[away_team] = {"opponent": home_team, "is_home": False}
+                    games_map[home_team] = {"opponent": away_team, "is_home": True}
             else:
                 logger.error(f"Unexpected API response structure (no 'events' or 'offers')")
                 return {}
@@ -183,9 +181,9 @@ class PropsMatchupEnricher:
             games_list = []
             seen_games = set()
             for team, info in games_map.items():
-                game_key = tuple(sorted([team, info['opponent']]))
+                game_key = tuple(sorted([team, info["opponent"]]))
                 if game_key not in seen_games:
-                    if info['is_home']:
+                    if info["is_home"]:
                         games_list.append(f"{info['opponent']} @ {team}")
                     seen_games.add(game_key)
 
@@ -210,7 +208,7 @@ class PropsMatchupEnricher:
             Dict mapping team_abbrev -> {opponent, is_home}
         """
         # Format date as YYYYMMDD for ESPN API
-        date_param = self.game_date.replace('-', '')
+        date_param = self.game_date.replace("-", "")
         url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={date_param}"
 
         try:
@@ -221,7 +219,7 @@ class PropsMatchupEnricher:
             games_map = {}
 
             # Get events from scoreboard
-            events = data.get('events', [])
+            events = data.get("events", [])
 
             if not events:
                 logger.error(f"ESPN Scoreboard API: No events for date {self.game_date}")
@@ -229,15 +227,15 @@ class PropsMatchupEnricher:
 
             for event in events:
                 # Parse from shortName format: "HOU @ MIL" or "MEM VS ORL" (neutral site games)
-                short_name = event.get('shortName', '')
+                short_name = event.get("shortName", "")
 
                 # Handle both formats: "@" for regular games, "VS"/"vs." for neutral site games
-                if ' @ ' in short_name:
-                    parts = short_name.split(' @ ')
+                if " @ " in short_name:
+                    parts = short_name.split(" @ ")
                     is_neutral_site = False
-                elif ' VS ' in short_name.upper():
+                elif " VS " in short_name.upper():
                     # Neutral site game (e.g., Berlin games) - use VS/vs./vs format
-                    parts = re.split(r'\s+(?:VS\.?|vs\.?)\s+', short_name, flags=re.IGNORECASE)
+                    parts = re.split(r"\s+(?:VS\.?|vs\.?)\s+", short_name, flags=re.IGNORECASE)
                     is_neutral_site = True
                 else:
                     continue
@@ -257,18 +255,20 @@ class PropsMatchupEnricher:
                 away_team = normalize_team_abbrev(away_team)
                 home_team = normalize_team_abbrev(home_team)
 
-                games_map[away_team] = {'opponent': home_team, 'is_home': False}
-                games_map[home_team] = {'opponent': away_team, 'is_home': True}
+                games_map[away_team] = {"opponent": home_team, "is_home": False}
+                games_map[home_team] = {"opponent": away_team, "is_home": True}
 
-            logger.info(f"[OK] ESPN Scoreboard API: Found {len(games_map) // 2} games ({len(games_map)} team entries)")
+            logger.info(
+                f"[OK] ESPN Scoreboard API: Found {len(games_map) // 2} games ({len(games_map)} team entries)"
+            )
 
             # Log games
             games_list = []
             seen_games = set()
             for team, info in games_map.items():
-                game_key = tuple(sorted([team, info['opponent']]))
+                game_key = tuple(sorted([team, info["opponent"]]))
                 if game_key not in seen_games:
-                    if info['is_home']:
+                    if info["is_home"]:
                         games_list.append(f"{info['opponent']} @ {team}")
                     seen_games.add(game_key)
 
@@ -287,42 +287,42 @@ class PropsMatchupEnricher:
         import json
         import os
 
-        cache_file = os.path.join(os.path.dirname(__file__), '..', '..', 'bp-games.json')
+        cache_file = os.path.join(os.path.dirname(__file__), "..", "..", "bp-games.json")
 
         if not os.path.exists(cache_file):
             logger.error(f"Cache file not found: {cache_file}")
             return {}
 
         try:
-            with open(cache_file, 'r') as f:
+            with open(cache_file, "r") as f:
                 data = json.load(f)
 
             games_map = {}
 
             # Handle /v3/events format (simpler structure)
-            if 'events' in data:
-                for event in data['events']:
-                    home_team = event.get('home')
-                    away_team = event.get('visitor')
+            if "events" in data:
+                for event in data["events"]:
+                    home_team = event.get("home")
+                    away_team = event.get("visitor")
 
                     if not home_team or not away_team:
                         continue
 
-                    games_map[away_team] = {'opponent': home_team, 'is_home': False}
-                    games_map[home_team] = {'opponent': away_team, 'is_home': True}
+                    games_map[away_team] = {"opponent": home_team, "is_home": False}
+                    games_map[home_team] = {"opponent": away_team, "is_home": True}
 
             # Handle /v3/offers format (nested participants)
-            elif 'offers' in data:
-                for offer in data['offers']:
-                    participants = offer.get('participants', [])
+            elif "offers" in data:
+                for offer in data["offers"]:
+                    participants = offer.get("participants", [])
                     if len(participants) < 2:
                         continue
 
-                    away_team = participants[0]['team']['abbreviation']
-                    home_team = participants[1]['team']['abbreviation']
+                    away_team = participants[0]["team"]["abbreviation"]
+                    home_team = participants[1]["team"]["abbreviation"]
 
-                    games_map[away_team] = {'opponent': home_team, 'is_home': False}
-                    games_map[home_team] = {'opponent': away_team, 'is_home': True}
+                    games_map[away_team] = {"opponent": home_team, "is_home": False}
+                    games_map[home_team] = {"opponent": away_team, "is_home": True}
 
             logger.info(f"[OK] Loaded {len(games_map) // 2} games from cache")
 
@@ -330,9 +330,9 @@ class PropsMatchupEnricher:
             games_list = []
             seen_games = set()
             for team, info in games_map.items():
-                game_key = tuple(sorted([team, info['opponent']]))
+                game_key = tuple(sorted([team, info["opponent"]]))
                 if game_key not in seen_games:
-                    if info['is_home']:
+                    if info["is_home"]:
                         games_list.append(f"{info['opponent']} @ {team}")
                     seen_games.add(game_key)
 
@@ -362,15 +362,14 @@ class PropsMatchupEnricher:
         import unicodedata
 
         # Remove periods from suffixes
-        normalized = name.replace(' Jr.', ' Jr').replace(' Sr.', ' Sr')
-        normalized = normalized.replace(' II.', ' II').replace(' III.', ' III')
-        normalized = normalized.replace(' IV.', ' IV').replace(' V.', ' V')
+        normalized = name.replace(" Jr.", " Jr").replace(" Sr.", " Sr")
+        normalized = normalized.replace(" II.", " II").replace(" III.", " III")
+        normalized = normalized.replace(" IV.", " IV").replace(" V.", " V")
 
         # Remove accents and special characters for better matching
         # Convert "Porziņģis" → "Porzingis", "Nurkić" → "Nurkic"
-        normalized = ''.join(
-            c for c in unicodedata.normalize('NFD', normalized)
-            if unicodedata.category(c) != 'Mn'
+        normalized = "".join(
+            c for c in unicodedata.normalize("NFD", normalized) if unicodedata.category(c) != "Mn"
         )
 
         return normalized.strip()
@@ -387,9 +386,22 @@ class PropsMatchupEnricher:
             Base name without suffix
         """
         # Remove common suffixes
-        for suffix in [' Jr', ' Jr.', ' Sr', ' Sr.', ' II', ' II.', ' III', ' III.', ' IV', ' IV.', ' V', ' V.']:
+        for suffix in [
+            " Jr",
+            " Jr.",
+            " Sr",
+            " Sr.",
+            " II",
+            " II.",
+            " III",
+            " III.",
+            " IV",
+            " IV.",
+            " V",
+            " V.",
+        ]:
             if name.endswith(suffix):
-                return name[:- len(suffix)].strip()
+                return name[: -len(suffix)].strip()
         return name
 
     def load_player_teams(self):
@@ -425,7 +437,9 @@ class PropsMatchupEnricher:
                 if base != normalized:
                     self.player_teams[base] = team_abbrev
 
-            logger.info(f"[OK] Loaded {len(rows)} players -> {len(self.player_teams)} name mappings (with normalization)")
+            logger.info(
+                f"[OK] Loaded {len(rows)} players -> {len(self.player_teams)} name mappings (with normalization)"
+            )
 
         except Exception as e:
             logger.error(f"Failed to load player teams: {e}")
@@ -485,7 +499,9 @@ class PropsMatchupEnricher:
             LIMIT 1
             """
 
-            cur_players.execute(team_query, (current_season, player_name, normalized_name, base_name))
+            cur_players.execute(
+                team_query, (current_season, player_name, normalized_name, base_name)
+            )
             team_result = cur_players.fetchone()
 
             if not team_result or not team_result[0]:
@@ -502,8 +518,8 @@ class PropsMatchupEnricher:
 
             # Get opponent and home/away from games_map
             game_info = self.games_map[player_team]
-            opponent_abbrev = game_info['opponent']
-            is_home = game_info['is_home']
+            opponent_abbrev = game_info["opponent"]
+            is_home = game_info["is_home"]
 
             # Update props
             update_query = """
@@ -579,8 +595,8 @@ class PropsMatchupEnricher:
                 logger.debug(f"[WARN]  {player_name} ({player_team}): No game today")
                 continue
 
-            opponent_team = game_info['opponent']
-            is_home = game_info['is_home']
+            opponent_team = game_info["opponent"]
+            is_home = game_info["is_home"]
 
             if dry_run:
                 logger.debug(
@@ -620,9 +636,9 @@ class PropsMatchupEnricher:
         Returns:
             True if coverage >= threshold, False otherwise
         """
-        logger.info("\n" + "="*80)
+        logger.info("\n" + "=" * 80)
         logger.info("MATCHUP DATA COVERAGE VERIFICATION")
-        logger.info("="*80)
+        logger.info("=" * 80)
 
         query = """
         SELECT
@@ -658,16 +674,20 @@ class PropsMatchupEnricher:
         if total == 0:
             logger.info(f"\n[OK] NO PROPS FOR THIS DATE - nothing to enrich")
             logger.info("   This is normal for future dates without published lines")
-            logger.info("="*80 + "\n")
+            logger.info("=" * 80 + "\n")
             return True
 
         coverage_ok = full_coverage >= COVERAGE_THRESHOLD
 
         if coverage_ok:
-            logger.info(f"\n[OK] COVERAGE CHECK PASSED ({full_coverage:.1f}% ≥ {COVERAGE_THRESHOLD}%)")
+            logger.info(
+                f"\n[OK] COVERAGE CHECK PASSED ({full_coverage:.1f}% ≥ {COVERAGE_THRESHOLD}%)"
+            )
             logger.info("   System ready for production predictions")
         else:
-            logger.error(f"\n[ERROR] COVERAGE CHECK FAILED ({full_coverage:.1f}% < {COVERAGE_THRESHOLD}%)")
+            logger.error(
+                f"\n[ERROR] COVERAGE CHECK FAILED ({full_coverage:.1f}% < {COVERAGE_THRESHOLD}%)"
+            )
             logger.error("   Insufficient matchup data - predictions will be degraded")
             logger.error(f"   Missing data for {total - fully_enriched} props")
 
@@ -676,7 +696,7 @@ class PropsMatchupEnricher:
             if total - has_is_home > 0:
                 logger.error(f"   - {total - has_is_home} props missing is_home")
 
-        logger.info("="*80 + "\n")
+        logger.info("=" * 80 + "\n")
 
         return coverage_ok
 
@@ -688,12 +708,12 @@ class PropsMatchupEnricher:
             True if coverage threshold met, False otherwise
         """
         try:
-            logger.info("="*80)
+            logger.info("=" * 80)
             logger.info("NBA PROPS MATCHUP ENRICHMENT")
-            logger.info("="*80)
+            logger.info("=" * 80)
             logger.info(f"Date: {self.game_date}")
             logger.info(f"Mode: {'DRY RUN' if dry_run else 'LIVE'}")
-            logger.info("="*80 + "\n")
+            logger.info("=" * 80 + "\n")
 
             self.connect()
 
@@ -745,25 +765,23 @@ class PropsMatchupEnricher:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Enrich NBA props with game matchups',
-        epilog='Exit codes: 0 = Success (≥95%% coverage), 1 = Failed (< 95%% coverage)'
+        description="Enrich NBA props with game matchups",
+        epilog="Exit codes: 0 = Success (≥95%% coverage), 1 = Failed (< 95%% coverage)",
     )
     parser.add_argument(
-        '--date',
-        default=datetime.now().strftime('%Y-%m-%d'),
-        help='Game date (YYYY-MM-DD, default: today)'
+        "--date",
+        default=datetime.now().strftime("%Y-%m-%d"),
+        help="Game date (YYYY-MM-DD, default: today)",
     )
     parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='Show what would be updated without making changes'
+        "--dry-run", action="store_true", help="Show what would be updated without making changes"
     )
     add_logging_args(parser)  # Adds --debug and --quiet flags
 
     args = parser.parse_args()
 
     # Setup unified logging
-    setup_logging('enrich_matchups', debug=args.debug, quiet=args.quiet)
+    setup_logging("enrich_matchups", debug=args.debug, quiet=args.quiet)
     logger.info(f"Enriching matchups for {args.date}")
 
     enricher = PropsMatchupEnricher(game_date=args.date)

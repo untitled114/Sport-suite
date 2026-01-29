@@ -15,28 +15,29 @@ Usage:
 """
 
 import logging
-import psycopg2
-from psycopg2.extras import execute_batch
 import os
 
-logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(message)s')
+import psycopg2
+from psycopg2.extras import execute_batch
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Database connections
 PLAYERS_DB = {
-    'host': 'localhost',
-    'port': 5536,
-    'database': 'nba_players',
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD')
+    "host": "localhost",
+    "port": 5536,
+    "database": "nba_players",
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
 }
 
 GAMES_DB = {
-    'host': 'localhost',
-    'port': 5537,
-    'database': 'nba_games',
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD')
+    "host": "localhost",
+    "port": 5537,
+    "database": "nba_games",
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
 }
 
 
@@ -85,7 +86,8 @@ def aggregate_team_shooting_stats():
 
             # Aggregate player stats for this team in this game
             # Use team_abbrev from player_game_logs (not profile) to handle trades
-            players_cur.execute("""
+            players_cur.execute(
+                """
                 SELECT
                     SUM(fg_made) as fg_made,
                     SUM(fg_attempted) as fg_attempted,
@@ -100,23 +102,27 @@ def aggregate_team_shooting_stats():
                 WHERE team_abbrev = %s
                   AND game_id = %s
                   AND game_date = %s
-            """, (team, game_id, game_date))
+            """,
+                (team, game_id, game_date),
+            )
 
             result = players_cur.fetchone()
 
             if result and result[0] is not None:  # Check if we got data
-                updates.append((
-                    result[0],  # fg_made
-                    result[1],  # fg_attempted
-                    result[2],  # three_pt_made
-                    result[3],  # three_pt_attempted
-                    result[4],  # ft_made
-                    result[5],  # ft_attempted
-                    result[6],  # rebounds
-                    result[7],  # assists
-                    result[8],  # turnovers
-                    log_id
-                ))
+                updates.append(
+                    (
+                        result[0],  # fg_made
+                        result[1],  # fg_attempted
+                        result[2],  # three_pt_made
+                        result[3],  # three_pt_attempted
+                        result[4],  # ft_made
+                        result[5],  # ft_attempted
+                        result[6],  # rebounds
+                        result[7],  # assists
+                        result[8],  # turnovers
+                        log_id,
+                    )
+                )
                 fixed_count += 1
             else:
                 failed_count += 1
@@ -169,9 +175,9 @@ def aggregate_team_shooting_stats():
 
 
 def main():
-    logger.info("="*80)
+    logger.info("=" * 80)
     logger.info("AGGREGATING TEAM SHOOTING STATS FROM PLAYER GAME LOGS")
-    logger.info("="*80)
+    logger.info("=" * 80)
 
     aggregate_team_shooting_stats()
 

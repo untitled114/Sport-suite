@@ -31,30 +31,39 @@ Date: January 2026
 """
 
 import json
+import logging
 import os
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
 import numpy as np
 import pandas as pd
 import psycopg2
-from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Dict, Optional, List, Tuple
-import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Default paths (relative to project root)
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-PREDICTIONS_DIR = Path(os.getenv('NBA_PREDICTIONS_DIR', PROJECT_ROOT / 'nba' / 'betting_xl' / 'predictions'))
-CALIBRATION_LOG_DIR = Path(os.getenv('NBA_CALIBRATION_LOG_DIR', PROJECT_ROOT / 'nba' / 'models' / 'calibration_logs'))
+PREDICTIONS_DIR = Path(
+    os.getenv("NBA_PREDICTIONS_DIR", PROJECT_ROOT / "nba" / "betting_xl" / "predictions")
+)
+CALIBRATION_LOG_DIR = Path(
+    os.getenv("NBA_CALIBRATION_LOG_DIR", PROJECT_ROOT / "nba" / "models" / "calibration_logs")
+)
 
 # Database configuration (use environment variables with fallbacks)
 DB_INTELLIGENCE = {
-    'host': os.getenv('NBA_INT_DB_HOST', 'localhost'),
-    'port': int(os.getenv('NBA_INT_DB_PORT', 5539)),
-    'user': os.getenv('NBA_INT_DB_USER', os.getenv('NBA_DB_USER', os.getenv('DB_USER', 'nba_user'))),
-    'password': os.getenv('NBA_INT_DB_PASSWORD', os.getenv('NBA_DB_PASSWORD', os.getenv('DB_PASSWORD'))),
-    'database': os.getenv('NBA_INT_DB_NAME', 'nba_intelligence')
+    "host": os.getenv("NBA_INT_DB_HOST", "localhost"),
+    "port": int(os.getenv("NBA_INT_DB_PORT", 5539)),
+    "user": os.getenv(
+        "NBA_INT_DB_USER", os.getenv("NBA_DB_USER", os.getenv("DB_USER", "nba_user"))
+    ),
+    "password": os.getenv(
+        "NBA_INT_DB_PASSWORD", os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
+    ),
+    "database": os.getenv("NBA_INT_DB_NAME", "nba_intelligence"),
 }
 
 
@@ -68,38 +77,40 @@ class JSONCalibrator:
     # Configuration constants
     # FIX Jan 2, 2026: Increased MAX_ADJUSTMENT from 0.15 to 0.25 to handle 20%+ overconfidence
     # Root cause: December POINTS had 19.9% bias but calibrator could only correct 15%
-    MAX_ADJUSTMENT = 0.25           # Maximum +/- 25% probability adjustment
+    MAX_ADJUSTMENT = 0.25  # Maximum +/- 25% probability adjustment
     # FIX: Lowered MIN_SAMPLES from 50 to 30 to start learning sooner
-    MIN_SAMPLES = 30                # Minimum predictions before adjusting
+    MIN_SAMPLES = 30  # Minimum predictions before adjusting
     # FIX Jan 2, 2026: Reduced lookback from 35 to 21 days for faster regime detection
     # Root cause: 35-day lookback was learning from stale November data while December collapsed
-    DEFAULT_LOOKBACK = 21           # Default lookback period in days (3 weeks - faster adaptation)
-    STALENESS_DAYS = 7              # Data is stale if no actuals in this many days (increased for sparse XL picks)
-    MIN_SAMPLES_PER_BUCKET = 3      # Minimum samples per calibration bucket (lowered from 5)
+    DEFAULT_LOOKBACK = 21  # Default lookback period in days (3 weeks - faster adaptation)
+    STALENESS_DAYS = (
+        7  # Data is stale if no actuals in this many days (increased for sparse XL picks)
+    )
+    MIN_SAMPLES_PER_BUCKET = 3  # Minimum samples per calibration bucket (lowered from 5)
 
     # Market-specific settings (Jan 2, 2026)
     # POINTS is more volatile and showed 2.7x more overconfidence than REBOUNDS
     # UPDATE Jan 2 PM: Lowered thresholds so learner can actually learn (was not meeting thresholds)
     MARKET_CONFIG = {
-        'POINTS': {
-            'lookback_days': 21,     # Extended from 14 to get more samples
-            'max_adjustment': 0.25,  # Full adjustment capacity (was 19.9% overconfident)
-            'min_samples': 10,       # Lowered from 15 - XL Tier X picks are sparse
+        "POINTS": {
+            "lookback_days": 21,  # Extended from 14 to get more samples
+            "max_adjustment": 0.25,  # Full adjustment capacity (was 19.9% overconfident)
+            "min_samples": 10,  # Lowered from 15 - XL Tier X picks are sparse
         },
-        'REBOUNDS': {
-            'lookback_days': 21,     # Standard lookback - more stable market
-            'max_adjustment': 0.15,  # Lower cap - only 7.5% overconfident
-            'min_samples': 30,       # Standard threshold
+        "REBOUNDS": {
+            "lookback_days": 21,  # Standard lookback - more stable market
+            "max_adjustment": 0.15,  # Lower cap - only 7.5% overconfident
+            "min_samples": 30,  # Standard threshold
         },
-        'ASSISTS': {
-            'lookback_days': 21,
-            'max_adjustment': 0.25,
-            'min_samples': 30,
+        "ASSISTS": {
+            "lookback_days": 21,
+            "max_adjustment": 0.25,
+            "min_samples": 30,
         },
-        'THREES': {
-            'lookback_days': 21,
-            'max_adjustment': 0.25,
-            'min_samples': 30,
+        "THREES": {
+            "lookback_days": 21,
+            "max_adjustment": 0.25,
+            "min_samples": 30,
         },
     }
 
@@ -127,7 +138,7 @@ class JSONCalibrator:
         predictions_dir: str = None,
         as_of_date: datetime = None,
         db_only: bool = False,
-        model_version: str = 'xl'  # 'xl' or 'v3' - filter calibration by model
+        model_version: str = "xl",  # 'xl' or 'v3' - filter calibration by model
     ):
         """
         Initialize JSON-based calibrator for a specific market.
@@ -143,16 +154,16 @@ class JSONCalibrator:
             model_version: 'xl' or 'v3' - only use predictions from this model for calibration
         """
         self.market = market.upper()
-        self.model_version = model_version.lower() if model_version else 'xl'
+        self.model_version = model_version.lower() if model_version else "xl"
 
         # Get market-specific config (or use defaults)
         market_cfg = self.MARKET_CONFIG.get(self.market, {})
-        self._market_max_adjustment = market_cfg.get('max_adjustment', self.MAX_ADJUSTMENT)
-        self._market_min_samples = market_cfg.get('min_samples', self.MIN_SAMPLES)
+        self._market_max_adjustment = market_cfg.get("max_adjustment", self.MAX_ADJUSTMENT)
+        self._market_min_samples = market_cfg.get("min_samples", self.MIN_SAMPLES)
 
         # Use market-specific lookback if not explicitly provided
         if lookback_days is None:
-            self.lookback_days = market_cfg.get('lookback_days', self.DEFAULT_LOOKBACK)
+            self.lookback_days = market_cfg.get("lookback_days", self.DEFAULT_LOOKBACK)
         else:
             self.lookback_days = lookback_days
 
@@ -190,10 +201,12 @@ class JSONCalibrator:
         self._log_dir.mkdir(parents=True, exist_ok=True)
 
         mode_str = "db_only" if db_only else "json"
-        date_str = as_of_date.strftime('%Y-%m-%d') if as_of_date else "now"
-        logger.info(f"JSONCalibrator initialized for {self.market} model={self.model_version} "
-                   f"(lookback={self.lookback_days} days, max_adj={self._market_max_adjustment:.0%}, "
-                   f"min_samples={self._market_min_samples}, mode={mode_str}, as_of={date_str})")
+        date_str = as_of_date.strftime("%Y-%m-%d") if as_of_date else "now"
+        logger.info(
+            f"JSONCalibrator initialized for {self.market} model={self.model_version} "
+            f"(lookback={self.lookback_days} days, max_adj={self._market_max_adjustment:.0%}, "
+            f"min_samples={self._market_min_samples}, mode={mode_str}, as_of={date_str})"
+        )
 
     def _is_backtest_mode(self) -> bool:
         """Check if running in backtest mode (historical date)."""
@@ -218,13 +231,13 @@ class JSONCalibrator:
         self._is_stale = True
         self._sample_count = 0
         return {
-            'status': 'no_data',
-            'market': self.market,
-            'total_predictions': 0,
-            'predictions_with_actuals': 0,
-            'is_stale': True,
-            'lookback_days': self.lookback_days,
-            'timestamp': datetime.now().isoformat()
+            "status": "no_data",
+            "market": self.market,
+            "total_predictions": 0,
+            "predictions_with_actuals": 0,
+            "is_stale": True,
+            "lookback_days": self.lookback_days,
+            "timestamp": datetime.now().isoformat(),
         }
 
     def _load_predictions(self) -> List[Dict]:
@@ -258,7 +271,8 @@ class JSONCalibrator:
             with conn.cursor() as cur:
                 # Query props with actuals for calibration
                 # We reconstruct p_over from line spread as a heuristic
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT DISTINCT ON (player_name, game_date)
                         player_name,
                         game_date,
@@ -274,10 +288,20 @@ class JSONCalibrator:
                       AND actual_value IS NOT NULL
                       AND over_line IS NOT NULL
                     ORDER BY player_name, game_date, fetch_timestamp DESC
-                """, (self.market, start_date.date(), end_date.date()))
+                """,
+                    (self.market, start_date.date(), end_date.date()),
+                )
 
                 for row in cur.fetchall():
-                    player_name, game_date, stat_type, over_line, consensus_line, actual_value, line_spread = row
+                    (
+                        player_name,
+                        game_date,
+                        stat_type,
+                        over_line,
+                        consensus_line,
+                        actual_value,
+                        line_spread,
+                    ) = row
 
                     # Reconstruct p_over from line spread
                     # This is a heuristic: higher spread = more likely over
@@ -286,24 +310,33 @@ class JSONCalibrator:
                         spread = float(consensus_line) - float(over_line)
                         # sigmoid approximation: spread of 2 points = ~0.6 probability
                         import math
+
                         p_over = 1 / (1 + math.exp(-spread / 2.0))
                         p_over = max(0.50, min(0.85, p_over))  # Clamp to reasonable range
                     else:
                         p_over = 0.55  # Default if no spread info
 
-                    predictions.append({
-                        'player_name': player_name,
-                        'game_date': game_date.strftime('%Y-%m-%d') if hasattr(game_date, 'strftime') else str(game_date),
-                        'stat_type': stat_type,
-                        'p_over': p_over,
-                        'prediction': float(over_line) + 1.5,  # Rough estimate
-                        'best_line': float(over_line),
-                        'actual_value': float(actual_value) if actual_value else None,
-                        'hit': float(actual_value) > float(over_line) if actual_value else None
-                    })
+                    predictions.append(
+                        {
+                            "player_name": player_name,
+                            "game_date": (
+                                game_date.strftime("%Y-%m-%d")
+                                if hasattr(game_date, "strftime")
+                                else str(game_date)
+                            ),
+                            "stat_type": stat_type,
+                            "p_over": p_over,
+                            "prediction": float(over_line) + 1.5,  # Rough estimate
+                            "best_line": float(over_line),
+                            "actual_value": float(actual_value) if actual_value else None,
+                            "hit": float(actual_value) > float(over_line) if actual_value else None,
+                        }
+                    )
 
-            logger.info(f"Loaded {len(predictions)} {self.market} predictions from DB "
-                       f"({start_date.date()} to {end_date.date()})")
+            logger.info(
+                f"Loaded {len(predictions)} {self.market} predictions from DB "
+                f"({start_date.date()} to {end_date.date()})"
+            )
 
         except Exception as e:
             logger.error(f"Failed to load predictions from DB: {e}")
@@ -327,8 +360,8 @@ class JSONCalibrator:
 
         current_date = start_date
         while current_date <= end_date:
-            date_str = current_date.strftime('%Y-%m-%d')
-            date_str_compact = current_date.strftime('%Y%m%d')
+            date_str = current_date.strftime("%Y-%m-%d")
+            date_str_compact = current_date.strftime("%Y%m%d")
 
             # Try multiple filename patterns
             json_files_to_try = [
@@ -345,18 +378,18 @@ class JSONCalibrator:
                             data = json.load(f)
 
                         # Get date from file or parent structure
-                        file_date = data.get('date', date_str)
+                        file_date = data.get("date", date_str)
 
-                        for pick in data.get('picks', []):
+                        for pick in data.get("picks", []):
                             # Filter by market
-                            if pick.get('stat_type') != self.market:
+                            if pick.get("stat_type") != self.market:
                                 continue
 
                             # Filter by model version (V3 tier = v3 model, others = xl model)
                             # FIX Jan 15, 2026: Use startswith() to match V3_ELITE_*, V3_STANDARD_*, etc.
-                            pick_tier = pick.get('filter_tier', '').upper()
-                            is_v3_pick = pick_tier.startswith('V3')
-                            if self.model_version == 'v3':
+                            pick_tier = pick.get("filter_tier", "").upper()
+                            is_v3_pick = pick_tier.startswith("V3")
+                            if self.model_version == "v3":
                                 # V3 calibrator only uses V3 tier predictions
                                 if not is_v3_pick:
                                     continue
@@ -366,20 +399,24 @@ class JSONCalibrator:
                                     continue
 
                             # Extract fields - THE KEY: using actual p_over!
-                            predictions.append({
-                                'player_name': pick['player_name'],
-                                'game_date': file_date,
-                                'stat_type': pick['stat_type'],
-                                'p_over': float(pick['p_over']),  # REAL prediction!
-                                'prediction': float(pick.get('prediction', 0)),
-                                'best_line': float(pick.get('best_line', pick.get('consensus_line', 0))),
-                                'confidence': pick.get('confidence', 'UNKNOWN'),
-                                'filter_tier': pick.get('filter_tier', 'unknown'),
-                                'side': pick.get('side', 'OVER'),
-                                'edge': float(pick.get('edge', 0)),
-                                'opponent_team': pick.get('opponent_team'),
-                                'source_file': json_file.name
-                            })
+                            predictions.append(
+                                {
+                                    "player_name": pick["player_name"],
+                                    "game_date": file_date,
+                                    "stat_type": pick["stat_type"],
+                                    "p_over": float(pick["p_over"]),  # REAL prediction!
+                                    "prediction": float(pick.get("prediction", 0)),
+                                    "best_line": float(
+                                        pick.get("best_line", pick.get("consensus_line", 0))
+                                    ),
+                                    "confidence": pick.get("confidence", "UNKNOWN"),
+                                    "filter_tier": pick.get("filter_tier", "unknown"),
+                                    "side": pick.get("side", "OVER"),
+                                    "edge": float(pick.get("edge", 0)),
+                                    "opponent_team": pick.get("opponent_team"),
+                                    "source_file": json_file.name,
+                                }
+                            )
 
                         # Found file for this date, move to next
                         break
@@ -390,8 +427,10 @@ class JSONCalibrator:
 
             current_date += timedelta(days=1)
 
-        logger.info(f"Loaded {len(predictions)} {self.market} model={self.model_version} predictions "
-                   f"from {self.lookback_days} days of JSON files")
+        logger.info(
+            f"Loaded {len(predictions)} {self.market} model={self.model_version} predictions "
+            f"from {self.lookback_days} days of JSON files"
+        )
 
         return predictions
 
@@ -412,8 +451,8 @@ class JSONCalibrator:
             conn = self._get_db_connection()
             cursor = conn.cursor()
             # Build unique keys
-            player_names = list(set(p['player_name'] for p in predictions))
-            game_dates = list(set(p['game_date'] for p in predictions))
+            player_names = list(set(p["player_name"] for p in predictions))
+            game_dates = list(set(p["game_date"] for p in predictions))
 
             # Query all relevant actuals in batch
             query = """
@@ -443,26 +482,26 @@ class JSONCalibrator:
             # Enrich predictions with actuals
             enriched = []
             for pred in predictions:
-                key = (pred['player_name'], pred['game_date'], pred['stat_type'])
+                key = (pred["player_name"], pred["game_date"], pred["stat_type"])
                 actual = actuals_map.get(key)
 
                 if actual is not None:
-                    line = pred['best_line']
+                    line = pred["best_line"]
 
                     # FIX: Skip pushes (actual == line) - they're not wins or losses
                     if actual == line:
                         continue
 
                     pred_copy = pred.copy()
-                    pred_copy['actual_value'] = actual
+                    pred_copy["actual_value"] = actual
 
                     # Calculate outcome (did OVER hit?)
                     # Note: All picks in this system are OVER, default to OVER if side not specified
-                    side = pred.get('side', 'OVER')
-                    if side == 'OVER':
-                        pred_copy['outcome'] = 1 if actual > line else 0
+                    side = pred.get("side", "OVER")
+                    if side == "OVER":
+                        pred_copy["outcome"] = 1 if actual > line else 0
                     else:
-                        pred_copy['outcome'] = 1 if actual < line else 0
+                        pred_copy["outcome"] = 1 if actual < line else 0
 
                     enriched.append(pred_copy)
 
@@ -487,8 +526,8 @@ class JSONCalibrator:
 
         # Basic metrics
         total = len(df)
-        outcomes = df['outcome'].values
-        predicted_probs = df['p_over'].values
+        outcomes = df["outcome"].values
+        predicted_probs = df["p_over"].values
 
         # Win rate
         win_rate = outcomes.mean()
@@ -519,20 +558,24 @@ class JSONCalibrator:
 
                 label = f"{bucket_start:.2f}-{bucket_end:.2f}"
                 bucket_stats[label] = {
-                    'count': int(count),
-                    'predicted': float(predicted_rate),
-                    'actual': float(actual_rate),
-                    'bias': float(bucket_bias),
-                    'adjustment': float(np.clip(-bucket_bias, -self.MAX_ADJUSTMENT, self.MAX_ADJUSTMENT))
+                    "count": int(count),
+                    "predicted": float(predicted_rate),
+                    "actual": float(actual_rate),
+                    "bias": float(bucket_bias),
+                    "adjustment": float(
+                        np.clip(-bucket_bias, -self.MAX_ADJUSTMENT, self.MAX_ADJUSTMENT)
+                    ),
                 }
 
         # Staleness check
         # In backtest mode, use reference date instead of now()
         # Also skip staleness in backtest mode since data is historical
-        latest_date = df['game_date'].max()
+        latest_date = df["game_date"].max()
         try:
             reference = self._reference_date
-            days_since_latest = (reference - datetime.strptime(str(latest_date)[:10], '%Y-%m-%d')).days
+            days_since_latest = (
+                reference - datetime.strptime(str(latest_date)[:10], "%Y-%m-%d")
+            ).days
         except (ValueError, TypeError, AttributeError):
             days_since_latest = 999
 
@@ -553,33 +596,33 @@ class JSONCalibrator:
         hit_rate_under = (1 - outcomes[under_mask]).mean() if under_mask.sum() > 0 else None
 
         return {
-            'status': 'ok',
-            'market': self.market,
-            'total_predictions': total,
-            'predictions_with_actuals': total,
-            'win_rate': float(win_rate),
-            'hit_rate_over': float(hit_rate_over) if hit_rate_over is not None else None,
-            'hit_rate_under': float(hit_rate_under) if hit_rate_under is not None else None,
-            'avg_predicted_prob': float(avg_predicted),
-            'avg_actual_outcome': float(win_rate),
-            'bias': float(bias),
-            'calibration_error': float(calibration_error),
-            'brier_score': float(brier_score),
-            'calibration_by_bucket': bucket_stats,
-            'is_overconfident': bool(is_overconfident),
-            'is_underconfident': bool(is_underconfident),
-            'latest_actual_date': str(latest_date),
-            'days_since_latest': days_since_latest,
-            'is_stale': bool(is_stale),
-            'lookback_days': self.lookback_days,
-            'over_predictions_count': int(over_mask.sum()),
-            'under_predictions_count': int(under_mask.sum()),
-            'timestamp': datetime.now().isoformat()
+            "status": "ok",
+            "market": self.market,
+            "total_predictions": total,
+            "predictions_with_actuals": total,
+            "win_rate": float(win_rate),
+            "hit_rate_over": float(hit_rate_over) if hit_rate_over is not None else None,
+            "hit_rate_under": float(hit_rate_under) if hit_rate_under is not None else None,
+            "avg_predicted_prob": float(avg_predicted),
+            "avg_actual_outcome": float(win_rate),
+            "bias": float(bias),
+            "calibration_error": float(calibration_error),
+            "brier_score": float(brier_score),
+            "calibration_by_bucket": bucket_stats,
+            "is_overconfident": bool(is_overconfident),
+            "is_underconfident": bool(is_underconfident),
+            "latest_actual_date": str(latest_date),
+            "days_since_latest": days_since_latest,
+            "is_stale": bool(is_stale),
+            "lookback_days": self.lookback_days,
+            "over_predictions_count": int(over_mask.sum()),
+            "under_predictions_count": int(under_mask.sum()),
+            "timestamp": datetime.now().isoformat(),
         }
 
     def _update_calibration_state(self, metrics: Dict):
         """Update internal calibration state from metrics."""
-        if metrics.get('status') != 'ok':
+        if metrics.get("status") != "ok":
             self._is_stale = True
             self._sample_count = 0
             self._bucket_calibration = {}
@@ -588,12 +631,12 @@ class JSONCalibrator:
             self._adjustment_factor = 0.0
             return
 
-        self._sample_count = metrics['total_predictions']
-        self._is_stale = metrics['is_stale']
-        self._global_bias = metrics['bias']
+        self._sample_count = metrics["total_predictions"]
+        self._is_stale = metrics["is_stale"]
+        self._global_bias = metrics["bias"]
 
         # Store bucket calibration
-        self._bucket_calibration = metrics.get('calibration_by_bucket', {})
+        self._bucket_calibration = metrics.get("calibration_by_bucket", {})
 
         # Use market-specific min_samples and max_adjustment
         min_samples = self._market_min_samples
@@ -602,26 +645,24 @@ class JSONCalibrator:
         # Calculate adjustment parameters (same as DynamicCalibrator for compatibility)
         if self._sample_count >= min_samples and not self._is_stale:
             # Bias correction (use market-specific max_adjustment)
-            self._bias_correction = float(np.clip(-self._global_bias,
-                                                   -max_adj,
-                                                   max_adj))
+            self._bias_correction = float(np.clip(-self._global_bias, -max_adj, max_adj))
 
             # Performance-based adjustment (use market-specific max_adjustment)
-            hit_rate = metrics.get('hit_rate_over', 0.5)
+            hit_rate = metrics.get("hit_rate_over", 0.5)
             if hit_rate is not None:
                 hit_rate_gap = hit_rate - self.BREAKEVEN_RATE
-                self._adjustment_factor = float(np.clip(hit_rate_gap * 0.5,
-                                                        -max_adj,
-                                                        max_adj))
+                self._adjustment_factor = float(np.clip(hit_rate_gap * 0.5, -max_adj, max_adj))
             else:
                 self._adjustment_factor = 0.0
         else:
             self._bias_correction = 0.0
             self._adjustment_factor = 0.0
 
-        logger.info(f"JSONCalibrator state updated: samples={self._sample_count}, "
-                   f"bias={self._global_bias:.4f}, bias_correction={self._bias_correction:.4f}, "
-                   f"stale={self._is_stale}")
+        logger.info(
+            f"JSONCalibrator state updated: samples={self._sample_count}, "
+            f"bias={self._global_bias:.4f}, bias_correction={self._bias_correction:.4f}, "
+            f"stale={self._is_stale}"
+        )
 
     def get_recent_performance(self, force_refresh: bool = False) -> Dict:
         """
@@ -688,12 +729,12 @@ class JSONCalibrator:
         adjustment = None
         for bucket_label, stats in self._bucket_calibration.items():
             try:
-                parts = bucket_label.split('-')
+                parts = bucket_label.split("-")
                 bucket_start = float(parts[0])
                 bucket_end = float(parts[1])
 
                 if bucket_start <= raw_prob < bucket_end:
-                    adjustment = stats['adjustment']
+                    adjustment = stats["adjustment"]
                     break
             except (ValueError, KeyError):
                 continue
@@ -714,11 +755,7 @@ class JSONCalibrator:
         return float(np.clip(adjusted, 0.01, 0.99))
 
     def apply_adjustment(
-        self,
-        raw_prob: float,
-        player_name: str = None,
-        game_date: str = None,
-        line: float = None
+        self, raw_prob: float, player_name: str = None, game_date: str = None, line: float = None
     ) -> Dict:
         """
         Apply adjustment and return full audit information.
@@ -732,7 +769,7 @@ class JSONCalibrator:
         bucket_used = None
         for bucket_label in self._bucket_calibration.keys():
             try:
-                parts = bucket_label.split('-')
+                parts = bucket_label.split("-")
                 bucket_start = float(parts[0])
                 bucket_end = float(parts[1])
                 if bucket_start <= raw_prob < bucket_end:
@@ -743,7 +780,7 @@ class JSONCalibrator:
 
         # Determine reason
         if self._is_stale:
-            days = self._metrics_cache.get('days_since_latest', '?') if self._metrics_cache else '?'
+            days = self._metrics_cache.get("days_since_latest", "?") if self._metrics_cache else "?"
             reason = f"No adjustment - data stale ({days} days)"
         elif self._sample_count < self._market_min_samples:
             reason = f"No adjustment - insufficient samples ({self._sample_count}/{self._market_min_samples})"
@@ -759,19 +796,19 @@ class JSONCalibrator:
         performance_adjustment = self._adjustment_factor * confidence_scale
 
         result = {
-            'raw_prob': float(raw_prob),
-            'adjusted_prob': float(adjusted),
-            'adjustment_applied': float(total_adjustment),
-            'bias_correction': float(self._bias_correction),
-            'performance_adjustment': float(performance_adjustment),
-            'bucket_used': bucket_used,
-            'was_adjusted': bool(abs(total_adjustment) >= 0.001),
-            'reason': reason,
-            'market': self.market,
-            'player_name': player_name,
-            'game_date': game_date,
-            'line': float(line) if line is not None else None,
-            'timestamp': datetime.now().isoformat()
+            "raw_prob": float(raw_prob),
+            "adjusted_prob": float(adjusted),
+            "adjustment_applied": float(total_adjustment),
+            "bias_correction": float(self._bias_correction),
+            "performance_adjustment": float(performance_adjustment),
+            "bucket_used": bucket_used,
+            "was_adjusted": bool(abs(total_adjustment) >= 0.001),
+            "reason": reason,
+            "market": self.market,
+            "player_name": player_name,
+            "game_date": game_date,
+            "line": float(line) if line is not None else None,
+            "timestamp": datetime.now().isoformat(),
         }
 
         # Log adjustment
@@ -781,54 +818,67 @@ class JSONCalibrator:
 
     def _log_adjustment(self, result: Dict):
         """Log adjustment to file for audit trail."""
-        log_file = self._log_dir / f"{self.market.lower()}_json_adjustments_{datetime.now().strftime('%Y%m%d')}.jsonl"
+        log_file = (
+            self._log_dir
+            / f"{self.market.lower()}_json_adjustments_{datetime.now().strftime('%Y%m%d')}.jsonl"
+        )
         try:
-            with open(log_file, 'a') as f:
-                f.write(json.dumps(result) + '\n')
+            with open(log_file, "a") as f:
+                f.write(json.dumps(result) + "\n")
         except Exception as e:
             logger.warning(f"Failed to log adjustment: {e}")
 
     def get_adjustment_summary(self) -> Dict:
         """Get summary of adjustments applied today."""
-        log_file = self._log_dir / f"{self.market.lower()}_json_adjustments_{datetime.now().strftime('%Y%m%d')}.jsonl"
+        log_file = (
+            self._log_dir
+            / f"{self.market.lower()}_json_adjustments_{datetime.now().strftime('%Y%m%d')}.jsonl"
+        )
 
         if not log_file.exists():
-            return {'adjustments_today': 0, 'avg_adjustment': 0.0, 'market': self.market}
+            return {"adjustments_today": 0, "avg_adjustment": 0.0, "market": self.market}
 
         adjustments = []
         try:
-            with open(log_file, 'r') as f:
+            with open(log_file, "r") as f:
                 for line in f:
                     adjustments.append(json.loads(line))
         except Exception as e:
             logger.warning(f"Failed to read adjustment log: {e}")
-            return {'adjustments_today': 0, 'avg_adjustment': 0.0, 'error': str(e), 'market': self.market}
+            return {
+                "adjustments_today": 0,
+                "avg_adjustment": 0.0,
+                "error": str(e),
+                "market": self.market,
+            }
 
         if len(adjustments) == 0:
-            return {'adjustments_today': 0, 'avg_adjustment': 0.0, 'market': self.market}
+            return {"adjustments_today": 0, "avg_adjustment": 0.0, "market": self.market}
 
-        actual_adjustments = [a for a in adjustments if a.get('was_adjusted', False)]
+        actual_adjustments = [a for a in adjustments if a.get("was_adjusted", False)]
 
         # FIX: Safely extract adjustment values, handling missing keys
-        adj_values = [a.get('adjustment_applied', 0) for a in adjustments if 'adjustment_applied' in a]
+        adj_values = [
+            a.get("adjustment_applied", 0) for a in adjustments if "adjustment_applied" in a
+        ]
         if not adj_values:
             return {
-                'adjustments_today': len(adjustments),
-                'actual_adjustments_applied': len(actual_adjustments),
-                'avg_adjustment': 0.0,
-                'max_increase': 0.0,
-                'max_decrease': 0.0,
-                'market': self.market,
-                'warning': 'no valid adjustment values found'
+                "adjustments_today": len(adjustments),
+                "actual_adjustments_applied": len(actual_adjustments),
+                "avg_adjustment": 0.0,
+                "max_increase": 0.0,
+                "max_decrease": 0.0,
+                "market": self.market,
+                "warning": "no valid adjustment values found",
             }
 
         return {
-            'adjustments_today': len(adjustments),
-            'actual_adjustments_applied': len(actual_adjustments),
-            'avg_adjustment': float(np.mean(adj_values)),
-            'max_increase': float(max(adj_values)),
-            'max_decrease': float(min(adj_values)),
-            'market': self.market
+            "adjustments_today": len(adjustments),
+            "actual_adjustments_applied": len(actual_adjustments),
+            "avg_adjustment": float(np.mean(adj_values)),
+            "max_increase": float(max(adj_values)),
+            "max_decrease": float(min(adj_values)),
+            "market": self.market,
         }
 
 
@@ -839,7 +889,7 @@ class JSONCalibrationManager:
     Drop-in replacement for DynamicCalibrationManager.
     """
 
-    MARKETS = ['POINTS', 'REBOUNDS', 'ASSISTS', 'THREES']
+    MARKETS = ["POINTS", "REBOUNDS", "ASSISTS", "THREES"]
 
     def __init__(self, lookback_days: int = 14, predictions_dir: str = None):
         """Initialize calibrators for all markets."""
@@ -869,29 +919,27 @@ class JSONCalibrationManager:
         raw_prob: float,
         player_name: str = None,
         game_date: str = None,
-        line: float = None
+        line: float = None,
     ) -> Dict:
         """Adjust probability with full audit trail."""
         market = market.upper()
         if market not in self.calibrators:
             raise ValueError(f"Unknown market: {market}")
-        return self.calibrators[market].apply_adjustment(
-            raw_prob, player_name, game_date, line
-        )
+        return self.calibrators[market].apply_adjustment(raw_prob, player_name, game_date, line)
 
     def print_status_report(self):
         """Print status report for all markets."""
-        print("\n" + "="*80)
+        print("\n" + "=" * 80)
         print("JSON CALIBRATION STATUS REPORT (Using REAL Predictions)")
         print(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"Lookback: {self.lookback_days} days")
-        print("="*80)
+        print("=" * 80)
 
         for market in self.MARKETS:
             metrics = self.calibrators[market].get_recent_performance()
 
             print(f"\n{market}:")
-            if metrics.get('status') != 'ok':
+            if metrics.get("status") != "ok":
                 print(f"  Status: {metrics.get('status', 'error')}")
                 continue
 
@@ -901,50 +949,50 @@ class JSONCalibrationManager:
             print(f"  Bias: {metrics['bias']*100:+.1f}%")
             print(f"  Brier Score: {metrics['brier_score']:.4f}")
 
-            if metrics['is_overconfident']:
+            if metrics["is_overconfident"]:
                 print(f"  Status: OVERCONFIDENT (will reduce predictions)")
-            elif metrics['is_underconfident']:
+            elif metrics["is_underconfident"]:
                 print(f"  Status: UNDERCONFIDENT (will increase predictions)")
             else:
                 print(f"  Status: WELL CALIBRATED")
 
-            if metrics['is_stale']:
+            if metrics["is_stale"]:
                 print(f"  WARNING: Data is STALE ({metrics['days_since_latest']} days)")
 
             # Show bucket calibration
-            if metrics.get('calibration_by_bucket'):
+            if metrics.get("calibration_by_bucket"):
                 print(f"  Calibration by bucket:")
-                for bucket, stats in metrics['calibration_by_bucket'].items():
-                    print(f"    {bucket}: pred={stats['predicted']:.2f}, actual={stats['actual']:.2f}, "
-                          f"adj={stats['adjustment']:+.3f} (n={stats['count']})")
+                for bucket, stats in metrics["calibration_by_bucket"].items():
+                    print(
+                        f"    {bucket}: pred={stats['predicted']:.2f}, actual={stats['actual']:.2f}, "
+                        f"adj={stats['adjustment']:+.3f} (n={stats['count']})"
+                    )
 
-        print("\n" + "="*80)
+        print("\n" + "=" * 80)
 
 
 # ============================================================================
 # CLI
 # ============================================================================
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description='JSON Calibration System (Using REAL Predictions)')
-    parser.add_argument('command', choices=['status', 'test', 'compare'],
-                       help='Command to run')
-    parser.add_argument('--market', type=str, default='POINTS',
-                       help='Market to operate on')
-    parser.add_argument('--lookback', type=int, default=14,
-                       help='Lookback period in days')
-    parser.add_argument('--prob', type=float, default=0.65,
-                       help='Probability to adjust (for test command)')
+    parser = argparse.ArgumentParser(description="JSON Calibration System (Using REAL Predictions)")
+    parser.add_argument("command", choices=["status", "test", "compare"], help="Command to run")
+    parser.add_argument("--market", type=str, default="POINTS", help="Market to operate on")
+    parser.add_argument("--lookback", type=int, default=14, help="Lookback period in days")
+    parser.add_argument(
+        "--prob", type=float, default=0.65, help="Probability to adjust (for test command)"
+    )
 
     args = parser.parse_args()
 
-    if args.command == 'status':
+    if args.command == "status":
         manager = JSONCalibrationManager(args.lookback)
         manager.print_status_report()
 
-    elif args.command == 'test':
+    elif args.command == "test":
         print(f"\nTesting JSONCalibrator for {args.market}...")
         cal = JSONCalibrator(args.market, args.lookback)
 
@@ -961,7 +1009,7 @@ if __name__ == '__main__':
             adj = cal.adjust_probability(p)
             print(f"{p:8.3f} {adj:10.3f} {adj-p:+8.3f}")
 
-    elif args.command == 'compare':
+    elif args.command == "compare":
         print(f"\nComparing JSONCalibrator vs DynamicCalibrator for {args.market}...")
 
         # Load both calibrators
@@ -969,19 +1017,26 @@ if __name__ == '__main__':
 
         try:
             from dynamic_calibrator import DynamicCalibrator
+
             dyn_cal = DynamicCalibrator(args.market, args.lookback)
 
             # Get metrics from both
             json_metrics = json_cal.get_recent_performance()
             dyn_metrics = dyn_cal.get_recent_performance()
 
-            print("\n" + "="*60)
+            print("\n" + "=" * 60)
             print(f"{'Metric':<30} {'JSON':>12} {'Dynamic':>12}")
-            print("="*60)
+            print("=" * 60)
 
-            for key in ['total_predictions', 'win_rate', 'avg_predicted_prob', 'bias', 'brier_score']:
-                j_val = json_metrics.get(key, 'N/A')
-                d_val = dyn_metrics.get(key, 'N/A')
+            for key in [
+                "total_predictions",
+                "win_rate",
+                "avg_predicted_prob",
+                "bias",
+                "brier_score",
+            ]:
+                j_val = json_metrics.get(key, "N/A")
+                d_val = dyn_metrics.get(key, "N/A")
                 if isinstance(j_val, float):
                     print(f"{key:<30} {j_val:>12.4f} {d_val:>12.4f}")
                 else:

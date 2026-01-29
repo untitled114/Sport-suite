@@ -27,36 +27,31 @@ Usage:
     python3 run_historical_backtest.py --start 2025-11-01 --end 2025-11-07 --dry-run
 """
 
-import sys
-import os
 import argparse
 import json
-import psycopg2
-from datetime import datetime, date, timedelta
+import logging
+import os
+import sys
+from collections import defaultdict
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-import logging
-from collections import defaultdict
 
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+import psycopg2
 
-from betting_xl.generate_xl_predictions import XLPredictionsGenerator
+from nba.betting_xl.generate_xl_predictions import XLPredictionsGenerator
 
 # Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Database config
 DB_INTELLIGENCE = {
-    'host': os.getenv('NBA_INT_DB_HOST', 'localhost'),
-    'port': int(os.getenv('NBA_INT_DB_PORT', 5539)),
-    'user': os.getenv('NBA_INT_DB_USER', os.getenv('DB_USER', 'nba_user')),
-    'password': os.getenv('NBA_INT_DB_PASSWORD', os.getenv('DB_PASSWORD')),
-    'database': os.getenv('NBA_INT_DB_NAME', 'nba_intelligence')
+    "host": os.getenv("NBA_INT_DB_HOST", "localhost"),
+    "port": int(os.getenv("NBA_INT_DB_PORT", 5539)),
+    "user": os.getenv("NBA_INT_DB_USER", os.getenv("DB_USER", "nba_user")),
+    "password": os.getenv("NBA_INT_DB_PASSWORD", os.getenv("DB_PASSWORD")),
+    "database": os.getenv("NBA_INT_DB_NAME", "nba_intelligence"),
 }
 
 
@@ -70,8 +65,8 @@ class BacktestResult:
         self.wins = 0
         self.losses = 0
         self.pushes = 0
-        self.by_market: Dict[str, Dict] = defaultdict(lambda: {'wins': 0, 'losses': 0, 'pushes': 0})
-        self.by_model: Dict[str, Dict] = defaultdict(lambda: {'wins': 0, 'losses': 0, 'pushes': 0})
+        self.by_market: Dict[str, Dict] = defaultdict(lambda: {"wins": 0, "losses": 0, "pushes": 0})
+        self.by_model: Dict[str, Dict] = defaultdict(lambda: {"wins": 0, "losses": 0, "pushes": 0})
         self.error: Optional[str] = None
 
     @property
@@ -80,7 +75,9 @@ class BacktestResult:
         return (self.wins / total * 100) if total > 0 else 0.0
 
     def __repr__(self):
-        return f"<BacktestResult {self.game_date}: {self.wins}W/{self.losses}L ({self.win_rate:.1f}%)>"
+        return (
+            f"<BacktestResult {self.game_date}: {self.wins}W/{self.losses}L ({self.win_rate:.1f}%)>"
+        )
 
 
 class HistoricalBacktest:
@@ -114,7 +111,7 @@ class HistoricalBacktest:
         seed_start: Optional[date] = None,
         seed_end: Optional[date] = None,
         no_seed: bool = False,
-        pick6_file: Optional[str] = None
+        pick6_file: Optional[str] = None,
     ):
         self.start_date = start_date
         self.end_date = end_date
@@ -135,7 +132,7 @@ class HistoricalBacktest:
         if output_dir:
             self.output_dir = Path(output_dir)
         else:
-            self.output_dir = Path(__file__).parent / 'backtest'
+            self.output_dir = Path(__file__).parent / "backtest"
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -164,14 +161,17 @@ class HistoricalBacktest:
         """
         self._connect_db()
         with self.conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT
                     COUNT(*) as total,
                     COUNT(actual_value) as with_actuals
                 FROM nba_props_xl
                 WHERE game_date = %s
                   AND stat_type IN ('POINTS', 'REBOUNDS')
-            """, (game_date,))
+            """,
+                (game_date,),
+            )
             row = cur.fetchone()
             return (row[0], row[1]) if row else (0, 0)
 
@@ -186,17 +186,17 @@ class HistoricalBacktest:
         Returns:
             BacktestResult with win/loss tallies
         """
-        result = BacktestResult(game_date.strftime('%Y-%m-%d'))
+        result = BacktestResult(game_date.strftime("%Y-%m-%d"))
 
         if not predictions_file.exists():
             result.error = "No predictions file"
             return result
 
         # Load predictions
-        with open(predictions_file, 'r') as f:
+        with open(predictions_file, "r") as f:
             data = json.load(f)
 
-        picks = data.get('picks', [])
+        picks = data.get("picks", [])
         result.picks_generated = len(picks)
 
         if not picks:
@@ -207,13 +207,14 @@ class HistoricalBacktest:
         self._connect_db()
 
         for pick in picks:
-            player_name = pick['player_name']
-            stat_type = pick['stat_type']
-            line = pick['best_line']
-            model_version = pick.get('model_version', 'xl')
+            player_name = pick["player_name"]
+            stat_type = pick["stat_type"]
+            line = pick["best_line"]
+            model_version = pick.get("model_version", "xl")
 
             with self.conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT actual_value
                     FROM nba_props_xl
                     WHERE game_date = %s
@@ -222,7 +223,9 @@ class HistoricalBacktest:
                       AND actual_value IS NOT NULL
                     ORDER BY fetch_timestamp DESC
                     LIMIT 1
-                """, (game_date, player_name, stat_type))
+                """,
+                    (game_date, player_name, stat_type),
+                )
 
                 row = cur.fetchone()
 
@@ -235,16 +238,16 @@ class HistoricalBacktest:
             # All picks are OVER
             if actual > line:
                 result.wins += 1
-                result.by_market[stat_type]['wins'] += 1
-                result.by_model[model_version]['wins'] += 1
+                result.by_market[stat_type]["wins"] += 1
+                result.by_model[model_version]["wins"] += 1
             elif actual < line:
                 result.losses += 1
-                result.by_market[stat_type]['losses'] += 1
-                result.by_model[model_version]['losses'] += 1
+                result.by_market[stat_type]["losses"] += 1
+                result.by_model[model_version]["losses"] += 1
             else:
                 result.pushes += 1
-                result.by_market[stat_type]['pushes'] += 1
-                result.by_model[model_version]['pushes'] += 1
+                result.by_market[stat_type]["pushes"] += 1
+                result.by_model[model_version]["pushes"] += 1
 
         return result
 
@@ -258,7 +261,7 @@ class HistoricalBacktest:
         Returns:
             BacktestResult for this date
         """
-        date_str = game_date.strftime('%Y-%m-%d')
+        date_str = game_date.strftime("%Y-%m-%d")
         result = BacktestResult(date_str)
 
         logger.info(f"\n{'='*60}")
@@ -293,16 +296,13 @@ class HistoricalBacktest:
             )
 
             # Run the generator
-            generator.run(
-                output_file=str(output_file),
-                dry_run=self.dry_run
-            )
+            generator.run(output_file=str(output_file), dry_run=self.dry_run)
 
             # Load results to count picks
             if output_file.exists():
-                with open(output_file, 'r') as f:
+                with open(output_file, "r") as f:
                     data = json.load(f)
-                result.picks_generated = len(data.get('picks', []))
+                result.picks_generated = len(data.get("picks", []))
             else:
                 result.picks_generated = 0
 
@@ -311,7 +311,9 @@ class HistoricalBacktest:
             # Validate if requested
             if not self.skip_validation and with_actuals > 0:
                 result = self.validate_predictions(game_date, output_file)
-                logger.info(f"  Validation: {result.wins}W / {result.losses}L ({result.win_rate:.1f}%)")
+                logger.info(
+                    f"  Validation: {result.wins}W / {result.losses}L ({result.win_rate:.1f}%)"
+                )
 
         except Exception as e:
             result.error = str(e)
@@ -331,12 +333,12 @@ class HistoricalBacktest:
             logger.info("Seed period skipped (--no-seed)")
             return
 
-        logger.info("\n" + "="*80)
+        logger.info("\n" + "=" * 80)
         logger.info("SEED PERIOD - Warming up calibrator")
-        logger.info("="*80)
+        logger.info("=" * 80)
         logger.info(f"Seed dates: {self.seed_start} to {self.seed_end}")
         logger.info("These predictions are NOT counted in backtest results")
-        logger.info("="*80)
+        logger.info("=" * 80)
 
         seed_days = (self.seed_end - self.seed_start).days + 1
         current = self.seed_start
@@ -344,7 +346,7 @@ class HistoricalBacktest:
         seed_picks_total = 0
 
         while current <= self.seed_end:
-            date_str = current.strftime('%Y-%m-%d')
+            date_str = current.strftime("%Y-%m-%d")
 
             # Check if props exist
             total_props, _ = self.check_props_exist(current)
@@ -371,9 +373,9 @@ class HistoricalBacktest:
 
                 # Count picks
                 if output_file.exists():
-                    with open(output_file, 'r') as f:
+                    with open(output_file, "r") as f:
                         data = json.load(f)
-                    picks = len(data.get('picks', []))
+                    picks = len(data.get("picks", []))
                     seed_picks_total += picks
                     if picks > 0:
                         logger.info(f"  {date_str}: {picks} picks generated")
@@ -386,7 +388,7 @@ class HistoricalBacktest:
 
         logger.info(f"\nSeed period complete: {seed_picks_total} total picks generated")
         logger.info("Calibrator should now have data for adjustments")
-        logger.info("="*80 + "\n")
+        logger.info("=" * 80 + "\n")
 
     def run(self) -> List[BacktestResult]:
         """
@@ -395,23 +397,27 @@ class HistoricalBacktest:
         Returns:
             List of BacktestResult for each date
         """
-        logger.info("\n" + "="*80)
+        logger.info("\n" + "=" * 80)
         logger.info("HISTORICAL BACKTEST")
-        logger.info("="*80)
+        logger.info("=" * 80)
         logger.info(f"Date range: {self.start_date} to {self.end_date}")
-        logger.info(f"Seed period: {self.seed_start} to {self.seed_end}" if not self.no_seed else "Seed period: DISABLED")
+        logger.info(
+            f"Seed period: {self.seed_start} to {self.seed_end}"
+            if not self.no_seed
+            else "Seed period: DISABLED"
+        )
         logger.info(f"Output directory: {self.output_dir}")
         logger.info(f"Dry run: {self.dry_run}")
         logger.info(f"Skip validation: {self.skip_validation}")
-        logger.info("="*80)
+        logger.info("=" * 80)
 
         # STEP 1: Run seed period first to warm up calibrator
         self.run_seed_period()
 
         # STEP 2: Run main backtest
-        logger.info("\n" + "="*80)
+        logger.info("\n" + "=" * 80)
         logger.info("MAIN BACKTEST")
-        logger.info("="*80)
+        logger.info("=" * 80)
 
         # Calculate total days
         total_days = (self.end_date - self.start_date).days + 1
@@ -426,7 +432,9 @@ class HistoricalBacktest:
 
             processed += 1
             if processed % 7 == 0:
-                logger.info(f"\n*** Progress: {processed}/{total_days} days ({processed/total_days*100:.0f}%) ***\n")
+                logger.info(
+                    f"\n*** Progress: {processed}/{total_days} days ({processed/total_days*100:.0f}%) ***\n"
+                )
 
             current += timedelta(days=1)
 
@@ -443,9 +451,9 @@ class HistoricalBacktest:
 
     def print_summary(self):
         """Print aggregated backtest results."""
-        print("\n" + "="*80)
+        print("\n" + "=" * 80)
         print(f"BACKTEST SUMMARY: {self.start_date} to {self.end_date}")
-        print("="*80)
+        print("=" * 80)
 
         # Aggregate results
         total_picks = sum(r.picks_generated for r in self.results)
@@ -455,12 +463,12 @@ class HistoricalBacktest:
         total_pushes = sum(r.pushes for r in self.results)
 
         # By market
-        market_results: Dict[str, Dict] = defaultdict(lambda: {'wins': 0, 'losses': 0, 'pushes': 0})
+        market_results: Dict[str, Dict] = defaultdict(lambda: {"wins": 0, "losses": 0, "pushes": 0})
         for r in self.results:
             for market, stats in r.by_market.items():
-                market_results[market]['wins'] += stats['wins']
-                market_results[market]['losses'] += stats['losses']
-                market_results[market]['pushes'] += stats['pushes']
+                market_results[market]["wins"] += stats["wins"]
+                market_results[market]["losses"] += stats["losses"]
+                market_results[market]["pushes"] += stats["pushes"]
 
         # Calculate win rate (excluding pushes)
         total_bets = total_wins + total_losses
@@ -477,157 +485,134 @@ class HistoricalBacktest:
         print(f"WIN RATE: {overall_wr:.1f}%")
 
         print(f"\n--- BY MARKET ---")
-        for market in ['POINTS', 'REBOUNDS', 'THREES', 'ASSISTS', 'PA', 'PR', 'RA', 'PRA']:
+        for market in ["POINTS", "REBOUNDS", "THREES", "ASSISTS", "PA", "PR", "RA", "PRA"]:
             if market in market_results:
                 stats = market_results[market]
-                w, l = stats['wins'], stats['losses']
-                wr = (w / (w + l) * 100) if (w + l) > 0 else 0.0
-                print(f"{market:10}: {w}W / {l}L = {wr:.1f}%")
+                wins, losses = stats["wins"], stats["losses"]
+                wr = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0.0
+                print(f"{market:10}: {wins}W / {losses}L = {wr:.1f}%")
 
         # By model version
-        model_results: Dict[str, Dict] = defaultdict(lambda: {'wins': 0, 'losses': 0, 'pushes': 0})
+        model_results: Dict[str, Dict] = defaultdict(lambda: {"wins": 0, "losses": 0, "pushes": 0})
         for r in self.results:
             for model, stats in r.by_model.items():
-                model_results[model]['wins'] += stats['wins']
-                model_results[model]['losses'] += stats['losses']
-                model_results[model]['pushes'] += stats['pushes']
+                model_results[model]["wins"] += stats["wins"]
+                model_results[model]["losses"] += stats["losses"]
+                model_results[model]["pushes"] += stats["pushes"]
 
         if model_results:
             print(f"\n--- BY MODEL ---")
             for model in sorted(model_results.keys()):
                 stats = model_results[model]
-                w, l = stats['wins'], stats['losses']
-                wr = (w / (w + l) * 100) if (w + l) > 0 else 0.0
-                print(f"{model:10}: {w}W / {l}L = {wr:.1f}%")
+                wins, losses = stats["wins"], stats["losses"]
+                wr = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0.0
+                print(f"{model:10}: {wins}W / {losses}L = {wr:.1f}%")
 
         # Weekly breakdown
         print(f"\n--- WEEKLY BREAKDOWN ---")
-        week_results = defaultdict(lambda: {'wins': 0, 'losses': 0})
+        week_results = defaultdict(lambda: {"wins": 0, "losses": 0})
 
         for r in self.results:
-            game_date = datetime.strptime(r.game_date, '%Y-%m-%d').date()
+            game_date = datetime.strptime(r.game_date, "%Y-%m-%d").date()
             # Week number relative to start
             week_num = (game_date - self.start_date).days // 7 + 1
-            week_results[week_num]['wins'] += r.wins
-            week_results[week_num]['losses'] += r.losses
+            week_results[week_num]["wins"] += r.wins
+            week_results[week_num]["losses"] += r.losses
 
         for week_num in sorted(week_results.keys()):
             stats = week_results[week_num]
-            w, l = stats['wins'], stats['losses']
-            wr = (w / (w + l) * 100) if (w + l) > 0 else 0.0
+            wins, losses = stats["wins"], stats["losses"]
+            wr = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0.0
             week_start = self.start_date + timedelta(days=(week_num - 1) * 7)
             week_end = min(week_start + timedelta(days=6), self.end_date)
-            print(f"Week {week_num} ({week_start} - {week_end}): {w}W / {l}L = {wr:.1f}%")
+            print(f"Week {week_num} ({week_start} - {week_end}): {wins}W / {losses}L = {wr:.1f}%")
 
-        print("="*80)
+        print("=" * 80)
 
     def save_summary(self):
         """Save summary to JSON file."""
         summary = {
-            'start_date': self.start_date.strftime('%Y-%m-%d'),
-            'end_date': self.end_date.strftime('%Y-%m-%d'),
-            'generated_at': datetime.now().isoformat(),
-            'total_days': len(self.results),
-            'total_picks': sum(r.picks_generated for r in self.results),
-            'total_validated': sum(r.validated for r in self.results),
-            'total_wins': sum(r.wins for r in self.results),
-            'total_losses': sum(r.losses for r in self.results),
-            'total_pushes': sum(r.pushes for r in self.results),
-            'daily_results': [
+            "start_date": self.start_date.strftime("%Y-%m-%d"),
+            "end_date": self.end_date.strftime("%Y-%m-%d"),
+            "generated_at": datetime.now().isoformat(),
+            "total_days": len(self.results),
+            "total_picks": sum(r.picks_generated for r in self.results),
+            "total_validated": sum(r.validated for r in self.results),
+            "total_wins": sum(r.wins for r in self.results),
+            "total_losses": sum(r.losses for r in self.results),
+            "total_pushes": sum(r.pushes for r in self.results),
+            "daily_results": [
                 {
-                    'date': r.game_date,
-                    'picks': r.picks_generated,
-                    'validated': r.validated,
-                    'wins': r.wins,
-                    'losses': r.losses,
-                    'pushes': r.pushes,
-                    'win_rate': r.win_rate,
-                    'error': r.error
+                    "date": r.game_date,
+                    "picks": r.picks_generated,
+                    "validated": r.validated,
+                    "wins": r.wins,
+                    "losses": r.losses,
+                    "pushes": r.pushes,
+                    "win_rate": r.win_rate,
+                    "error": r.error,
                 }
                 for r in self.results
-            ]
+            ],
         }
 
         # Calculate overall win rate
-        total_bets = summary['total_wins'] + summary['total_losses']
-        summary['overall_win_rate'] = (summary['total_wins'] / total_bets * 100) if total_bets > 0 else 0.0
+        total_bets = summary["total_wins"] + summary["total_losses"]
+        summary["overall_win_rate"] = (
+            (summary["total_wins"] / total_bets * 100) if total_bets > 0 else 0.0
+        )
 
         summary_file = self.output_dir / f"backtest_summary_{self.start_date}_{self.end_date}.json"
-        with open(summary_file, 'w') as f:
+        with open(summary_file, "w") as f:
             json.dump(summary, f, indent=2)
 
         logger.info(f"\nSummary saved to: {summary_file}")
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Run historical backtest with temporal safety'
+    parser = argparse.ArgumentParser(description="Run historical backtest with temporal safety")
+    parser.add_argument("--start", type=str, required=True, help="Start date (YYYY-MM-DD)")
+    parser.add_argument("--end", type=str, required=True, help="End date (YYYY-MM-DD)")
+    parser.add_argument(
+        "--output-dir", type=str, default=None, help="Output directory for backtest results"
     )
     parser.add_argument(
-        '--start',
-        type=str,
-        required=True,
-        help='Start date (YYYY-MM-DD)'
+        "--dry-run", action="store_true", help="Generate predictions without saving"
     )
     parser.add_argument(
-        '--end',
-        type=str,
-        required=True,
-        help='End date (YYYY-MM-DD)'
+        "--skip-validation", action="store_true", help="Skip validation against actuals"
     )
     parser.add_argument(
-        '--output-dir',
-        type=str,
-        default=None,
-        help='Output directory for backtest results'
+        "--seed-start", type=str, default=None, help="Seed period start date (default: 2025-03-10)"
     )
     parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='Generate predictions without saving'
+        "--seed-end", type=str, default=None, help="Seed period end date (default: 2025-04-13)"
     )
     parser.add_argument(
-        '--skip-validation',
-        action='store_true',
-        help='Skip validation against actuals'
+        "--no-seed",
+        action="store_true",
+        help="Skip seed period (not recommended - calibrator needs warmup data)",
     )
     parser.add_argument(
-        '--seed-start',
+        "--pick6-file",
         type=str,
         default=None,
-        help='Seed period start date (default: 2025-03-10)'
-    )
-    parser.add_argument(
-        '--seed-end',
-        type=str,
-        default=None,
-        help='Seed period end date (default: 2025-04-13)'
-    )
-    parser.add_argument(
-        '--no-seed',
-        action='store_true',
-        help='Skip seed period (not recommended - calibrator needs warmup data)'
-    )
-    parser.add_argument(
-        '--pick6-file',
-        type=str,
-        default=None,
-        help='Historical Pick6 JSON file for Odds API backtest (enables Odds API filter path)'
+        help="Historical Pick6 JSON file for Odds API backtest (enables Odds API filter path)",
     )
 
     args = parser.parse_args()
 
     # Parse dates
-    start_date = datetime.strptime(args.start, '%Y-%m-%d').date()
-    end_date = datetime.strptime(args.end, '%Y-%m-%d').date()
+    start_date = datetime.strptime(args.start, "%Y-%m-%d").date()
+    end_date = datetime.strptime(args.end, "%Y-%m-%d").date()
 
     if start_date > end_date:
         logger.error("Start date must be before end date")
         sys.exit(1)
 
     # Parse seed dates if provided
-    seed_start = datetime.strptime(args.seed_start, '%Y-%m-%d').date() if args.seed_start else None
-    seed_end = datetime.strptime(args.seed_end, '%Y-%m-%d').date() if args.seed_end else None
+    seed_start = datetime.strptime(args.seed_start, "%Y-%m-%d").date() if args.seed_start else None
+    seed_end = datetime.strptime(args.seed_end, "%Y-%m-%d").date() if args.seed_end else None
 
     # Run backtest
     backtest = HistoricalBacktest(
@@ -645,5 +630,5 @@ def main():
     backtest.run()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

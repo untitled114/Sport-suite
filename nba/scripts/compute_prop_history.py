@@ -36,39 +36,44 @@ import math
 import os
 import sys
 from collections import defaultdict
-from datetime import datetime, date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 import psycopg2
 from psycopg2.extras import execute_values
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Project paths
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-LOG_DIR = PROJECT_ROOT / 'nba' / 'scripts' / 'logs'
+LOG_DIR = PROJECT_ROOT / "nba" / "scripts" / "logs"
 
 # Database configuration (matches JSONCalibrator pattern)
 DB_INTELLIGENCE = {
-    'host': os.getenv('NBA_INT_DB_HOST', 'localhost'),
-    'port': int(os.getenv('NBA_INT_DB_PORT', 5539)),
-    'user': os.getenv('NBA_INT_DB_USER', os.getenv('NBA_DB_USER', os.getenv('DB_USER', 'nba_user'))),
-    'password': os.getenv('NBA_INT_DB_PASSWORD', os.getenv('NBA_DB_PASSWORD', os.getenv('DB_PASSWORD'))),
-    'database': os.getenv('NBA_INT_DB_NAME', 'nba_intelligence')
+    "host": os.getenv("NBA_INT_DB_HOST", "localhost"),
+    "port": int(os.getenv("NBA_INT_DB_PORT", 5539)),
+    "user": os.getenv(
+        "NBA_INT_DB_USER", os.getenv("NBA_DB_USER", os.getenv("DB_USER", "nba_user"))
+    ),
+    "password": os.getenv(
+        "NBA_INT_DB_PASSWORD", os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
+    ),
+    "database": os.getenv("NBA_INT_DB_NAME", "nba_intelligence"),
 }
 
 DB_TEAM = {
-    'host': os.getenv('NBA_TEAM_DB_HOST', 'localhost'),
-    'port': int(os.getenv('NBA_TEAM_DB_PORT', 5538)),
-    'user': os.getenv('NBA_TEAM_DB_USER', os.getenv('NBA_DB_USER', os.getenv('DB_USER', 'nba_user'))),
-    'password': os.getenv('NBA_TEAM_DB_PASSWORD', os.getenv('NBA_DB_PASSWORD', os.getenv('DB_PASSWORD'))),
-    'database': os.getenv('NBA_TEAM_DB_NAME', 'nba_team')
+    "host": os.getenv("NBA_TEAM_DB_HOST", "localhost"),
+    "port": int(os.getenv("NBA_TEAM_DB_PORT", 5538)),
+    "user": os.getenv(
+        "NBA_TEAM_DB_USER", os.getenv("NBA_DB_USER", os.getenv("DB_USER", "nba_user"))
+    ),
+    "password": os.getenv(
+        "NBA_TEAM_DB_PASSWORD", os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
+    ),
+    "database": os.getenv("NBA_TEAM_DB_NAME", "nba_team"),
 }
 
 
@@ -80,17 +85,13 @@ class PropHistoryLearner:
     """
 
     # Configuration constants (matching JSONCalibrator style)
-    PRIOR_HIT_RATE = 0.50          # Bayesian prior (50% baseline)
-    PRIOR_STRENGTH = 10            # Equivalent to 10 observations for shrinkage
-    EMA_ALPHA = 0.15               # Exponential decay for recency weighting
-    DEFAULT_LOOKBACK = 35          # Default lookback for incremental mode
-    MIN_PROPS_FOR_UPDATE = 1       # Minimum recent props to trigger update
+    PRIOR_HIT_RATE = 0.50  # Bayesian prior (50% baseline)
+    PRIOR_STRENGTH = 10  # Equivalent to 10 observations for shrinkage
+    EMA_ALPHA = 0.15  # Exponential decay for recency weighting
+    DEFAULT_LOOKBACK = 35  # Default lookback for incremental mode
+    MIN_PROPS_FOR_UPDATE = 1  # Minimum recent props to trigger update
 
-    def __init__(
-        self,
-        lookback_days: int = None,
-        player_filter: Optional[str] = None
-    ):
+    def __init__(self, lookback_days: int = None, player_filter: Optional[str] = None):
         """
         Initialize PropHistoryLearner.
 
@@ -235,18 +236,22 @@ class PropHistoryLearner:
                 if (player_name, stat_type) not in players:
                     continue
 
-                props.append({
-                    'player_name': player_name,
-                    'stat_type': stat_type,
-                    'line': float(row[2]),
-                    'actual_value': float(row[3]),
-                    'is_home': row[4],
-                    'opponent_team': row[5],
-                    'game_date': row[6],
-                    'hit': float(row[3]) > float(row[2])  # OVER hit
-                })
+                props.append(
+                    {
+                        "player_name": player_name,
+                        "stat_type": stat_type,
+                        "line": float(row[2]),
+                        "actual_value": float(row[3]),
+                        "is_home": row[4],
+                        "opponent_team": row[5],
+                        "game_date": row[6],
+                        "hit": float(row[3]) > float(row[2]),  # OVER hit
+                    }
+                )
 
-        logger.info(f"Loaded {len(props)} total props (full history for {len(players)} player/stat combos)")
+        logger.info(
+            f"Loaded {len(props)} total props (full history for {len(players)} player/stat combos)"
+        )
         return props
 
     @staticmethod
@@ -291,7 +296,7 @@ class PropHistoryLearner:
         for i, p in enumerate(recent):
             weight = (1 - self.EMA_ALPHA) ** i
             weights.append(weight)
-            hits.append(1 if p['hit'] else 0)
+            hits.append(1 if p["hit"] else 0)
 
         total_weight = sum(weights)
         if total_weight == 0:
@@ -307,10 +312,10 @@ class PropHistoryLearner:
 
         # Current streak (most recent first)
         consecutive = 0
-        current_is_over = props[0]['hit'] if props else None
+        current_is_over = props[0]["hit"] if props else None
 
         for p in props:
-            if p['hit'] == current_is_over:
+            if p["hit"] == current_is_over:
                 consecutive += 1
             else:
                 break
@@ -325,7 +330,7 @@ class PropHistoryLearner:
         current_under_streak = 0
 
         for p in reversed(props):
-            if p['hit']:
+            if p["hit"]:
                 current_over_streak += 1
                 current_under_streak = 0
                 max_overs = max(max_overs, current_over_streak)
@@ -342,14 +347,14 @@ class PropHistoryLearner:
         if not props:
             return {}
 
-        dates = sorted(set(p['game_date'] for p in props))
+        dates = sorted(set(p["game_date"] for p in props))
         rest_days = {}
 
         for i, d in enumerate(dates):
             if i == 0:
                 rest_days[d] = 3
             else:
-                delta = (d - dates[i-1]).days
+                delta = (d - dates[i - 1]).days
                 rest_days[d] = delta - 1
 
         return rest_days
@@ -362,45 +367,41 @@ class PropHistoryLearner:
         return game_date.year
 
     def _compute_player_history(
-        self,
-        player_name: str,
-        stat_type: str,
-        props: List[dict],
-        current_date: date
+        self, player_name: str, stat_type: str, props: List[dict], current_date: date
     ) -> List[dict]:
         """Compute prop_performance_history records for one player/stat_type."""
         if not props:
             return []
 
         # Sort chronologically
-        props = sorted(props, key=lambda x: x['game_date'])
+        props = sorted(props, key=lambda x: x["game_date"])
 
         # Calculate rest days
         rest_days = self._calculate_rest_days(props)
 
         # Enrich props with context
         for p in props:
-            p['rest_days'] = rest_days.get(p['game_date'], 2)
-            p['is_b2b'] = p['rest_days'] == 0
-            p['is_rested'] = p['rest_days'] >= 2
+            p["rest_days"] = rest_days.get(p["game_date"], 2)
+            p["is_b2b"] = p["rest_days"] == 0
+            p["is_rested"] = p["rest_days"] >= 2
 
-            opp = p.get('opponent_team')
+            opp = p.get("opponent_team")
             if opp and opp in self._defense_rankings:
                 rank = self._defense_rankings[opp]
-                p['vs_top10_def'] = rank <= 10
-                p['vs_bottom10_def'] = rank >= 21
+                p["vs_top10_def"] = rank <= 10
+                p["vs_bottom10_def"] = rank >= 21
             else:
-                p['vs_top10_def'] = False
-                p['vs_bottom10_def'] = False
+                p["vs_top10_def"] = False
+                p["vs_bottom10_def"] = False
 
         # Group by line_center
         by_line = defaultdict(list)
         for p in props:
-            line_center = self._round_to_half(p['line'])
+            line_center = self._round_to_half(p["line"])
             by_line[line_center].append(p)
 
         # Calculate season average
-        all_values = [p['actual_value'] for p in props]
+        all_values = [p["actual_value"] for p in props]
         season_avg = sum(all_values) / len(all_values) if all_values else 0
 
         all_lines = sorted(by_line.keys())
@@ -409,11 +410,11 @@ class PropHistoryLearner:
 
         for line_center, line_props in by_line.items():
             # Most recent first for recency calculations
-            line_props_recent = sorted(line_props, key=lambda x: x['game_date'], reverse=True)
+            line_props_recent = sorted(line_props, key=lambda x: x["game_date"], reverse=True)
 
             # Basic counts
             total = len(line_props)
-            hits = sum(1 for p in line_props if p['hit'])
+            hits = sum(1 for p in line_props if p["hit"])
 
             # L20 and L10
             l20_props = line_props_recent[:20]
@@ -427,12 +428,12 @@ class PropHistoryLearner:
             hit_rate_l10 = self._calculate_ema_hit_rate(l10_props, 10)
 
             # Context splits
-            home_props = [p for p in line_props if p.get('is_home')]
-            away_props = [p for p in line_props if not p.get('is_home')]
-            top10_props = [p for p in line_props if p.get('vs_top10_def')]
-            bottom10_props = [p for p in line_props if p.get('vs_bottom10_def')]
-            rested_props = [p for p in line_props if p.get('is_rested')]
-            b2b_props = [p for p in line_props if p.get('is_b2b')]
+            home_props = [p for p in line_props if p.get("is_home")]
+            away_props = [p for p in line_props if not p.get("is_home")]
+            top10_props = [p for p in line_props if p.get("vs_top10_def")]
+            bottom10_props = [p for p in line_props if p.get("vs_bottom10_def")]
+            rested_props = [p for p in line_props if p.get("is_rested")]
+            b2b_props = [p for p in line_props if p.get("is_b2b")]
 
             n_home = len(home_props)
             n_away = len(away_props)
@@ -441,42 +442,54 @@ class PropHistoryLearner:
             n_rested = len(rested_props)
             n_b2b = len(b2b_props)
 
-            hit_rate_home = self._bayesian_hit_rate(
-                sum(1 for p in home_props if p['hit']), n_home
-            ) if n_home > 0 else None
+            hit_rate_home = (
+                self._bayesian_hit_rate(sum(1 for p in home_props if p["hit"]), n_home)
+                if n_home > 0
+                else None
+            )
 
-            hit_rate_away = self._bayesian_hit_rate(
-                sum(1 for p in away_props if p['hit']), n_away
-            ) if n_away > 0 else None
+            hit_rate_away = (
+                self._bayesian_hit_rate(sum(1 for p in away_props if p["hit"]), n_away)
+                if n_away > 0
+                else None
+            )
 
-            hit_rate_top10 = self._bayesian_hit_rate(
-                sum(1 for p in top10_props if p['hit']), n_top10
-            ) if n_top10 > 0 else None
+            hit_rate_top10 = (
+                self._bayesian_hit_rate(sum(1 for p in top10_props if p["hit"]), n_top10)
+                if n_top10 > 0
+                else None
+            )
 
-            hit_rate_bottom10 = self._bayesian_hit_rate(
-                sum(1 for p in bottom10_props if p['hit']), n_bottom10
-            ) if n_bottom10 > 0 else None
+            hit_rate_bottom10 = (
+                self._bayesian_hit_rate(sum(1 for p in bottom10_props if p["hit"]), n_bottom10)
+                if n_bottom10 > 0
+                else None
+            )
 
-            hit_rate_rested = self._bayesian_hit_rate(
-                sum(1 for p in rested_props if p['hit']), n_rested
-            ) if n_rested > 0 else None
+            hit_rate_rested = (
+                self._bayesian_hit_rate(sum(1 for p in rested_props if p["hit"]), n_rested)
+                if n_rested > 0
+                else None
+            )
 
-            hit_rate_b2b = self._bayesian_hit_rate(
-                sum(1 for p in b2b_props if p['hit']), n_b2b
-            ) if n_b2b > 0 else None
+            hit_rate_b2b = (
+                self._bayesian_hit_rate(sum(1 for p in b2b_props if p["hit"]), n_b2b)
+                if n_b2b > 0
+                else None
+            )
 
             # Line positioning
             line_vs_avg = line_center - season_avg
             line_percentile = all_lines.index(line_center) / max(len(all_lines) - 1, 1)
 
             # Recency
-            most_recent = line_props_recent[0]['game_date'] if line_props_recent else None
+            most_recent = line_props_recent[0]["game_date"] if line_props_recent else None
             days_since_last_prop = (current_date - most_recent).days if most_recent else None
 
             last_hit_date = None
             for p in line_props_recent:
-                if p['hit']:
-                    last_hit_date = p['game_date']
+                if p["hit"]:
+                    last_hit_date = p["game_date"]
                     break
             days_since_last_hit = (current_date - last_hit_date).days if last_hit_date else None
 
@@ -487,39 +500,43 @@ class PropHistoryLearner:
             sample_quality = self._wilson_score_lower(hits, total)
             bayesian_weight = self._calculate_bayesian_weight(total)
 
-            records.append({
-                'player_name': player_name,
-                'stat_type': stat_type,
-                'line_center': line_center,
-                'total_props': total,
-                'props_l20': l20_count,
-                'props_l10': l10_count,
-                'hit_rate_all': round(hit_rate_all, 4),
-                'hit_rate_l20': round(hit_rate_l20, 4),
-                'hit_rate_l10': round(hit_rate_l10, 4),
-                'hit_rate_home': round(hit_rate_home, 4) if hit_rate_home else None,
-                'hit_rate_away': round(hit_rate_away, 4) if hit_rate_away else None,
-                'hit_rate_vs_top10_def': round(hit_rate_top10, 4) if hit_rate_top10 else None,
-                'hit_rate_vs_bottom10_def': round(hit_rate_bottom10, 4) if hit_rate_bottom10 else None,
-                'hit_rate_rested': round(hit_rate_rested, 4) if hit_rate_rested else None,
-                'hit_rate_b2b': round(hit_rate_b2b, 4) if hit_rate_b2b else None,
-                'n_home': n_home,
-                'n_away': n_away,
-                'n_vs_top10_def': n_top10,
-                'n_vs_bottom10_def': n_bottom10,
-                'n_rested': n_rested,
-                'n_b2b': n_b2b,
-                'line_vs_season_avg': round(line_vs_avg, 2),
-                'line_percentile': round(line_percentile, 4),
-                'days_since_last_prop': days_since_last_prop,
-                'days_since_last_hit': days_since_last_hit,
-                'consecutive_overs': consecutive,
-                'max_streak_overs': max_overs,
-                'max_streak_unders': max_unders,
-                'sample_quality_score': round(sample_quality, 4),
-                'bayesian_prior_weight': round(bayesian_weight, 4),
-                'season': season
-            })
+            records.append(
+                {
+                    "player_name": player_name,
+                    "stat_type": stat_type,
+                    "line_center": line_center,
+                    "total_props": total,
+                    "props_l20": l20_count,
+                    "props_l10": l10_count,
+                    "hit_rate_all": round(hit_rate_all, 4),
+                    "hit_rate_l20": round(hit_rate_l20, 4),
+                    "hit_rate_l10": round(hit_rate_l10, 4),
+                    "hit_rate_home": round(hit_rate_home, 4) if hit_rate_home else None,
+                    "hit_rate_away": round(hit_rate_away, 4) if hit_rate_away else None,
+                    "hit_rate_vs_top10_def": round(hit_rate_top10, 4) if hit_rate_top10 else None,
+                    "hit_rate_vs_bottom10_def": (
+                        round(hit_rate_bottom10, 4) if hit_rate_bottom10 else None
+                    ),
+                    "hit_rate_rested": round(hit_rate_rested, 4) if hit_rate_rested else None,
+                    "hit_rate_b2b": round(hit_rate_b2b, 4) if hit_rate_b2b else None,
+                    "n_home": n_home,
+                    "n_away": n_away,
+                    "n_vs_top10_def": n_top10,
+                    "n_vs_bottom10_def": n_bottom10,
+                    "n_rested": n_rested,
+                    "n_b2b": n_b2b,
+                    "line_vs_season_avg": round(line_vs_avg, 2),
+                    "line_percentile": round(line_percentile, 4),
+                    "days_since_last_prop": days_since_last_prop,
+                    "days_since_last_hit": days_since_last_hit,
+                    "consecutive_overs": consecutive,
+                    "max_streak_overs": max_overs,
+                    "max_streak_unders": max_unders,
+                    "sample_quality_score": round(sample_quality, 4),
+                    "bayesian_prior_weight": round(bayesian_weight, 4),
+                    "season": season,
+                }
+            )
 
         return records
 
@@ -529,21 +546,45 @@ class PropHistoryLearner:
             return 0
 
         columns = [
-            'player_name', 'stat_type', 'line_center', 'total_props', 'props_l20',
-            'props_l10', 'hit_rate_all', 'hit_rate_l20', 'hit_rate_l10',
-            'hit_rate_home', 'hit_rate_away', 'hit_rate_vs_top10_def',
-            'hit_rate_vs_bottom10_def', 'hit_rate_rested', 'hit_rate_b2b',
-            'n_home', 'n_away', 'n_vs_top10_def', 'n_vs_bottom10_def',
-            'n_rested', 'n_b2b', 'line_vs_season_avg', 'line_percentile',
-            'days_since_last_prop', 'days_since_last_hit', 'consecutive_overs',
-            'max_streak_overs', 'max_streak_unders', 'sample_quality_score',
-            'bayesian_prior_weight', 'season'
+            "player_name",
+            "stat_type",
+            "line_center",
+            "total_props",
+            "props_l20",
+            "props_l10",
+            "hit_rate_all",
+            "hit_rate_l20",
+            "hit_rate_l10",
+            "hit_rate_home",
+            "hit_rate_away",
+            "hit_rate_vs_top10_def",
+            "hit_rate_vs_bottom10_def",
+            "hit_rate_rested",
+            "hit_rate_b2b",
+            "n_home",
+            "n_away",
+            "n_vs_top10_def",
+            "n_vs_bottom10_def",
+            "n_rested",
+            "n_b2b",
+            "line_vs_season_avg",
+            "line_percentile",
+            "days_since_last_prop",
+            "days_since_last_hit",
+            "consecutive_overs",
+            "max_streak_overs",
+            "max_streak_unders",
+            "sample_quality_score",
+            "bayesian_prior_weight",
+            "season",
         ]
 
         values = [tuple(r[col] for col in columns) for r in records]
 
-        update_cols = [c for c in columns if c not in ('player_name', 'stat_type', 'line_center', 'season')]
-        update_clause = ', '.join(f"{c} = EXCLUDED.{c}" for c in update_cols)
+        update_cols = [
+            c for c in columns if c not in ("player_name", "stat_type", "line_center", "season")
+        ]
+        update_clause = ", ".join(f"{c} = EXCLUDED.{c}" for c in update_cols)
 
         query = f"""
             INSERT INTO prop_performance_history ({', '.join(columns)}, last_updated)
@@ -552,7 +593,7 @@ class PropHistoryLearner:
             DO UPDATE SET {update_clause}, last_updated = CURRENT_TIMESTAMP
         """
 
-        template = '(' + ', '.join(['%s'] * len(columns)) + ', CURRENT_TIMESTAMP)'
+        template = "(" + ", ".join(["%s"] * len(columns)) + ", CURRENT_TIMESTAMP)"
 
         with conn.cursor() as cur:
             execute_values(cur, query, values, template=template)
@@ -582,19 +623,19 @@ class PropHistoryLearner:
 
             if not players:
                 logger.warning("No players to update")
-                return {'status': 'no_data', 'records': 0}
+                return {"status": "no_data", "records": 0}
 
             # Load FULL history for these players (critical for EMA accuracy)
             props = self._load_full_history_for_players(conn, players)
 
             if not props:
                 logger.warning("No props found")
-                return {'status': 'no_props', 'records': 0}
+                return {"status": "no_props", "records": 0}
 
             # Group by player/stat_type
             by_player_stat = defaultdict(list)
             for p in props:
-                key = (p['player_name'], p['stat_type'])
+                key = (p["player_name"], p["stat_type"])
                 by_player_stat[key].append(p)
 
             # Process each player/stat_type
@@ -614,8 +655,10 @@ class PropHistoryLearner:
             if dry_run:
                 logger.info("DRY RUN - not writing to database")
                 for r in all_records[:3]:
-                    logger.info(f"  Sample: {r['player_name']} {r['stat_type']} @ {r['line_center']}: "
-                               f"hit_rate={r['hit_rate_all']:.1%} (n={r['total_props']})")
+                    logger.info(
+                        f"  Sample: {r['player_name']} {r['stat_type']} @ {r['line_center']}: "
+                        f"hit_rate={r['hit_rate_all']:.1%} (n={r['total_props']})"
+                    )
             else:
                 count = self._upsert_records(conn, all_records)
                 self._records_upserted = count
@@ -623,17 +666,17 @@ class PropHistoryLearner:
 
             # Summary
             if all_records:
-                avg_total = sum(r['total_props'] for r in all_records) / len(all_records)
-                high_quality = sum(1 for r in all_records if r['total_props'] >= 10)
+                avg_total = sum(r["total_props"] for r in all_records) / len(all_records)
+                high_quality = sum(1 for r in all_records if r["total_props"] >= 10)
                 logger.info(f"Average props per line: {avg_total:.1f}")
                 logger.info(f"High-quality records (n>=10): {high_quality}")
 
             return {
-                'status': 'success',
-                'players_updated': len(players),
-                'records_computed': self._records_processed,
-                'records_upserted': self._records_upserted,
-                'dry_run': dry_run
+                "status": "success",
+                "players_updated": len(players),
+                "records_computed": self._records_processed,
+                "records_upserted": self._records_upserted,
+                "dry_run": dry_run,
             }
 
         except Exception as e:
@@ -662,10 +705,10 @@ class PropHistoryLearner:
                 """)
                 row = cur.fetchone()
                 return {
-                    'total_records': row[0],
-                    'unique_players': row[1],
-                    'last_updated': row[2].isoformat() if row[2] else None,
-                    'avg_props_per_record': round(row[3], 1) if row[3] else 0
+                    "total_records": row[0],
+                    "unique_players": row[1],
+                    "last_updated": row[2].isoformat() if row[2] else None,
+                    "avg_props_per_record": round(row[3], 1) if row[3] else 0,
                 }
         finally:
             if conn:
@@ -673,18 +716,19 @@ class PropHistoryLearner:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Prop History Learner')
-    parser.add_argument('--player', type=str, help='Process single player')
-    parser.add_argument('--days', type=int, default=None,
-                        help='Lookback days for incremental mode')
-    parser.add_argument('--incremental', action='store_true',
-                        help='Incremental update (default 7-day lookback for player filter)')
-    parser.add_argument('--dry-run', action='store_true',
-                        help='Calculate but do not write to database')
-    parser.add_argument('--season', type=int,
-                        help='Season year (for logging only)')
-    parser.add_argument('--status', action='store_true',
-                        help='Show table status and exit')
+    parser = argparse.ArgumentParser(description="Prop History Learner")
+    parser.add_argument("--player", type=str, help="Process single player")
+    parser.add_argument("--days", type=int, default=None, help="Lookback days for incremental mode")
+    parser.add_argument(
+        "--incremental",
+        action="store_true",
+        help="Incremental update (default 7-day lookback for player filter)",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Calculate but do not write to database"
+    )
+    parser.add_argument("--season", type=int, help="Season year (for logging only)")
+    parser.add_argument("--status", action="store_true", help="Show table status and exit")
     args = parser.parse_args()
 
     # Determine lookback
@@ -694,10 +738,7 @@ def main():
     elif args.days:
         lookback = args.days
 
-    learner = PropHistoryLearner(
-        lookback_days=lookback,
-        player_filter=args.player
-    )
+    learner = PropHistoryLearner(lookback_days=lookback, player_filter=args.player)
 
     if args.season:
         logger.info(f"Season: {args.season}")
@@ -712,10 +753,11 @@ def main():
 
     result = learner.update(dry_run=args.dry_run)
 
-    if result['status'] == 'success':
-        logger.info(f"Updated {result['players_updated']} players, "
-                   f"{result['records_upserted']} records")
+    if result["status"] == "success":
+        logger.info(
+            f"Updated {result['players_updated']} players, " f"{result['records_upserted']} records"
+        )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

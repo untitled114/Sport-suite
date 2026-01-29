@@ -6,44 +6,40 @@ Extracts features directly from player_game_logs table with EMA calculations.
 Used for production predictions on current season (2025-26).
 """
 
-import os
-import sys
-import pandas as pd
-import numpy as np
-import psycopg2
 import logging
-from datetime import datetime, timedelta
+import os
 import warnings
+from datetime import datetime, timedelta
+
+import numpy as np
+import pandas as pd
+import psycopg2
 
 # Suppress all pandas warnings about SQLAlchemy
-warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
-warnings.filterwarnings('ignore', message='pandas only supports SQLAlchemy')
+warnings.filterwarnings("ignore", category=UserWarning, module="pandas")
+warnings.filterwarnings("ignore", message="pandas only supports SQLAlchemy")
 
 # Set up logger
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)  # Only show warnings and errors
 
 # Import centralized database config
-# Note: Add nba directory to path if not already present
-_nba_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _nba_root not in sys.path:
-    sys.path.insert(0, _nba_root)
-
 try:
-    from config.database import (
-        get_players_db_config,
-        get_games_db_config,
-        get_team_db_config,
-        get_intelligence_db_config,
-        DB_DEFAULT_USER,
+    from nba.config.database import (
         DB_DEFAULT_PASSWORD,
+        DB_DEFAULT_USER,
+        get_games_db_config,
+        get_intelligence_db_config,
+        get_players_db_config,
+        get_team_db_config,
     )
+
     _USE_CENTRALIZED_CONFIG = True
 except ImportError:
     # Fallback to inline config if centralized module not available
     _USE_CENTRALIZED_CONFIG = False
-    DB_DEFAULT_USER = os.getenv('NBA_DB_USER', os.getenv('DB_USER', 'nba_user'))
-    DB_DEFAULT_PASSWORD = os.getenv('NBA_DB_PASSWORD', os.getenv('DB_PASSWORD'))
+    DB_DEFAULT_USER = os.getenv("NBA_DB_USER", os.getenv("DB_USER", "nba_user"))
+    DB_DEFAULT_PASSWORD = os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
 
 
 class LiveFeatureExtractor:
@@ -62,43 +58,43 @@ class LiveFeatureExtractor:
     else:
         # Fallback inline configs (legacy support)
         PLAYER_DB_CONFIG = {
-            'host': os.getenv('NBA_PLAYERS_DB_HOST', 'localhost'),
-            'port': int(os.getenv('NBA_PLAYERS_DB_PORT', 5536)),
-            'user': os.getenv('NBA_PLAYERS_DB_USER', DB_DEFAULT_USER),
-            'password': os.getenv('NBA_PLAYERS_DB_PASSWORD', DB_DEFAULT_PASSWORD),
-            'database': os.getenv('NBA_PLAYERS_DB_NAME', 'nba_players')
+            "host": os.getenv("NBA_PLAYERS_DB_HOST", "localhost"),
+            "port": int(os.getenv("NBA_PLAYERS_DB_PORT", 5536)),
+            "user": os.getenv("NBA_PLAYERS_DB_USER", DB_DEFAULT_USER),
+            "password": os.getenv("NBA_PLAYERS_DB_PASSWORD", DB_DEFAULT_PASSWORD),
+            "database": os.getenv("NBA_PLAYERS_DB_NAME", "nba_players"),
         }
         GAMES_DB_CONFIG = {
-            'host': os.getenv('NBA_GAMES_DB_HOST', 'localhost'),
-            'port': int(os.getenv('NBA_GAMES_DB_PORT', 5537)),
-            'user': os.getenv('NBA_GAMES_DB_USER', DB_DEFAULT_USER),
-            'password': os.getenv('NBA_GAMES_DB_PASSWORD', DB_DEFAULT_PASSWORD),
-            'database': os.getenv('NBA_GAMES_DB_NAME', 'nba_games')
+            "host": os.getenv("NBA_GAMES_DB_HOST", "localhost"),
+            "port": int(os.getenv("NBA_GAMES_DB_PORT", 5537)),
+            "user": os.getenv("NBA_GAMES_DB_USER", DB_DEFAULT_USER),
+            "password": os.getenv("NBA_GAMES_DB_PASSWORD", DB_DEFAULT_PASSWORD),
+            "database": os.getenv("NBA_GAMES_DB_NAME", "nba_games"),
         }
         TEAM_DB_CONFIG = {
-            'host': os.getenv('NBA_TEAM_DB_HOST', 'localhost'),
-            'port': int(os.getenv('NBA_TEAM_DB_PORT', 5538)),
-            'user': os.getenv('NBA_TEAM_DB_USER', DB_DEFAULT_USER),
-            'password': os.getenv('NBA_TEAM_DB_PASSWORD', DB_DEFAULT_PASSWORD),
-            'database': os.getenv('NBA_TEAM_DB_NAME', 'nba_team')
+            "host": os.getenv("NBA_TEAM_DB_HOST", "localhost"),
+            "port": int(os.getenv("NBA_TEAM_DB_PORT", 5538)),
+            "user": os.getenv("NBA_TEAM_DB_USER", DB_DEFAULT_USER),
+            "password": os.getenv("NBA_TEAM_DB_PASSWORD", DB_DEFAULT_PASSWORD),
+            "database": os.getenv("NBA_TEAM_DB_NAME", "nba_team"),
         }
         INTELLIGENCE_DB_CONFIG = {
-            'host': os.getenv('NBA_INT_DB_HOST', 'localhost'),
-            'port': int(os.getenv('NBA_INT_DB_PORT', 5539)),
-            'user': os.getenv('NBA_INT_DB_USER', DB_DEFAULT_USER),
-            'password': os.getenv('NBA_INT_DB_PASSWORD', DB_DEFAULT_PASSWORD),
-            'database': os.getenv('NBA_INT_DB_NAME', 'nba_intelligence')
+            "host": os.getenv("NBA_INT_DB_HOST", "localhost"),
+            "port": int(os.getenv("NBA_INT_DB_PORT", 5539)),
+            "user": os.getenv("NBA_INT_DB_USER", DB_DEFAULT_USER),
+            "password": os.getenv("NBA_INT_DB_PASSWORD", DB_DEFAULT_PASSWORD),
+            "database": os.getenv("NBA_INT_DB_NAME", "nba_intelligence"),
         }
 
     # Team abbreviation mapping (props -> database)
     TEAM_ABBREV_MAP = {
-        'NO': 'NOP',     # New Orleans Pelicans
-        'SA': 'SAS',     # San Antonio Spurs
-        'UTAH': 'UTA',   # Utah Jazz
-        'GS': 'GSW',     # Golden State Warriors
-        'NY': 'NYK',     # New York Knicks
-        'BKN': 'BKN',    # Brooklyn Nets (sometimes BRK)
-        'BRK': 'BKN',    # Brooklyn Nets
+        "NO": "NOP",  # New Orleans Pelicans
+        "SA": "SAS",  # San Antonio Spurs
+        "UTAH": "UTA",  # Utah Jazz
+        "GS": "GSW",  # Golden State Warriors
+        "NY": "NYK",  # New York Knicks
+        "BKN": "BKN",  # Brooklyn Nets (sometimes BRK)
+        "BRK": "BKN",  # Brooklyn Nets
     }
 
     @staticmethod
@@ -122,22 +118,23 @@ class LiveFeatureExtractor:
             return name
 
         # Remove extra whitespace
-        name = ' '.join(name.split())
+        name = " ".join(name.split())
 
         # Remove accented characters (normalize to ASCII)
         # Common accents in NBA names: ć, č, š, ž, ñ, é, ö, ü, etc.
         import unicodedata
-        name = unicodedata.normalize('NFD', name)
-        name = ''.join(char for char in name if unicodedata.category(char) != 'Mn')
-        name = unicodedata.normalize('NFC', name)
+
+        name = unicodedata.normalize("NFD", name)
+        name = "".join(char for char in name if unicodedata.category(char) != "Mn")
+        name = unicodedata.normalize("NFC", name)
 
         # Remove common suffixes
         # Order matters: try with periods first, then without
-        suffixes = [' Jr.', ' Sr.', ' II.', ' III.', ' IV.', ' Jr', ' Sr', ' II', ' III', ' IV']
+        suffixes = [" Jr.", " Sr.", " II.", " III.", " IV.", " Jr", " Sr", " II", " III", " IV"]
 
         for suffix in suffixes:
             if name.endswith(suffix):
-                name = name[:-len(suffix)].strip()
+                name = name[: -len(suffix)].strip()
                 break
 
         return name
@@ -214,9 +211,11 @@ class LiveFeatureExtractor:
         import numpy as np
 
         # Filter out NaN/None values to prevent NaN propagation
-        if hasattr(values, 'tolist'):
+        if hasattr(values, "tolist"):
             values = values.tolist()
-        valid_values = [v for v in values if v is not None and not (isinstance(v, float) and np.isnan(v))]
+        valid_values = [
+            v for v in values if v is not None and not (isinstance(v, float) and np.isnan(v))
+        ]
 
         if len(valid_values) == 0:
             return 0.0
@@ -315,17 +314,17 @@ class LiveFeatureExtractor:
             if len(df) >= 5:
                 # Sufficient data - use rolling averages
                 stats = {
-                    'pace': float(df['pace'].mean()),
-                    'off_rating': float(df['offensive_rating'].mean()),
-                    'def_rating': float(df['defensive_rating'].mean())
+                    "pace": float(df["pace"].mean()),
+                    "off_rating": float(df["offensive_rating"].mean()),
+                    "def_rating": float(df["defensive_rating"].mean()),
                 }
                 return stats
             elif len(df) > 0:
                 # Some data but < 5 games - use what we have (no warning needed)
                 stats = {
-                    'pace': float(df['pace'].mean()),
-                    'off_rating': float(df['offensive_rating'].mean()),
-                    'def_rating': float(df['defensive_rating'].mean())
+                    "pace": float(df["pace"].mean()),
+                    "off_rating": float(df["offensive_rating"].mean()),
+                    "def_rating": float(df["defensive_rating"].mean()),
                 }
                 return stats
         except Exception as e:
@@ -347,20 +346,16 @@ class LiveFeatureExtractor:
                 if result and result[0] is not None:
                     # Successfully found season averages (no warning needed)
                     return {
-                        'pace': float(result[0]),
-                        'off_rating': float(result[1]) if result[1] else 110.0,
-                        'def_rating': float(result[2]) if result[2] else 110.0
+                        "pace": float(result[0]),
+                        "off_rating": float(result[1]) if result[1] else 110.0,
+                        "def_rating": float(result[2]) if result[2] else 110.0,
                     }
         except Exception as e:
             logger.debug(f"Error querying team_season_stats for {team_abbrev}: {e}")
 
         # Last resort - return league average defaults (no warning, this is expected for some teams)
         logger.debug(f"Using league defaults for {team_abbrev}")
-        return {
-            'pace': 98.0,
-            'off_rating': 110.0,
-            'def_rating': 110.0
-        }
+        return {"pace": 98.0, "off_rating": 110.0, "def_rating": 110.0}
 
     def get_recent_games(self, player_name, as_of_date, n_games=20, min_games_threshold=18):
         """
@@ -415,9 +410,7 @@ class LiveFeatureExtractor:
         """
 
         current_games = pd.read_sql_query(
-            current_season_query,
-            self.conn,
-            params=(player_name, as_of_date, n_games)
+            current_season_query, self.conn, params=(player_name, as_of_date, n_games)
         )
         current_games = self._dedupe_and_sort_games(current_games)
 
@@ -425,7 +418,7 @@ class LiveFeatureExtractor:
 
         # If we have enough games, return immediately
         if current_count >= n_games:
-            return current_games.sort_values('game_date')
+            return current_games.sort_values("game_date")
 
         # If we're close enough to threshold, return what we have
         if current_count >= min_games_threshold:
@@ -433,7 +426,7 @@ class LiveFeatureExtractor:
                 f"{player_name}: {current_count}/{n_games} games "
                 f"(sufficient, threshold={min_games_threshold})"
             )
-            return current_games.sort_values('game_date')
+            return current_games.sort_values("game_date")
 
         # Calculate EXACT deficit to reach n_games
         deficit = n_games - current_count
@@ -482,12 +475,7 @@ class LiveFeatureExtractor:
         previous_games = pd.read_sql_query(
             previous_season_query,
             self.conn,
-            params=(
-                player_name,
-                prev_season_label,
-                as_of_date.date(),
-                deficit
-            )
+            params=(player_name, prev_season_label, as_of_date.date(), deficit),
         )
         previous_games = self._dedupe_and_sort_games(previous_games)
 
@@ -510,10 +498,10 @@ class LiveFeatureExtractor:
         # Combine games: previous season games first (oldest), then current season
         if previous_count > 0:
             combined_games = pd.concat([previous_games, current_games], ignore_index=True)
-            return combined_games.sort_values('game_date')
+            return combined_games.sort_values("game_date")
         else:
             # No previous season games available, return current only
-            return current_games.sort_values('game_date')
+            return current_games.sort_values("game_date")
 
     def _dedupe_and_sort_games(self, games_df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -531,16 +519,19 @@ class LiveFeatureExtractor:
         if games_df is None or games_df.empty:
             return games_df
 
-        ordering = [col for col in ['game_date', 'minutes_played', 'points', 'rebounds', 'assists', 'game_id'] if col in games_df.columns]
-        ascending = [False if col != 'game_id' else True for col in ordering]
+        ordering = [
+            col
+            for col in ["game_date", "minutes_played", "points", "rebounds", "assists", "game_id"]
+            if col in games_df.columns
+        ]
+        ascending = [False if col != "game_id" else True for col in ordering]
 
-        ordered = games_df.sort_values(by=ordering, ascending=ascending, kind='mergesort')
-        subset = ['game_date', 'game_id'] if 'game_id' in games_df.columns else ['game_date']
-        deduped = ordered.drop_duplicates(subset=subset, keep='first')
-        return deduped.sort_values('game_date').reset_index(drop=True)
+        ordered = games_df.sort_values(by=ordering, ascending=ascending, kind="mergesort")
+        subset = ["game_date", "game_id"] if "game_id" in games_df.columns else ["game_date"]
+        deduped = ordered.drop_duplicates(subset=subset, keep="first")
+        return deduped.sort_values("game_date").reset_index(drop=True)
 
-
-    def get_h2h_stats(self, player_name, opponent_team, as_of_date, stat_type='points'):
+    def get_h2h_stats(self, player_name, opponent_team, as_of_date, stat_type="points"):
         """
         Get player's head-to-head statistics vs a specific opponent team.
 
@@ -558,13 +549,13 @@ class LiveFeatureExtractor:
 
         # Map stat type to column name
         stat_column_map = {
-            'points': 'points',
-            'rebounds': 'rebounds',
-            'assists': 'assists',
-            'threes': 'three_pointers_made'
+            "points": "points",
+            "rebounds": "rebounds",
+            "assists": "assists",
+            "threes": "three_pointers_made",
         }
 
-        stat_column = stat_column_map.get(stat_type, 'points')
+        stat_column = stat_column_map.get(stat_type, "points")
 
         # Query all H2H games before as_of_date
         query = f"""
@@ -580,42 +571,36 @@ class LiveFeatureExtractor:
         """
 
         try:
-            df = pd.read_sql_query(query, self.conn, params=(player_name, opponent_team, as_of_date))
+            df = pd.read_sql_query(
+                query, self.conn, params=(player_name, opponent_team, as_of_date)
+            )
 
             if len(df) == 0:
                 # No H2H history - return None to signal use of player average
-                return {
-                    'h2h_games': 0.0,
-                    'h2h_avg_stat': None,
-                    'h2h_L3_stat': None
-                }
+                return {"h2h_games": 0.0, "h2h_avg_stat": None, "h2h_L3_stat": None}
 
             # Calculate H2H stats
             h2h_games = len(df)
-            h2h_avg_stat = float(df['stat_value'].mean())
+            h2h_avg_stat = float(df["stat_value"].mean())
 
             # Last 3 H2H games (if available)
             if len(df) >= 3:
-                h2h_L3_stat = float(df.head(3)['stat_value'].mean())
+                h2h_L3_stat = float(df.head(3)["stat_value"].mean())
             else:
                 # Use whatever H2H data we have
                 h2h_L3_stat = h2h_avg_stat
 
             return {
-                'h2h_games': float(h2h_games),
-                'h2h_avg_stat': h2h_avg_stat,
-                'h2h_L3_stat': h2h_L3_stat
+                "h2h_games": float(h2h_games),
+                "h2h_avg_stat": h2h_avg_stat,
+                "h2h_L3_stat": h2h_L3_stat,
             }
 
         except Exception as e:
             logger.debug(f"Error querying H2H stats: {e}")
-            return {
-                'h2h_games': 0.0,
-                'h2h_avg_stat': None,
-                'h2h_L3_stat': None
-            }
+            return {"h2h_games": 0.0, "h2h_avg_stat": None, "h2h_L3_stat": None}
 
-    def get_days_since_milestone(self, player_name, as_of_date, stat='points', threshold=30):
+    def get_days_since_milestone(self, player_name, as_of_date, stat="points", threshold=30):
         """
         Calculate days since player last achieved milestone (e.g., 30+ points).
         Returns days since milestone, or 999 if never achieved.
@@ -651,7 +636,7 @@ class LiveFeatureExtractor:
                 if result:
                     milestone_date = result[0]
                     # Handle both datetime.date and pandas.Timestamp
-                    if hasattr(as_of_date, 'date'):
+                    if hasattr(as_of_date, "date"):
                         as_of_date_obj = as_of_date.date()
                     else:
                         as_of_date_obj = as_of_date
@@ -664,7 +649,7 @@ class LiveFeatureExtractor:
             logger.debug(f"Error querying milestone for {player_name}: {e}")
             return 999.0
 
-    def get_momentum_short_term(self, recent_games, stat_type='points'):
+    def get_momentum_short_term(self, recent_games, stat_type="points"):
         """
         Calculate short-term momentum: (L3 avg - L10 avg) / L10 avg
         Positive = heating up, Negative = cooling down
@@ -732,11 +717,11 @@ class LiveFeatureExtractor:
             df = pd.read_sql_query(query, self.conn, params=(player_name, as_of_date))
 
             if len(df) == 0:
-                return {'home': 0.0, 'away': 0.0}
+                return {"home": 0.0, "away": 0.0}
 
             # Calculate streaks separately for home and away
-            home_games = df[df['is_home'] == True].sort_values('game_date', ascending=False)
-            away_games = df[df['is_home'] == False].sort_values('game_date', ascending=False)
+            home_games = df[df["is_home"]].sort_values("game_date", ascending=False)
+            away_games = df[~df["is_home"]].sort_values("game_date", ascending=False)
 
             def calculate_streak(games_df):
                 """Calculate streak from most recent games"""
@@ -747,8 +732,8 @@ class LiveFeatureExtractor:
                 last_result = None  # 'W' or 'L'
 
                 for _, row in games_df.iterrows():
-                    is_win = row['plus_minus'] > 0
-                    current_result = 'W' if is_win else 'L'
+                    is_win = row["plus_minus"] > 0
+                    current_result = "W" if is_win else "L"
 
                     if last_result is None:
                         # First game in streak
@@ -769,11 +754,11 @@ class LiveFeatureExtractor:
             home_streak = calculate_streak(home_games)
             away_streak = calculate_streak(away_games)
 
-            return {'home': home_streak, 'away': away_streak}
+            return {"home": home_streak, "away": away_streak}
 
         except Exception as e:
             logger.debug(f"Error calculating streaks for {player_name}: {e}")
-            return {'home': 0.0, 'away': 0.0}
+            return {"home": 0.0, "away": 0.0}
 
     def check_opponent_back_to_back(self, opponent_team, game_date):
         """
@@ -797,7 +782,7 @@ class LiveFeatureExtractor:
         yesterday = game_date - timedelta(days=1)
 
         # Handle both datetime.date and pandas.Timestamp
-        if hasattr(yesterday, 'date'):
+        if hasattr(yesterday, "date"):
             yesterday_date = yesterday.date()
         else:
             yesterday_date = yesterday
@@ -844,11 +829,13 @@ class LiveFeatureExtractor:
         """
 
         try:
-            df = pd.read_sql_query(query, self.games_conn, params=(opponent_team, as_of_date, window))
+            df = pd.read_sql_query(
+                query, self.games_conn, params=(opponent_team, as_of_date, window)
+            )
 
             if len(df) >= 3:
                 # Defensive rating is already per 100 possessions, convert to per possession
-                avg_def_rating = df['defensive_rating'].mean()
+                avg_def_rating = df["defensive_rating"].mean()
                 return float(avg_def_rating / 100.0)  # Convert 110.0 → 1.10
             else:
                 # Not enough data, use season average
@@ -912,16 +899,16 @@ class LiveFeatureExtractor:
             df = pd.read_sql_query(query, self.games_conn, params=(opponent_team, as_of_date))
 
             if len(df) >= 2:
-                avg_def = float(df['defensive_rating'].mean())
+                avg_def = float(df["defensive_rating"].mean())
                 # Check for placeholder data (all values exactly 110.0)
                 # If there's no variance, fall back to season stats
-                if df['defensive_rating'].std() < 0.01:
+                if df["defensive_rating"].std() < 0.01:
                     pass  # Fall through to season stats fallback
                 else:
                     return avg_def
             elif len(df) == 1:
                 # Only 1 game - blend with league average (less confidence)
-                return float((df['defensive_rating'].iloc[0] + 110.0) / 2.0)
+                return float((df["defensive_rating"].iloc[0] + 110.0) / 2.0)
         except Exception as e:
             logger.debug(f"Error querying opponent L3 def rating for {opponent_team}: {e}")
 
@@ -945,8 +932,9 @@ class LiveFeatureExtractor:
 
         return 110.0  # League average fallback
 
-    def calculate_resistance_adjusted_stat(self, raw_L3_stat, opponent_team, as_of_date,
-                                           league_avg_def_rating=110.0):
+    def calculate_resistance_adjusted_stat(
+        self, raw_L3_stat, opponent_team, as_of_date, league_avg_def_rating=110.0
+    ):
         """
         Calculate resistance-adjusted L3 performance.
 
@@ -1015,36 +1003,36 @@ class LiveFeatureExtractor:
 
         # NBA arena coordinates (latitude, longitude)
         ARENA_COORDS = {
-            'ATL': (33.7573, -84.3963),   # State Farm Arena
-            'BOS': (42.3662, -71.0621),   # TD Garden
-            'BKN': (40.6826, -73.9754),   # Barclays Center
-            'CHA': (35.2251, -80.8392),   # Spectrum Center
-            'CHI': (41.8807, -87.6742),   # United Center
-            'CLE': (41.4965, -81.6882),   # Rocket Mortgage FieldHouse
-            'DAL': (32.7905, -96.8103),   # American Airlines Center
-            'DEN': (39.7487, -105.0077),  # Ball Arena
-            'DET': (42.6970, -83.2456),   # Little Caesars Arena
-            'GSW': (37.7680, -122.3877),  # Chase Center
-            'HOU': (29.7508, -95.3621),   # Toyota Center
-            'IND': (39.7640, -86.1555),   # Gainbridge Fieldhouse
-            'LAC': (34.0430, -118.2673),  # Crypto.com Arena
-            'LAL': (34.0430, -118.2673),  # Crypto.com Arena (same as LAC)
-            'MEM': (35.1382, -90.0505),   # FedExForum
-            'MIA': (25.7814, -80.1870),   # Kaseya Center
-            'MIL': (43.0451, -87.9172),   # Fiserv Forum
-            'MIN': (44.9795, -93.2761),   # Target Center
-            'NOP': (29.9490, -90.0821),   # Smoothie King Center
-            'NYK': (40.7505, -73.9934),   # Madison Square Garden
-            'OKC': (35.4634, -97.5151),   # Paycom Center
-            'ORL': (28.5392, -81.3839),   # Amway Center
-            'PHI': (39.9012, -75.1720),   # Wells Fargo Center
-            'PHX': (33.4457, -112.0712),  # Footprint Center
-            'POR': (45.5316, -122.6668),  # Moda Center
-            'SAC': (38.5802, -121.4997),  # Golden 1 Center
-            'SAS': (29.4270, -98.4375),   # Frost Bank Center
-            'TOR': (43.6435, -79.3791),   # Scotiabank Arena
-            'UTA': (40.7683, -111.9011),  # Delta Center
-            'WAS': (38.8981, -77.0209),   # Capital One Arena
+            "ATL": (33.7573, -84.3963),  # State Farm Arena
+            "BOS": (42.3662, -71.0621),  # TD Garden
+            "BKN": (40.6826, -73.9754),  # Barclays Center
+            "CHA": (35.2251, -80.8392),  # Spectrum Center
+            "CHI": (41.8807, -87.6742),  # United Center
+            "CLE": (41.4965, -81.6882),  # Rocket Mortgage FieldHouse
+            "DAL": (32.7905, -96.8103),  # American Airlines Center
+            "DEN": (39.7487, -105.0077),  # Ball Arena
+            "DET": (42.6970, -83.2456),  # Little Caesars Arena
+            "GSW": (37.7680, -122.3877),  # Chase Center
+            "HOU": (29.7508, -95.3621),  # Toyota Center
+            "IND": (39.7640, -86.1555),  # Gainbridge Fieldhouse
+            "LAC": (34.0430, -118.2673),  # Crypto.com Arena
+            "LAL": (34.0430, -118.2673),  # Crypto.com Arena (same as LAC)
+            "MEM": (35.1382, -90.0505),  # FedExForum
+            "MIA": (25.7814, -80.1870),  # Kaseya Center
+            "MIL": (43.0451, -87.9172),  # Fiserv Forum
+            "MIN": (44.9795, -93.2761),  # Target Center
+            "NOP": (29.9490, -90.0821),  # Smoothie King Center
+            "NYK": (40.7505, -73.9934),  # Madison Square Garden
+            "OKC": (35.4634, -97.5151),  # Paycom Center
+            "ORL": (28.5392, -81.3839),  # Amway Center
+            "PHI": (39.9012, -75.1720),  # Wells Fargo Center
+            "PHX": (33.4457, -112.0712),  # Footprint Center
+            "POR": (45.5316, -122.6668),  # Moda Center
+            "SAC": (38.5802, -121.4997),  # Golden 1 Center
+            "SAS": (29.4270, -98.4375),  # Frost Bank Center
+            "TOR": (43.6435, -79.3791),  # Scotiabank Arena
+            "UTA": (40.7683, -111.9011),  # Delta Center
+            "WAS": (38.8981, -77.0209),  # Capital One Arena
         }
 
         if player_team not in ARENA_COORDS or opponent_team not in ARENA_COORDS:
@@ -1060,7 +1048,7 @@ class LiveFeatureExtractor:
         # Haversine formula
         dlat = lat2 - lat1
         dlon = lon2 - lon1
-        a = np.sin(dlat/2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon/2)**2
+        a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
         c = 2 * np.arcsin(np.sqrt(a))
 
         # Earth radius in kilometers
@@ -1079,7 +1067,7 @@ class LiveFeatureExtractor:
         Returns:
             1.0 for high altitude venues, 0.0 otherwise
         """
-        HIGH_ALTITUDE = ['DEN', 'UTA']
+        HIGH_ALTITUDE = ["DEN", "UTA"]
         return 1.0 if venue_team in HIGH_ALTITUDE else 0.0
 
     def calculate_pace_diff(self, player_team_pace, opponent_team_pace):
@@ -1096,7 +1084,7 @@ class LiveFeatureExtractor:
         """
         return float(player_team_pace - opponent_team_pace)
 
-    def get_season_stats(self, player_name, season='2024-25'):
+    def get_season_stats(self, player_name, season="2024-25"):
         """
         Get player's season-level statistics.
 
@@ -1126,20 +1114,20 @@ class LiveFeatureExtractor:
 
                 if result:
                     return {
-                        'usage_rate': float(result[0]) if result[0] is not None else 0.20,
-                        'reb_rate': float(result[1]) if result[1] is not None else 0.10,
-                        'assist_rate': float(result[2]) if result[2] is not None else 0.15,
-                        'true_shooting_pct': float(result[3]) if result[3] is not None else 0.55
+                        "usage_rate": float(result[0]) if result[0] is not None else 0.20,
+                        "reb_rate": float(result[1]) if result[1] is not None else 0.10,
+                        "assist_rate": float(result[2]) if result[2] is not None else 0.15,
+                        "true_shooting_pct": float(result[3]) if result[3] is not None else 0.55,
                     }
         except Exception as e:
             logger.debug(f"Error querying season stats for {player_name}: {e}")
 
         # Return defaults
         return {
-            'usage_rate': 0.20,
-            'reb_rate': 0.10,
-            'assist_rate': 0.15,
-            'true_shooting_pct': 0.55
+            "usage_rate": 0.20,
+            "reb_rate": 0.10,
+            "assist_rate": 0.15,
+            "true_shooting_pct": 0.55,
         }
 
     def get_opponent_stats(self, opponent_team, as_of_date, window=10):
@@ -1155,10 +1143,7 @@ class LiveFeatureExtractor:
             Dict with: usage_allowed, reb_allowed_per_pos
         """
         if not opponent_team:
-            return {
-                'usage_allowed': 0.20,
-                'reb_allowed_per_pos': 0.10
-            }
+            return {"usage_allowed": 0.20, "reb_allowed_per_pos": 0.10}
 
         # Query opponent's recent defensive stats
         query = """
@@ -1173,11 +1158,13 @@ class LiveFeatureExtractor:
         """
 
         try:
-            df = pd.read_sql_query(query, self.games_conn, params=(opponent_team, as_of_date, window))
+            df = pd.read_sql_query(
+                query, self.games_conn, params=(opponent_team, as_of_date, window)
+            )
 
             if len(df) >= 3:
                 # Defensive rating proxy for usage allowed
-                avg_def_rating = df['defensive_rating'].mean()
+                avg_def_rating = df["defensive_rating"].mean()
                 # Higher defensive rating = more usage allowed (worse defense)
                 # Scale: 110 = league avg 0.20, 105 = 0.18, 115 = 0.22
                 usage_allowed = 0.20 * (avg_def_rating / 110.0) if avg_def_rating > 0 else 0.20
@@ -1187,16 +1174,13 @@ class LiveFeatureExtractor:
                 reb_allowed = 0.10 * (avg_def_rating / 110.0) if avg_def_rating > 0 else 0.10
 
                 return {
-                    'usage_allowed': float(usage_allowed),
-                    'reb_allowed_per_pos': float(reb_allowed)
+                    "usage_allowed": float(usage_allowed),
+                    "reb_allowed_per_pos": float(reb_allowed),
                 }
         except Exception as e:
             logger.debug(f"Error querying opponent stats: {e}")
 
-        return {
-            'usage_allowed': 0.20,
-            'reb_allowed_per_pos': 0.10
-        }
+        return {"usage_allowed": 0.20, "reb_allowed_per_pos": 0.10}
 
     def get_teammate_avg_usage(self, player_name, team_abbrev, as_of_date, window=10):
         """
@@ -1234,7 +1218,9 @@ class LiveFeatureExtractor:
 
         try:
             with self.conn.cursor() as cur:
-                cur.execute(query, (team_abbrev, as_of_date, player_name, window * 10))  # Get more rows for multiple players
+                cur.execute(
+                    query, (team_abbrev, as_of_date, player_name, window * 10)
+                )  # Get more rows for multiple players
                 rows = cur.fetchall()
 
                 if rows:
@@ -1347,10 +1333,13 @@ class LiveFeatureExtractor:
 
             # First get player_ids for this team (excluding our player)
             with self.conn.cursor() as cur:  # players DB
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT player_id FROM player_profile
                     WHERE team_abbrev = %s AND full_name != %s
-                """, (team_abbrev, player_name))
+                """,
+                    (team_abbrev, player_name),
+                )
                 teammate_ids = [row[0] for row in cur.fetchall()]
 
             if not teammate_ids:
@@ -1360,13 +1349,16 @@ class LiveFeatureExtractor:
             # Now count how many of these are OUT in injury_report
             with int_conn.cursor() as cur:
                 # Use ANY for the list of player_ids
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT COUNT(DISTINCT player_id)
                     FROM injury_report
                     WHERE report_date = %s
                       AND status = 'OUT'
                       AND player_id = ANY(%s)
-                """, (game_date, teammate_ids))
+                """,
+                    (game_date, teammate_ids),
+                )
                 result = cur.fetchone()
 
             int_conn.close()
@@ -1399,7 +1391,8 @@ class LiveFeatureExtractor:
         try:
             # Step 1: Get player's last N game dates
             with self.conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT DISTINCT pgl.game_date
                     FROM player_game_logs pgl
                     JOIN player_profile pp ON pgl.player_id = pp.player_id
@@ -1407,7 +1400,9 @@ class LiveFeatureExtractor:
                       AND pgl.game_date < %s
                     ORDER BY pgl.game_date DESC
                     LIMIT %s
-                """, (player_name, game_date, n_games))
+                """,
+                    (player_name, game_date, n_games),
+                )
                 game_dates = [row[0] for row in cur.fetchall()]
 
             if not game_dates:
@@ -1416,7 +1411,8 @@ class LiveFeatureExtractor:
             # Step 2: Get significant teammates (avg 20+ minutes in recent games)
             # Calculate average minutes from recent game logs for teammates
             with self.conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT pp.player_id, pp.full_name, AVG(pgl.minutes_played) as avg_minutes
                     FROM player_profile pp
                     JOIN player_game_logs pgl ON pp.player_id = pgl.player_id
@@ -1426,7 +1422,9 @@ class LiveFeatureExtractor:
                       AND pgl.minutes_played IS NOT NULL
                     GROUP BY pp.player_id, pp.full_name
                     HAVING AVG(pgl.minutes_played) >= %s
-                """, (team_abbrev, player_name, game_date, min_minutes))
+                """,
+                    (team_abbrev, player_name, game_date, min_minutes),
+                )
                 significant_teammates = {row[0]: row[1] for row in cur.fetchall()}
 
             if not significant_teammates:
@@ -1441,13 +1439,16 @@ class LiveFeatureExtractor:
             with int_conn.cursor() as cur:
                 # Count how many significant teammates were OUT on each game date
                 for gd in game_dates:
-                    cur.execute("""
+                    cur.execute(
+                        """
                         SELECT COUNT(DISTINCT player_id)
                         FROM injury_report
                         WHERE report_date = %s
                           AND status = 'OUT'
                           AND player_id = ANY(%s)
-                    """, (gd, significant_teammate_ids))
+                    """,
+                        (gd, significant_teammate_ids),
+                    )
                     result = cur.fetchone()
                     if result and result[0]:
                         total_absences += result[0]
@@ -1469,7 +1470,7 @@ class LiveFeatureExtractor:
         """
         try:
             if isinstance(game_date, str):
-                game_date = datetime.strptime(game_date, '%Y-%m-%d')
+                game_date = datetime.strptime(game_date, "%Y-%m-%d")
 
             month = game_date.month
             day = game_date.day
@@ -1516,7 +1517,7 @@ class LiveFeatureExtractor:
         """
         try:
             if isinstance(game_date, str):
-                game_date = datetime.strptime(game_date, '%Y-%m-%d')
+                game_date = datetime.strptime(game_date, "%Y-%m-%d")
 
             day_of_week = game_date.weekday()  # 0=Mon, 5=Sat, 6=Sun
             is_weekend = day_of_week >= 5
@@ -1527,12 +1528,12 @@ class LiveFeatureExtractor:
                 if isinstance(game_time, str):
                     try:
                         # Handle various time formats
-                        if ':' in game_time:
-                            parts = game_time.split(':')
+                        if ":" in game_time:
+                            parts = game_time.split(":")
                             hour = int(parts[0])
                     except (ValueError, IndexError):
                         hour = 19
-                elif hasattr(game_time, 'hour'):
+                elif hasattr(game_time, "hour"):
                     hour = game_time.hour
 
             # Prime time logic
@@ -1564,11 +1565,12 @@ class LiveFeatureExtractor:
                 return 0.0
 
             if isinstance(game_date, str):
-                game_date = datetime.strptime(game_date, '%Y-%m-%d')
+                game_date = datetime.strptime(game_date, "%Y-%m-%d")
 
             # Query player's recent games vs this opponent
             with self.conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT COUNT(*) as matchup_count
                     FROM player_game_logs pgl
                     JOIN player_profile pp ON pgl.player_id = pp.player_id
@@ -1576,7 +1578,9 @@ class LiveFeatureExtractor:
                       AND pgl.opponent_abbrev = %s
                       AND pgl.game_date < %s
                       AND pgl.game_date >= %s - INTERVAL '30 days'
-                """, (player_name, opponent_team, game_date, game_date))
+                """,
+                    (player_name, opponent_team, game_date, game_date),
+                )
 
                 result = cur.fetchone()
                 matchup_count = result[0] if result else 0
@@ -1588,8 +1592,17 @@ class LiveFeatureExtractor:
             logger.debug(f"Error calculating revenge game flag: {e}")
             return 0.0  # Default to no revenge game
 
-    def extract_features(self, player_name, game_date, is_home=None, opponent_team=None,
-                        line=None, source='validation', spread_diff=0.0, total_diff=0.0):
+    def extract_features(
+        self,
+        player_name,
+        game_date,
+        is_home=None,
+        opponent_team=None,
+        line=None,
+        source="validation",
+        spread_diff=0.0,
+        total_diff=0.0,
+    ):
         """
         Extract 104 features for a player on a given date.
         Matches the feature set expected by trained models.
@@ -1611,7 +1624,9 @@ class LiveFeatureExtractor:
             game_date = pd.to_datetime(game_date)
 
         # Get recent games (with cross-season fallback if needed)
-        recent_games = self.get_recent_games(player_name, game_date, n_games=20, min_games_threshold=18)
+        recent_games = self.get_recent_games(
+            player_name, game_date, n_games=20, min_games_threshold=18
+        )
 
         total_games = len(recent_games)
 
@@ -1630,73 +1645,97 @@ class LiveFeatureExtractor:
         features = {}
 
         # Line (sportsbook line)
-        features['line'] = float(line) if line is not None else 0.0
+        features["line"] = float(line) if line is not None else 0.0
 
         # Is home
         if is_home is not None:
-            features['is_home'] = 1.0 if is_home else 0.0
+            features["is_home"] = 1.0 if is_home else 0.0
         else:
-            features['is_home'] = float(recent_games.iloc[-1]['is_home']) if len(recent_games) > 0 else 0.5
+            features["is_home"] = (
+                float(recent_games.iloc[-1]["is_home"]) if len(recent_games) > 0 else 0.5
+            )
 
         alpha = 0.4  # EMA smoothing factor
 
         # Calculate EMA for all windows: L3, L5, L10, L20
-        for window_size, window_name in [(3, 'L3'), (5, 'L5'), (10, 'L10'), (20, 'L20')]:
+        for window_size, window_name in [(3, "L3"), (5, "L5"), (10, "L10"), (20, "L20")]:
             window_games = recent_games.tail(window_size)
 
             if len(window_games) == 0:
                 # No games in window - use defaults
-                features[f'ema_points_{window_name}'] = 15.0
-                features[f'ema_rebounds_{window_name}'] = 5.0
-                features[f'ema_assists_{window_name}'] = 3.0
-                features[f'ema_threePointersMade_{window_name}'] = 1.5
-                features[f'ema_steals_{window_name}'] = 1.0
-                features[f'ema_blocks_{window_name}'] = 0.5
-                features[f'ema_turnovers_{window_name}'] = 2.0
-                features[f'ema_minutes_{window_name}'] = 25.0
-                features[f'fg_pct_{window_name}'] = 0.45
+                features[f"ema_points_{window_name}"] = 15.0
+                features[f"ema_rebounds_{window_name}"] = 5.0
+                features[f"ema_assists_{window_name}"] = 3.0
+                features[f"ema_threePointersMade_{window_name}"] = 1.5
+                features[f"ema_steals_{window_name}"] = 1.0
+                features[f"ema_blocks_{window_name}"] = 0.5
+                features[f"ema_turnovers_{window_name}"] = 2.0
+                features[f"ema_minutes_{window_name}"] = 25.0
+                features[f"fg_pct_{window_name}"] = 0.45
             else:
                 # Calculate EMAs (fillna(0) for steals/blocks/turnovers in case of NULL values)
-                features[f'ema_points_{window_name}'] = self.calculate_ema(window_games['points'].values, alpha)
-                features[f'ema_rebounds_{window_name}'] = self.calculate_ema(window_games['rebounds'].values, alpha)
-                features[f'ema_assists_{window_name}'] = self.calculate_ema(window_games['assists'].values, alpha)
-                features[f'ema_threePointersMade_{window_name}'] = self.calculate_ema(window_games['three_pointers_made'].values, alpha)
-                features[f'ema_steals_{window_name}'] = self.calculate_ema(window_games['steals'].astype(float).fillna(1.0).values, alpha)
-                features[f'ema_blocks_{window_name}'] = self.calculate_ema(window_games['blocks'].astype(float).fillna(0.5).values, alpha)
-                features[f'ema_turnovers_{window_name}'] = self.calculate_ema(window_games['turnovers'].astype(float).fillna(2.0).values, alpha)
-                features[f'ema_minutes_{window_name}'] = self.calculate_ema(window_games['minutes_played'].values, alpha)
+                features[f"ema_points_{window_name}"] = self.calculate_ema(
+                    window_games["points"].values, alpha
+                )
+                features[f"ema_rebounds_{window_name}"] = self.calculate_ema(
+                    window_games["rebounds"].values, alpha
+                )
+                features[f"ema_assists_{window_name}"] = self.calculate_ema(
+                    window_games["assists"].values, alpha
+                )
+                features[f"ema_threePointersMade_{window_name}"] = self.calculate_ema(
+                    window_games["three_pointers_made"].values, alpha
+                )
+                features[f"ema_steals_{window_name}"] = self.calculate_ema(
+                    window_games["steals"].astype(float).fillna(1.0).values, alpha
+                )
+                features[f"ema_blocks_{window_name}"] = self.calculate_ema(
+                    window_games["blocks"].astype(float).fillna(0.5).values, alpha
+                )
+                features[f"ema_turnovers_{window_name}"] = self.calculate_ema(
+                    window_games["turnovers"].astype(float).fillna(2.0).values, alpha
+                )
+                features[f"ema_minutes_{window_name}"] = self.calculate_ema(
+                    window_games["minutes_played"].values, alpha
+                )
 
                 # Calculate FG%
-                total_made = window_games['fg_made'].sum()
-                total_attempted = window_games['fg_attempted'].sum()
-                features[f'fg_pct_{window_name}'] = total_made / total_attempted if total_attempted > 0 else 0.45
+                total_made = window_games["fg_made"].sum()
+                total_attempted = window_games["fg_attempted"].sum()
+                features[f"fg_pct_{window_name}"] = (
+                    total_made / total_attempted if total_attempted > 0 else 0.45
+                )
 
                 # NEW: Plus/minus EMA (L5, L10 only)
-                if window_name in ['L5', 'L10']:
-                    plus_minus_vals = window_games['plus_minus'].astype(float).fillna(0.0).values
-                    features[f'ema_plus_minus_{window_name}'] = self.calculate_ema(plus_minus_vals, alpha)
+                if window_name in ["L5", "L10"]:
+                    plus_minus_vals = window_games["plus_minus"].astype(float).fillna(0.0).values
+                    features[f"ema_plus_minus_{window_name}"] = self.calculate_ema(
+                        plus_minus_vals, alpha
+                    )
 
                 # NEW: FT rate and True shooting (L10 only)
-                if window_name == 'L10':
+                if window_name == "L10":
                     # FT rate = FT attempted / FG attempted (how often they get to the line)
-                    total_fta = window_games['ft_attempted'].astype(float).fillna(0).sum()
-                    total_fga = window_games['fg_attempted'].sum()
-                    features['ft_rate_L10'] = float(total_fta) / float(total_fga) if total_fga > 0 else 0.25
+                    total_fta = window_games["ft_attempted"].astype(float).fillna(0).sum()
+                    total_fga = window_games["fg_attempted"].sum()
+                    features["ft_rate_L10"] = (
+                        float(total_fta) / float(total_fga) if total_fga > 0 else 0.25
+                    )
 
                     # True shooting = PTS / (2 * (FGA + 0.44 * FTA))
-                    total_pts = window_games['points'].sum()
+                    total_pts = window_games["points"].sum()
                     tsa = 2.0 * (total_fga + 0.44 * total_fta)
-                    features['true_shooting_L10'] = float(total_pts) / tsa if tsa > 0 else 0.55
+                    features["true_shooting_L10"] = float(total_pts) / tsa if tsa > 0 else 0.55
 
         # Set defaults for new features if not calculated (insufficient games)
-        if 'ema_plus_minus_L5' not in features:
-            features['ema_plus_minus_L5'] = 0.0
-        if 'ema_plus_minus_L10' not in features:
-            features['ema_plus_minus_L10'] = 0.0
-        if 'ft_rate_L10' not in features:
-            features['ft_rate_L10'] = 0.25
-        if 'true_shooting_L10' not in features:
-            features['true_shooting_L10'] = 0.55
+        if "ema_plus_minus_L5" not in features:
+            features["ema_plus_minus_L5"] = 0.0
+        if "ema_plus_minus_L10" not in features:
+            features["ema_plus_minus_L10"] = 0.0
+        if "ft_rate_L10" not in features:
+            features["ft_rate_L10"] = 0.25
+        if "true_shooting_L10" not in features:
+            features["true_shooting_L10"] = 0.55
 
         # Form slope features removed - not used by models
 
@@ -1707,180 +1746,216 @@ class LiveFeatureExtractor:
         if player_team:
             # Get team's rolling stats (L10 games)
             team_stats = self.get_team_rolling_stats(player_team, game_date, window=10)
-            features['team_pace'] = team_stats['pace']
-            features['team_off_rating'] = team_stats['off_rating']
-            features['team_def_rating'] = team_stats['def_rating']
+            features["team_pace"] = team_stats["pace"]
+            features["team_off_rating"] = team_stats["off_rating"]
+            features["team_def_rating"] = team_stats["def_rating"]
         else:
             # Player team not found - use defaults
             logger.debug(f"Could not find team for {player_name}, using defaults")
-            features['team_pace'] = 100.0
-            features['team_off_rating'] = 110.0
-            features['team_def_rating'] = 110.0
+            features["team_pace"] = 100.0
+            features["team_off_rating"] = 110.0
+            features["team_def_rating"] = 110.0
 
         # Opponent stats - REAL if opponent_team provided
         if opponent_team:
             opponent_stats = self.get_team_rolling_stats(opponent_team, game_date, window=10)
-            features['opponent_pace'] = opponent_stats['pace']
-            features['opponent_def_rating'] = opponent_stats['def_rating']
+            features["opponent_pace"] = opponent_stats["pace"]
+            features["opponent_def_rating"] = opponent_stats["def_rating"]
         else:
             # Use league average when opponent unknown (training mode)
-            features['opponent_pace'] = 98.0
-            features['opponent_def_rating'] = 110.0
+            features["opponent_pace"] = 98.0
+            features["opponent_def_rating"] = 110.0
 
         # Projected possessions (average of team and opponent pace)
-        features['projected_possessions'] = (features['team_pace'] + features['opponent_pace']) / 2
+        features["projected_possessions"] = (features["team_pace"] + features["opponent_pace"]) / 2
 
         # Rest/schedule
         if len(recent_games) >= 2:
-            last_game_date = recent_games.iloc[-1]['game_date']
-            prev_game_date = recent_games.iloc[-2]['game_date']
+            last_game_date = recent_games.iloc[-1]["game_date"]
+            prev_game_date = recent_games.iloc[-2]["game_date"]
             days_rest = (last_game_date - prev_game_date).days
-            features['days_rest'] = float(days_rest)
-            features['is_back_to_back'] = 1.0 if days_rest == 1 else 0.0
+            features["days_rest"] = float(days_rest)
+            features["is_back_to_back"] = 1.0 if days_rest == 1 else 0.0
         else:
-            features['days_rest'] = 2.0
-            features['is_back_to_back'] = 0.0
+            features["days_rest"] = 2.0
+            features["is_back_to_back"] = 0.0
 
-        features['games_in_L7'] = float(min(len(recent_games.tail(7)), 7))
+        features["games_in_L7"] = float(min(len(recent_games.tail(7)), 7))
 
         # Advanced metrics (estimated)
         if len(recent_games) >= 5:
-            last_5_minutes = recent_games.tail(5)['minutes_played'].values
-            last_5_points = recent_games.tail(5)['points'].values
+            last_5_minutes = recent_games.tail(5)["minutes_played"].values
+            last_5_points = recent_games.tail(5)["points"].values
             avg_minutes = last_5_minutes.mean()
             avg_points = last_5_points.mean()
-            features['points_per_minute_L5'] = avg_points / avg_minutes if avg_minutes > 0 else 0.5
+            features["points_per_minute_L5"] = avg_points / avg_minutes if avg_minutes > 0 else 0.5
         else:
-            features['points_per_minute_L5'] = 0.5
+            features["points_per_minute_L5"] = 0.5
 
-        features['efficiency_vs_context'] = 100.0
+        features["efficiency_vs_context"] = 100.0
 
         # Calculate resistance-adjusted L3 points based on opponent defensive strength
         # Uses player's raw L3 points and adjusts for opponent's L3 defensive rating
-        raw_L3_points = features.get('ema_points_L3', 15.0)
-        features['resistance_adjusted_L3'] = self.calculate_resistance_adjusted_stat(
-            raw_L3_stat=raw_L3_points,
-            opponent_team=opponent_team,
-            as_of_date=game_date
+        raw_L3_points = features.get("ema_points_L3", 15.0)
+        features["resistance_adjusted_L3"] = self.calculate_resistance_adjusted_stat(
+            raw_L3_stat=raw_L3_points, opponent_team=opponent_team, as_of_date=game_date
         )
 
         # REAL momentum calculation
-        features['momentum_short_term'] = self.get_momentum_short_term(recent_games, stat_type='points')
+        features["momentum_short_term"] = self.get_momentum_short_term(
+            recent_games, stat_type="points"
+        )
 
         # Context features - REAL shot volume proxy
         # Estimate shot volume based on recent FGA/min * projected minutes * team pace
-        fg_attempts_per_min = recent_games['fg_attempted'].sum() / max(recent_games['minutes_played'].sum(), 1)
-        projected_minutes = features['ema_minutes_L5']  # Use EMA L5 minutes as projection
-        shot_volume = fg_attempts_per_min * projected_minutes * (features['team_pace'] / 100.0)
-        features['shot_volume_proxy'] = shot_volume
-        features['game_velocity'] = 100.0
-        features['days_rest_copy'] = features['days_rest']
+        fg_attempts_per_min = recent_games["fg_attempted"].sum() / max(
+            recent_games["minutes_played"].sum(), 1
+        )
+        projected_minutes = features["ema_minutes_L5"]  # Use EMA L5 minutes as projection
+        shot_volume = fg_attempts_per_min * projected_minutes * (features["team_pace"] / 100.0)
+        features["shot_volume_proxy"] = shot_volume
+        features["game_velocity"] = 100.0
+        features["days_rest_copy"] = features["days_rest"]
 
         # REAL opponent and venue features
         if opponent_team:
-            features['opponent_back_to_back_flag'] = self.check_opponent_back_to_back(opponent_team, game_date)
-            features['travel_distance_km'] = self.calculate_travel_distance(player_team, opponent_team)
-            features['pace_diff'] = self.calculate_pace_diff(features['team_pace'], features['opponent_pace'])
+            features["opponent_back_to_back_flag"] = self.check_opponent_back_to_back(
+                opponent_team, game_date
+            )
+            features["travel_distance_km"] = self.calculate_travel_distance(
+                player_team, opponent_team
+            )
+            features["pace_diff"] = self.calculate_pace_diff(
+                features["team_pace"], features["opponent_pace"]
+            )
             # Determine venue based on is_home
             if is_home is not None:
                 venue_team = player_team if is_home else opponent_team
-                features['altitude_flag'] = self.get_altitude_flag(venue_team)
+                features["altitude_flag"] = self.get_altitude_flag(venue_team)
             else:
-                features['altitude_flag'] = 0.0
+                features["altitude_flag"] = 0.0
         else:
             # Defaults when opponent unknown
-            features['opponent_back_to_back_flag'] = 0.0
-            features['travel_distance_km'] = 0.0
-            features['pace_diff'] = 0.0
-            features['altitude_flag'] = 0.0
+            features["opponent_back_to_back_flag"] = 0.0
+            features["travel_distance_km"] = 0.0
+            features["pace_diff"] = 0.0
+            features["altitude_flag"] = 0.0
 
-        features['expected_possessions'] = 100.0
+        features["expected_possessions"] = 100.0
 
         # Season/venue
-        features['season_phase'] = self.calculate_season_phase(game_date)
-        features['starter_flag'] = 1.0
+        features["season_phase"] = self.calculate_season_phase(game_date)
+        features["starter_flag"] = 1.0
         # bench_points_ratio: ratio of L10 games where player started (28+ min)
         # Higher = more likely a starter (1.0 = always starts, 0.0 = pure bench)
-        features['bench_points_ratio'] = self.get_starter_ratio(player_name, game_date, window=10, minutes_threshold=28)
-        features['position_encoded'] = 1.0
+        features["bench_points_ratio"] = self.get_starter_ratio(
+            player_name, game_date, window=10, minutes_threshold=28
+        )
+        features["position_encoded"] = 1.0
 
         # Teammate/injury - REAL teammate usage and injury calculation
         if player_team:
-            features['avg_teammate_usage'] = self.get_teammate_avg_usage(player_name, player_team, game_date)
-            features['injured_teammates_count'] = float(self.get_injured_teammates_count(player_name, player_team, game_date))
+            features["avg_teammate_usage"] = self.get_teammate_avg_usage(
+                player_name, player_team, game_date
+            )
+            features["injured_teammates_count"] = float(
+                self.get_injured_teammates_count(player_name, player_team, game_date)
+            )
             # Count significant teammate absences (20+ min players OUT) in last 3 games
-            features['teammate_absences_last_3'] = self.get_teammate_absences(player_name, player_team, game_date, n_games=3, min_minutes=20)
+            features["teammate_absences_last_3"] = self.get_teammate_absences(
+                player_name, player_team, game_date, n_games=3, min_minutes=20
+            )
         else:
-            features['avg_teammate_usage'] = 0.20  # Default
-            features['injured_teammates_count'] = 0.0
-            features['teammate_absences_last_3'] = 0.0
+            features["avg_teammate_usage"] = 0.20  # Default
+            features["injured_teammates_count"] = 0.0
+            features["teammate_absences_last_3"] = 0.0
 
         # Matchup - REAL defensive efficiency
         if opponent_team:
-            features['opponent_allowed_points_per_pos'] = self.get_opponent_defensive_efficiency(opponent_team, game_date, window=10)
+            features["opponent_allowed_points_per_pos"] = self.get_opponent_defensive_efficiency(
+                opponent_team, game_date, window=10
+            )
         else:
-            features['opponent_allowed_points_per_pos'] = 1.1
-        features['projected_team_possessions'] = 100.0
+            features["opponent_allowed_points_per_pos"] = 1.1
+        features["projected_team_possessions"] = 100.0
 
         # H2H - REAL head-to-head statistics
         if opponent_team:
-            h2h_stats = self.get_h2h_stats(player_name, opponent_team, game_date, stat_type='points')
-            if h2h_stats['h2h_avg_stat'] is not None:
+            h2h_stats = self.get_h2h_stats(
+                player_name, opponent_team, game_date, stat_type="points"
+            )
+            if h2h_stats["h2h_avg_stat"] is not None:
                 # Have H2H history - use real stats
-                features['h2h_avg_points'] = h2h_stats['h2h_avg_stat']
-                features['h2h_L3_points'] = h2h_stats['h2h_L3_stat']
-                features['h2h_games'] = h2h_stats['h2h_games']
+                features["h2h_avg_points"] = h2h_stats["h2h_avg_stat"]
+                features["h2h_L3_points"] = h2h_stats["h2h_L3_stat"]
+                features["h2h_games"] = h2h_stats["h2h_games"]
             else:
                 # No H2H history - use player's overall average
                 if len(recent_games) > 0:
-                    features['h2h_avg_points'] = float(recent_games['points'].mean())
-                    features['h2h_L3_points'] = float(recent_games.tail(3)['points'].mean()) if len(recent_games) >= 3 else features['h2h_avg_points']
+                    features["h2h_avg_points"] = float(recent_games["points"].mean())
+                    features["h2h_L3_points"] = (
+                        float(recent_games.tail(3)["points"].mean())
+                        if len(recent_games) >= 3
+                        else features["h2h_avg_points"]
+                    )
                 else:
-                    features['h2h_avg_points'] = 15.0
-                    features['h2h_L3_points'] = 15.0
-                features['h2h_games'] = 0.0
+                    features["h2h_avg_points"] = 15.0
+                    features["h2h_L3_points"] = 15.0
+                features["h2h_games"] = 0.0
         else:
             # Opponent not specified - use player's overall average as fallback
             if len(recent_games) > 0:
-                features['h2h_avg_points'] = float(recent_games['points'].mean())
-                features['h2h_L3_points'] = float(recent_games.tail(3)['points'].mean()) if len(recent_games) >= 3 else features['h2h_avg_points']
+                features["h2h_avg_points"] = float(recent_games["points"].mean())
+                features["h2h_L3_points"] = (
+                    float(recent_games.tail(3)["points"].mean())
+                    if len(recent_games) >= 3
+                    else features["h2h_avg_points"]
+                )
             else:
-                features['h2h_avg_points'] = 15.0
-                features['h2h_L3_points'] = 15.0
-            features['h2h_games'] = 0.0
+                features["h2h_avg_points"] = 15.0
+                features["h2h_L3_points"] = 15.0
+            features["h2h_games"] = 0.0
 
         # Matchup Advantage Score - REAL composite calculation
         # Combines: player form, opponent defense, H2H performance
         # Formula: (player_form / league_avg) - (opponent_defense / league_avg) + h2h_boost
         # Range: approximately -0.5 to +0.5 (positive = player has advantage)
-        player_form_score = features['ema_points_L5'] / 15.0  # Normalize by league average (~15 ppg)
-        opponent_defense_score = features['opponent_allowed_points_per_pos'] / 1.1  # Normalize by league avg (~1.1)
+        player_form_score = (
+            features["ema_points_L5"] / 15.0
+        )  # Normalize by league average (~15 ppg)
+        opponent_defense_score = (
+            features["opponent_allowed_points_per_pos"] / 1.1
+        )  # Normalize by league avg (~1.1)
         h2h_boost = 0.0
-        if features['h2h_games'] > 0 and features['h2h_avg_points'] > 0:
+        if features["h2h_games"] > 0 and features["h2h_avg_points"] > 0:
             # If player scores more vs this opponent than their average, boost score
-            h2h_boost = (features['h2h_avg_points'] - features['ema_points_L5']) / 15.0
+            h2h_boost = (features["h2h_avg_points"] - features["ema_points_L5"]) / 15.0
 
-        features['matchup_advantage_score'] = player_form_score - opponent_defense_score + h2h_boost
+        features["matchup_advantage_score"] = player_form_score - opponent_defense_score + h2h_boost
 
         # Recent performance
         if len(recent_games) > 0:
-            features['player_last_game_minutes'] = float(recent_games.iloc[-1]['minutes_played'])
+            features["player_last_game_minutes"] = float(recent_games.iloc[-1]["minutes_played"])
         else:
-            features['player_last_game_minutes'] = 30.0
+            features["player_last_game_minutes"] = 30.0
 
         # REAL days since milestone
-        features['days_since_last_30pt_game'] = self.get_days_since_milestone(
-            player_name, game_date, stat='points', threshold=30
+        features["days_since_last_30pt_game"] = self.get_days_since_milestone(
+            player_name, game_date, stat="points", threshold=30
         )
 
         # REAL streaks
         streaks = self.get_home_away_streaks(player_name, game_date)
-        features['home_streak'] = streaks['home']
-        features['away_streak'] = streaks['away']
+        features["home_streak"] = streaks["home"]
+        features["away_streak"] = streaks["away"]
 
         # Game context
-        features['revenge_game_flag'] = self.calculate_revenge_game_flag(player_name, opponent_team, game_date)
-        features['prime_time_flag'] = self.calculate_prime_time_flag(game_date)  # Uses date only, defaults evening games
+        features["revenge_game_flag"] = self.calculate_revenge_game_flag(
+            player_name, opponent_team, game_date
+        )
+        features["prime_time_flag"] = self.calculate_prime_time_flag(
+            game_date
+        )  # Uses date only, defaults evening games
 
         # Expected diff (placeholder for live predictions - models expect this feature)
         # During training: actual_result - line
@@ -1891,98 +1966,106 @@ class LiveFeatureExtractor:
 
     def _get_default_features(self, is_home, player_name=None, game_date=None):
         """Return default features for players with no history"""
-        features = {
-            'is_home': 1.0 if is_home else 0.0 if is_home is not None else 0.5
-        }
+        features = {"is_home": 1.0 if is_home else 0.0 if is_home is not None else 0.5}
 
         # Default EMAs
-        for window in ['L3', 'L5', 'L10', 'L20']:
-            features[f'ema_points_{window}'] = 15.0
-            features[f'ema_rebounds_{window}'] = 5.0
-            features[f'ema_assists_{window}'] = 3.0
-            features[f'ema_threePointersMade_{window}'] = 1.5
-            features[f'ema_steals_{window}'] = 1.0
-            features[f'ema_blocks_{window}'] = 0.5
-            features[f'ema_turnovers_{window}'] = 2.0
-            features[f'ema_minutes_{window}'] = 25.0
-            features[f'fg_pct_{window}'] = 0.45
+        for window in ["L3", "L5", "L10", "L20"]:
+            features[f"ema_points_{window}"] = 15.0
+            features[f"ema_rebounds_{window}"] = 5.0
+            features[f"ema_assists_{window}"] = 3.0
+            features[f"ema_threePointersMade_{window}"] = 1.5
+            features[f"ema_steals_{window}"] = 1.0
+            features[f"ema_blocks_{window}"] = 0.5
+            features[f"ema_turnovers_{window}"] = 2.0
+            features[f"ema_minutes_{window}"] = 25.0
+            features[f"fg_pct_{window}"] = 0.45
 
         # Try to get real team context even for rookies/new players
         if player_name and game_date:
             player_team = self.get_player_team(player_name, game_date)
             if player_team:
                 team_stats = self.get_team_rolling_stats(player_team, game_date, window=10)
-                features.update({
-                    'team_pace': team_stats['pace'],
-                    'team_off_rating': team_stats['off_rating'],
-                    'team_def_rating': team_stats['def_rating'],
-                    'opponent_pace': 98.0,
-                    'opponent_def_rating': 110.0,
-                    'projected_possessions': (team_stats['pace'] + 98.0) / 2,
-                })
+                features.update(
+                    {
+                        "team_pace": team_stats["pace"],
+                        "team_off_rating": team_stats["off_rating"],
+                        "team_def_rating": team_stats["def_rating"],
+                        "opponent_pace": 98.0,
+                        "opponent_def_rating": 110.0,
+                        "projected_possessions": (team_stats["pace"] + 98.0) / 2,
+                    }
+                )
             else:
                 # Default context features
-                features.update({
-                    'team_pace': 100.0,
-                    'team_off_rating': 110.0,
-                    'team_def_rating': 110.0,
-                    'opponent_pace': 100.0,
-                    'opponent_def_rating': 110.0,
-                    'projected_possessions': 100.0,
-                })
+                features.update(
+                    {
+                        "team_pace": 100.0,
+                        "team_off_rating": 110.0,
+                        "team_def_rating": 110.0,
+                        "opponent_pace": 100.0,
+                        "opponent_def_rating": 110.0,
+                        "projected_possessions": 100.0,
+                    }
+                )
         else:
             # Default context features
-            features.update({
-                'team_pace': 100.0,
-                'team_off_rating': 110.0,
-                'team_def_rating': 110.0,
-                'opponent_pace': 100.0,
-                'opponent_def_rating': 110.0,
-                'projected_possessions': 100.0,
-            })
+            features.update(
+                {
+                    "team_pace": 100.0,
+                    "team_off_rating": 110.0,
+                    "team_def_rating": 110.0,
+                    "opponent_pace": 100.0,
+                    "opponent_def_rating": 110.0,
+                    "projected_possessions": 100.0,
+                }
+            )
 
         # Continue with remaining default features
-        features.update({
-            'days_rest': 2.0,
-            'is_back_to_back': 0.0,
-            'games_in_L7': 0.0,
-            'points_per_minute_L5': 0.5,
-            'efficiency_vs_context': 100.0,
-            'resistance_adjusted_L3': 15.0,  # Default to raw L3 points (no adjustment)
-            'momentum_short_term': 0.0,
-            'shot_volume_proxy': 12.0,  # Default ~12 FGA per game
-            'game_velocity': 100.0,
-            'days_rest_copy': 2.0,
-            'opponent_back_to_back_flag': 0.0,
-            'travel_distance_km': 0.0,
-            'pace_diff': 0.0,
-            'expected_possessions': 100.0,
-            'season_phase': 0.5,  # Default to mid-season if date unknown
-            'altitude_flag': 0.0,
-            'starter_flag': 1.0,
-            'bench_points_ratio': 0.5,  # Default to 0.5 (neutral) if no data
-            'position_encoded': 1.0,
-            'avg_teammate_usage': 0.20,  # Default 20% usage rate
-            'injured_teammates_count': 0.0,
-            'teammate_absences_last_3': 0.0,
-            'opponent_allowed_points_per_pos': 1.1,
-            'matchup_advantage_score': 0.0,  # Default neutral matchup
-            'projected_team_possessions': 100.0,
-            'h2h_avg_points': 15.0,
-            'h2h_L3_points': 15.0,
-            'h2h_games': 0.0,
-            'player_last_game_minutes': 30.0,
-            'days_since_last_30pt_game': 10.0,
-            'home_streak': 0.0,
-            'away_streak': 0.0,
-            'revenge_game_flag': 0.0,
-            'prime_time_flag': 0.0,
-            'expected_diff': 0.0
-        })
+        features.update(
+            {
+                "days_rest": 2.0,
+                "is_back_to_back": 0.0,
+                "games_in_L7": 0.0,
+                "points_per_minute_L5": 0.5,
+                "efficiency_vs_context": 100.0,
+                "resistance_adjusted_L3": 15.0,  # Default to raw L3 points (no adjustment)
+                "momentum_short_term": 0.0,
+                "shot_volume_proxy": 12.0,  # Default ~12 FGA per game
+                "game_velocity": 100.0,
+                "days_rest_copy": 2.0,
+                "opponent_back_to_back_flag": 0.0,
+                "travel_distance_km": 0.0,
+                "pace_diff": 0.0,
+                "expected_possessions": 100.0,
+                "season_phase": 0.5,  # Default to mid-season if date unknown
+                "altitude_flag": 0.0,
+                "starter_flag": 1.0,
+                "bench_points_ratio": 0.5,  # Default to 0.5 (neutral) if no data
+                "position_encoded": 1.0,
+                "avg_teammate_usage": 0.20,  # Default 20% usage rate
+                "injured_teammates_count": 0.0,
+                "teammate_absences_last_3": 0.0,
+                "opponent_allowed_points_per_pos": 1.1,
+                "matchup_advantage_score": 0.0,  # Default neutral matchup
+                "projected_team_possessions": 100.0,
+                "h2h_avg_points": 15.0,
+                "h2h_L3_points": 15.0,
+                "h2h_games": 0.0,
+                "player_last_game_minutes": 30.0,
+                "days_since_last_30pt_game": 10.0,
+                "home_streak": 0.0,
+                "away_streak": 0.0,
+                "revenge_game_flag": 0.0,
+                "prime_time_flag": 0.0,
+                "expected_diff": 0.0,
+            }
+        )
 
         return features
 
-    def get_feature_vector(self, player_name, game_date, feature_names, is_home=None, opponent_team=None):
+    def get_feature_vector(
+        self, player_name, game_date, feature_names, is_home=None, opponent_team=None
+    ):
         """
         Get feature vector in the exact order expected by the model.
         """
@@ -1999,13 +2082,13 @@ class LiveFeatureExtractor:
         """Close all database connections"""
         if self.conn:
             self.conn.close()
-        if hasattr(self, 'games_conn') and self.games_conn:
+        if hasattr(self, "games_conn") and self.games_conn:
             self.games_conn.close()
-        if hasattr(self, 'team_conn') and self.team_conn:
+        if hasattr(self, "team_conn") and self.team_conn:
             self.team_conn.close()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Test with real player form features
     extractor = LiveFeatureExtractor()
 
@@ -2015,8 +2098,10 @@ if __name__ == '__main__':
 
     # Test Stephen Curry (GSW - high scoring, 3-point specialist)
     print("\n[1] Stephen Curry (Golden State Warriors) - 2025-04-10:")
-    features = extractor.extract_features('Stephen Curry', '2025-04-10')
-    print(f"  days_since_last_30pt_game: {features['days_since_last_30pt_game']:.1f} (should NOT be 10.0)")
+    features = extractor.extract_features("Stephen Curry", "2025-04-10")
+    print(
+        f"  days_since_last_30pt_game: {features['days_since_last_30pt_game']:.1f} (should NOT be 10.0)"
+    )
     print(f"  momentum_short_term: {features['momentum_short_term']:.3f} (should NOT be 0.0)")
     print(f"  home_streak: {features['home_streak']:.0f} (should NOT be 0)")
     print(f"  away_streak: {features['away_streak']:.0f} (should NOT be 0)")
@@ -2025,8 +2110,10 @@ if __name__ == '__main__':
 
     # Test LeBron James (LAL - consistent scorer)
     print("\n[2] LeBron James (Los Angeles Lakers) - 2025-04-10:")
-    features2 = extractor.extract_features('LeBron James', '2025-04-10')
-    print(f"  days_since_last_30pt_game: {features2['days_since_last_30pt_game']:.1f} (should NOT be 10.0)")
+    features2 = extractor.extract_features("LeBron James", "2025-04-10")
+    print(
+        f"  days_since_last_30pt_game: {features2['days_since_last_30pt_game']:.1f} (should NOT be 10.0)"
+    )
     print(f"  momentum_short_term: {features2['momentum_short_term']:.3f} (should NOT be 0.0)")
     print(f"  home_streak: {features2['home_streak']:.0f} (should NOT be 0)")
     print(f"  away_streak: {features2['away_streak']:.0f} (should NOT be 0)")
@@ -2034,8 +2121,10 @@ if __name__ == '__main__':
 
     # Test Kyle Kuzma (MIL - moderate scorer)
     print("\n[3] Kyle Kuzma (Milwaukee Bucks) - 2025-04-10:")
-    features3 = extractor.extract_features('Kyle Kuzma', '2025-04-10')
-    print(f"  days_since_last_30pt_game: {features3['days_since_last_30pt_game']:.1f} (999 if never)")
+    features3 = extractor.extract_features("Kyle Kuzma", "2025-04-10")
+    print(
+        f"  days_since_last_30pt_game: {features3['days_since_last_30pt_game']:.1f} (999 if never)"
+    )
     print(f"  momentum_short_term: {features3['momentum_short_term']:.3f} (should NOT be 0.0)")
     print(f"  home_streak: {features3['home_streak']:.0f}")
     print(f"  away_streak: {features3['away_streak']:.0f}")
@@ -2043,8 +2132,10 @@ if __name__ == '__main__':
 
     # Test Jonas Valančiūnas (DEN - big man, rebounds/paint)
     print("\n[4] Jonas Valančiūnas (Denver Nuggets) - 2025-04-10:")
-    features4 = extractor.extract_features('Jonas Valančiūnas', '2025-04-10')
-    print(f"  days_since_last_30pt_game: {features4['days_since_last_30pt_game']:.1f} (rarely 30pts)")
+    features4 = extractor.extract_features("Jonas Valančiūnas", "2025-04-10")
+    print(
+        f"  days_since_last_30pt_game: {features4['days_since_last_30pt_game']:.1f} (rarely 30pts)"
+    )
     print(f"  momentum_short_term: {features4['momentum_short_term']:.3f}")
     print(f"  home_streak: {features4['home_streak']:.0f}")
     print(f"  away_streak: {features4['away_streak']:.0f}")
@@ -2053,25 +2144,33 @@ if __name__ == '__main__':
     print("\n" + "=" * 80)
     print("VARIANCE CHECK:")
     print("=" * 80)
-    print(f"Curry 30pt days: {features['days_since_last_30pt_game']:.1f} vs " +
-          f"LeBron: {features2['days_since_last_30pt_game']:.1f} vs " +
-          f"Kuzma: {features3['days_since_last_30pt_game']:.1f} vs " +
-          f"JV: {features4['days_since_last_30pt_game']:.1f}")
-    print(f"Momentum: Curry {features['momentum_short_term']:.3f} vs " +
-          f"LeBron {features2['momentum_short_term']:.3f} vs " +
-          f"Kuzma {features3['momentum_short_term']:.3f} vs " +
-          f"JV {features4['momentum_short_term']:.3f}")
-    print(f"Home streaks: {features['home_streak']:.0f}, {features2['home_streak']:.0f}, " +
-          f"{features3['home_streak']:.0f}, {features4['home_streak']:.0f}")
-    print(f"Away streaks: {features['away_streak']:.0f}, {features2['away_streak']:.0f}, " +
-          f"{features3['away_streak']:.0f}, {features4['away_streak']:.0f}")
+    print(
+        f"Curry 30pt days: {features['days_since_last_30pt_game']:.1f} vs "
+        + f"LeBron: {features2['days_since_last_30pt_game']:.1f} vs "
+        + f"Kuzma: {features3['days_since_last_30pt_game']:.1f} vs "
+        + f"JV: {features4['days_since_last_30pt_game']:.1f}"
+    )
+    print(
+        f"Momentum: Curry {features['momentum_short_term']:.3f} vs "
+        + f"LeBron {features2['momentum_short_term']:.3f} vs "
+        + f"Kuzma {features3['momentum_short_term']:.3f} vs "
+        + f"JV {features4['momentum_short_term']:.3f}"
+    )
+    print(
+        f"Home streaks: {features['home_streak']:.0f}, {features2['home_streak']:.0f}, "
+        + f"{features3['home_streak']:.0f}, {features4['home_streak']:.0f}"
+    )
+    print(
+        f"Away streaks: {features['away_streak']:.0f}, {features2['away_streak']:.0f}, "
+        + f"{features3['away_streak']:.0f}, {features4['away_streak']:.0f}"
+    )
 
     # Count how many features are NOT default
     all_features = [features, features2, features3, features4]
-    milestone_values = [f['days_since_last_30pt_game'] for f in all_features]
-    momentum_values = [f['momentum_short_term'] for f in all_features]
-    home_streak_values = [f['home_streak'] for f in all_features]
-    away_streak_values = [f['away_streak'] for f in all_features]
+    milestone_values = [f["days_since_last_30pt_game"] for f in all_features]
+    momentum_values = [f["momentum_short_term"] for f in all_features]
+    home_streak_values = [f["home_streak"] for f in all_features]
+    away_streak_values = [f["away_streak"] for f in all_features]
 
     milestone_variance = len(set([round(v, 1) for v in milestone_values]))
     momentum_variance = len(set([round(v, 3) for v in momentum_values]))

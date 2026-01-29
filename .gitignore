@@ -147,3 +147,8 @@ debug_*.py
 *_ASSESSMENT*.md
 QUICK_FIX*.md
 FIX_*.md
+
+# Build artifacts
+coverage.xml
+*.egg-info/
+coverage_html/

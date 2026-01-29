@@ -16,107 +16,165 @@ Usage:
 
 from typing import Optional
 
-
 # Non-standard → Standard team abbreviation mapping
 TEAM_NORMALIZATION_MAP = {
     # Golden State Warriors
-    'GS': 'GSW',
-    'GOLDEN STATE': 'GSW',
-
+    "GS": "GSW",
+    "GOLDEN STATE": "GSW",
     # New Orleans Pelicans
-    'NO': 'NOP',
-    'NOR': 'NOP',
-    'NEW ORLEANS': 'NOP',
-
+    "NO": "NOP",
+    "NOR": "NOP",
+    "NEW ORLEANS": "NOP",
     # San Antonio Spurs
-    'SA': 'SAS',
-    'SAN ANTONIO': 'SAS',
-
+    "SA": "SAS",
+    "SAN ANTONIO": "SAS",
     # Washington Wizards
-    'WSH': 'WAS',
-    'WASHINGTON': 'WAS',
-
+    "WSH": "WAS",
+    "WASHINGTON": "WAS",
     # New York Knicks
-    'NY': 'NYK',
-    'NEW YORK': 'NYK',
-
+    "NY": "NYK",
+    "NEW YORK": "NYK",
     # Utah Jazz
-    'UTAH': 'UTA',
-    'UTH': 'UTA',
-
+    "UTAH": "UTA",
+    "UTH": "UTA",
     # Empty string → NULL
-    '': None,
+    "": None,
 }
 
 
 # Full team name → Abbreviation mapping (for scraping sources like StatMuse)
 TEAM_NAME_TO_ABBREV = {
     # Full names (lowercase for case-insensitive matching)
-    'hawks': 'ATL', 'atlanta hawks': 'ATL', 'atlanta': 'ATL',
-    'nets': 'BKN', 'brooklyn nets': 'BKN', 'brooklyn': 'BKN',
-    'celtics': 'BOS', 'boston celtics': 'BOS', 'boston': 'BOS',
-    'hornets': 'CHA', 'charlotte hornets': 'CHA', 'charlotte': 'CHA',
-    'bulls': 'CHI', 'chicago bulls': 'CHI', 'chicago': 'CHI',
-    'cavaliers': 'CLE', 'cleveland cavaliers': 'CLE', 'cleveland': 'CLE', 'cavs': 'CLE',
-    'mavericks': 'DAL', 'dallas mavericks': 'DAL', 'dallas': 'DAL', 'mavs': 'DAL',
-    'nuggets': 'DEN', 'denver nuggets': 'DEN', 'denver': 'DEN',
-    'pistons': 'DET', 'detroit pistons': 'DET', 'detroit': 'DET',
-    'warriors': 'GSW', 'golden state warriors': 'GSW', 'golden state': 'GSW',
-    'rockets': 'HOU', 'houston rockets': 'HOU', 'houston': 'HOU',
-    'pacers': 'IND', 'indiana pacers': 'IND', 'indiana': 'IND',
-    'clippers': 'LAC', 'la clippers': 'LAC', 'los angeles clippers': 'LAC',
-    'lakers': 'LAL', 'la lakers': 'LAL', 'los angeles lakers': 'LAL',
-    'grizzlies': 'MEM', 'memphis grizzlies': 'MEM', 'memphis': 'MEM',
-    'heat': 'MIA', 'miami heat': 'MIA', 'miami': 'MIA',
-    'bucks': 'MIL', 'milwaukee bucks': 'MIL', 'milwaukee': 'MIL',
-    'timberwolves': 'MIN', 'minnesota timberwolves': 'MIN', 'minnesota': 'MIN', 'wolves': 'MIN',
-    'pelicans': 'NOP', 'new orleans pelicans': 'NOP', 'new orleans': 'NOP',
-    'knicks': 'NYK', 'new york knicks': 'NYK', 'new york': 'NYK',
-    'thunder': 'OKC', 'oklahoma city thunder': 'OKC', 'oklahoma city': 'OKC',
-    'magic': 'ORL', 'orlando magic': 'ORL', 'orlando': 'ORL',
-    '76ers': 'PHI', 'philadelphia 76ers': 'PHI', 'philadelphia': 'PHI', 'sixers': 'PHI',
-    'suns': 'PHX', 'phoenix suns': 'PHX', 'phoenix': 'PHX',
-    'trail blazers': 'POR', 'portland trail blazers': 'POR', 'portland': 'POR', 'blazers': 'POR',
-    'kings': 'SAC', 'sacramento kings': 'SAC', 'sacramento': 'SAC',
-    'spurs': 'SAS', 'san antonio spurs': 'SAS', 'san antonio': 'SAS',
-    'raptors': 'TOR', 'toronto raptors': 'TOR', 'toronto': 'TOR',
-    'jazz': 'UTA', 'utah jazz': 'UTA', 'utah': 'UTA',
-    'wizards': 'WAS', 'washington wizards': 'WAS', 'washington': 'WAS',
+    "hawks": "ATL",
+    "atlanta hawks": "ATL",
+    "atlanta": "ATL",
+    "nets": "BKN",
+    "brooklyn nets": "BKN",
+    "brooklyn": "BKN",
+    "celtics": "BOS",
+    "boston celtics": "BOS",
+    "boston": "BOS",
+    "hornets": "CHA",
+    "charlotte hornets": "CHA",
+    "charlotte": "CHA",
+    "bulls": "CHI",
+    "chicago bulls": "CHI",
+    "chicago": "CHI",
+    "cavaliers": "CLE",
+    "cleveland cavaliers": "CLE",
+    "cleveland": "CLE",
+    "cavs": "CLE",
+    "mavericks": "DAL",
+    "dallas mavericks": "DAL",
+    "dallas": "DAL",
+    "mavs": "DAL",
+    "nuggets": "DEN",
+    "denver nuggets": "DEN",
+    "denver": "DEN",
+    "pistons": "DET",
+    "detroit pistons": "DET",
+    "detroit": "DET",
+    "warriors": "GSW",
+    "golden state warriors": "GSW",
+    "golden state": "GSW",
+    "rockets": "HOU",
+    "houston rockets": "HOU",
+    "houston": "HOU",
+    "pacers": "IND",
+    "indiana pacers": "IND",
+    "indiana": "IND",
+    "clippers": "LAC",
+    "la clippers": "LAC",
+    "los angeles clippers": "LAC",
+    "lakers": "LAL",
+    "la lakers": "LAL",
+    "los angeles lakers": "LAL",
+    "grizzlies": "MEM",
+    "memphis grizzlies": "MEM",
+    "memphis": "MEM",
+    "heat": "MIA",
+    "miami heat": "MIA",
+    "miami": "MIA",
+    "bucks": "MIL",
+    "milwaukee bucks": "MIL",
+    "milwaukee": "MIL",
+    "timberwolves": "MIN",
+    "minnesota timberwolves": "MIN",
+    "minnesota": "MIN",
+    "wolves": "MIN",
+    "pelicans": "NOP",
+    "new orleans pelicans": "NOP",
+    "new orleans": "NOP",
+    "knicks": "NYK",
+    "new york knicks": "NYK",
+    "new york": "NYK",
+    "thunder": "OKC",
+    "oklahoma city thunder": "OKC",
+    "oklahoma city": "OKC",
+    "magic": "ORL",
+    "orlando magic": "ORL",
+    "orlando": "ORL",
+    "76ers": "PHI",
+    "philadelphia 76ers": "PHI",
+    "philadelphia": "PHI",
+    "sixers": "PHI",
+    "suns": "PHX",
+    "phoenix suns": "PHX",
+    "phoenix": "PHX",
+    "trail blazers": "POR",
+    "portland trail blazers": "POR",
+    "portland": "POR",
+    "blazers": "POR",
+    "kings": "SAC",
+    "sacramento kings": "SAC",
+    "sacramento": "SAC",
+    "spurs": "SAS",
+    "san antonio spurs": "SAS",
+    "san antonio": "SAS",
+    "raptors": "TOR",
+    "toronto raptors": "TOR",
+    "toronto": "TOR",
+    "jazz": "UTA",
+    "utah jazz": "UTA",
+    "utah": "UTA",
+    "wizards": "WAS",
+    "washington wizards": "WAS",
+    "washington": "WAS",
 }
 
 
 # Valid NBA team abbreviations (NBA.com official format)
 VALID_NBA_TEAMS = {
-    'ATL',  # Atlanta Hawks
-    'BKN',  # Brooklyn Nets
-    'BOS',  # Boston Celtics
-    'CHA',  # Charlotte Hornets
-    'CHI',  # Chicago Bulls
-    'CLE',  # Cleveland Cavaliers
-    'DAL',  # Dallas Mavericks
-    'DEN',  # Denver Nuggets
-    'DET',  # Detroit Pistons
-    'GSW',  # Golden State Warriors
-    'HOU',  # Houston Rockets
-    'IND',  # Indiana Pacers
-    'LAC',  # LA Clippers
-    'LAL',  # Los Angeles Lakers
-    'MEM',  # Memphis Grizzlies
-    'MIA',  # Miami Heat
-    'MIL',  # Milwaukee Bucks
-    'MIN',  # Minnesota Timberwolves
-    'NOP',  # New Orleans Pelicans
-    'NYK',  # New York Knicks
-    'OKC',  # Oklahoma City Thunder
-    'ORL',  # Orlando Magic
-    'PHI',  # Philadelphia 76ers
-    'PHX',  # Phoenix Suns
-    'POR',  # Portland Trail Blazers
-    'SAC',  # Sacramento Kings
-    'SAS',  # San Antonio Spurs
-    'TOR',  # Toronto Raptors
-    'UTA',  # Utah Jazz
-    'WAS',  # Washington Wizards
+    "ATL",  # Atlanta Hawks
+    "BKN",  # Brooklyn Nets
+    "BOS",  # Boston Celtics
+    "CHA",  # Charlotte Hornets
+    "CHI",  # Chicago Bulls
+    "CLE",  # Cleveland Cavaliers
+    "DAL",  # Dallas Mavericks
+    "DEN",  # Denver Nuggets
+    "DET",  # Detroit Pistons
+    "GSW",  # Golden State Warriors
+    "HOU",  # Houston Rockets
+    "IND",  # Indiana Pacers
+    "LAC",  # LA Clippers
+    "LAL",  # Los Angeles Lakers
+    "MEM",  # Memphis Grizzlies
+    "MIA",  # Miami Heat
+    "MIL",  # Milwaukee Bucks
+    "MIN",  # Minnesota Timberwolves
+    "NOP",  # New Orleans Pelicans
+    "NYK",  # New York Knicks
+    "OKC",  # Oklahoma City Thunder
+    "ORL",  # Orlando Magic
+    "PHI",  # Philadelphia 76ers
+    "PHX",  # Phoenix Suns
+    "POR",  # Portland Trail Blazers
+    "SAC",  # Sacramento Kings
+    "SAS",  # San Antonio Spurs
+    "TOR",  # Toronto Raptors
+    "UTA",  # Utah Jazz
+    "WAS",  # Washington Wizards
 }
 
 
@@ -151,7 +209,7 @@ def normalize_team_abbrev(abbrev: Optional[str]) -> Optional[str]:
         >>> normalize_team_abbrev(None)
         None
     """
-    if not abbrev or abbrev == '':
+    if not abbrev or abbrev == "":
         return None
 
     # Convert to uppercase for case-insensitive matching

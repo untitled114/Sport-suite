@@ -67,12 +67,12 @@ fi
 DB_HOST="${NBA_DB_HOST:-localhost}"
 DB_PORT="${NBA_INT_DB_PORT:-5539}"
 DB_NAME="${NBA_INT_DB_NAME:-nba_intelligence}"
-DB_USER="${DB_USER:-nba_user}"
+DB_USER="${DB_USER:-mlb_user}"
 # Validate DB_PASSWORD is set (used per-command with PGPASSWORD=)
 : "${DB_PASSWORD:?DB_PASSWORD environment variable is required}"
 
-# Export DB credentials for Python scripts (they read from os.getenv)
-export DB_USER DB_PASSWORD
+# Export DB credentials and API keys for Python scripts (they read from os.getenv)
+export DB_USER DB_PASSWORD ODDS_API_KEY
 
 # Python path for imports
 export PYTHONPATH="$PROJECT_ROOT"
@@ -124,7 +124,9 @@ section() {
     {
         echo ""
         echo -e "${BOLD}${INFO}* ${title}${NC}"
-        [ -n "$detail" ] && echo -e "  ${MUTED}${detail}${NC}"
+        if [ -n "$detail" ]; then
+            echo -e "  ${MUTED}${detail}${NC}"
+        fi
     } | tee -a "$LOG_FILE"
 }
 

@@ -22,12 +22,13 @@ Date: 2025-11-09
 """
 
 import os
-import psycopg2
-import unicodedata
-from typing import Optional, Dict, List, Tuple
-from pathlib import Path
 import pickle
+import unicodedata
 from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+import psycopg2
 
 
 class NameNormalizer:
@@ -45,25 +46,25 @@ class NameNormalizer:
     # Nickname mappings: full name -> common name used by BettingPros
     # Maps AFTER normalization is applied
     NICKNAME_MAP = {
-        'Nicolas Claxton': 'Nic Claxton',
-        'Carlton Carrington': 'Bub Carrington',
-        'Moritz Wagner': 'Moe Wagner',
-        'Mohamed Bamba': 'Mo Bamba',
-        'Luguentz Dort': 'Lu Dort',
-        'Sviatoslav Mykhailiuk': 'Svi Mykhailiuk',
+        "Nicolas Claxton": "Nic Claxton",
+        "Carlton Carrington": "Bub Carrington",
+        "Moritz Wagner": "Moe Wagner",
+        "Mohamed Bamba": "Mo Bamba",
+        "Luguentz Dort": "Lu Dort",
+        "Sviatoslav Mykhailiuk": "Svi Mykhailiuk",
     }
 
     # Database config (connects to player_profile database)
     DB_CONFIG = {
-        'host': 'localhost',
-        'port': 5536,  # nba_players database (where player_profile is located)
-        'database': 'nba_players',
-        'user': os.getenv('DB_USER', 'mlb_user'),
-        'password': os.getenv('DB_PASSWORD')
+        "host": "localhost",
+        "port": 5536,  # nba_players database (where player_profile is located)
+        "database": "nba_players",
+        "user": os.getenv("DB_USER", "mlb_user"),
+        "password": os.getenv("DB_PASSWORD"),
     }
 
     # Cache file location
-    CACHE_FILE = Path(__file__).parent / '.name_normalizer_cache.pkl'
+    CACHE_FILE = Path(__file__).parent / ".name_normalizer_cache.pkl"
     CACHE_MAX_AGE_HOURS = 24  # Rebuild cache daily
 
     def __init__(self, use_cache: bool = True):
@@ -74,7 +75,9 @@ class NameNormalizer:
             use_cache: Use cached mapping if available (default: True)
         """
         self.use_cache = use_cache
-        self.mapping: Dict[str, Dict] = {}  # normalized_name → {player_id, game_count, original_names}
+        self.mapping: Dict[str, Dict] = (
+            {}
+        )  # normalized_name → {player_id, game_count, original_names}
         self.reverse_mapping: Dict[str, str] = {}  # original_name → normalized_name
 
         # Load mapping
@@ -112,46 +115,57 @@ class NameNormalizer:
             return ""
 
         # Remove periods first (before title casing to preserve initials like PJ, TJ)
-        name = name.strip().replace('.', '')
+        name = name.strip().replace(".", "")
 
         # Convert to title case (now "PJ Washington" stays "Pj Washington" temporarily)
         name = name.title()
 
         # Fix common initials that .title() breaks (PJ, TJ, AJ, etc.)
         # These should be all-caps
-        initials = ['Pj ', 'Tj ', 'Cj ', 'Aj ', 'Rj ', 'Jj ', 'Dj ', 'Og ', 'Vj ']
+        initials = ["Pj ", "Tj ", "Cj ", "Aj ", "Rj ", "Jj ", "Dj ", "Og ", "Vj "]
         for initial in initials:
             if name.startswith(initial):
                 name = initial.upper() + name[3:]  # Replace 'Pj ' with 'PJ '
 
         # Fix mixed-case names that .title() breaks (DeMar, DeRozan, LaMelo, LaRavia, etc.)
         mixed_case_fixes = {
-            'Demar': 'DeMar', 'Derozan': 'DeRozan', 'Deandre': 'DeAndre',
-            'Deaaron': 'De\'Aaron', 'Lamelo': 'LaMelo', 'Lonnie': 'Lonnie',
-            'Laravia': 'LaRavia', 'Lavine': 'LaVine', 'Lebron': 'LeBron',
-            'Mcconnell': 'McConnell', 'Mccollum': 'McCollum', 'Mcdaniels': 'McDaniels',
-            'Mcgee': 'McGee', 'Mckinnie': 'McKinnie',
-            "Day'Ron": "Day'Ron", "Dayron": "Day'Ron",
-            'O\'Neale': "O'Neale", 'Oneale': "O'Neale",
+            "Demar": "DeMar",
+            "Derozan": "DeRozan",
+            "Deandre": "DeAndre",
+            "Deaaron": "De'Aaron",
+            "Lamelo": "LaMelo",
+            "Lonnie": "Lonnie",
+            "Laravia": "LaRavia",
+            "Lavine": "LaVine",
+            "Lebron": "LeBron",
+            "Mcconnell": "McConnell",
+            "Mccollum": "McCollum",
+            "Mcdaniels": "McDaniels",
+            "Mcgee": "McGee",
+            "Mckinnie": "McKinnie",
+            "Day'Ron": "Day'Ron",
+            "Dayron": "Day'Ron",
+            "O'Neale": "O'Neale",
+            "Oneale": "O'Neale",
         }
         for wrong, correct in mixed_case_fixes.items():
             if wrong in name:
                 name = name.replace(wrong, correct)
 
         # Remove accents (ş → s, ć → c, etc.)
-        nfd = unicodedata.normalize('NFD', name)
-        name = ''.join(char for char in nfd if unicodedata.category(char) != 'Mn')
+        nfd = unicodedata.normalize("NFD", name)
+        name = "".join(char for char in nfd if unicodedata.category(char) != "Mn")
 
         # Remove suffixes (Jr, Sr, II, III, IV, V - with or without periods)
         # Check both with and without periods since we already removed them
-        suffixes = [' Jr', ' Sr', ' Ii', ' Iii', ' Iv', ' V']
+        suffixes = [" Jr", " Sr", " Ii", " Iii", " Iv", " V"]
         for suffix in suffixes:
             if name.endswith(suffix):
-                name = name[:-len(suffix)]
+                name = name[: -len(suffix)]
                 break
 
         # Normalize whitespace
-        name = ' '.join(name.split())
+        name = " ".join(name.split())
 
         name = name.strip()
 
@@ -188,11 +202,11 @@ class NameNormalizer:
                 return False
 
             # Load cache
-            with open(self.CACHE_FILE, 'rb') as f:
+            with open(self.CACHE_FILE, "rb") as f:
                 data = pickle.load(f)
 
-            self.mapping = data['mapping']
-            self.reverse_mapping = data['reverse_mapping']
+            self.mapping = data["mapping"]
+            self.reverse_mapping = data["reverse_mapping"]
 
             print(f"✓ Loaded name mapping from cache ({len(self.mapping):,} normalized names)")
             return True
@@ -204,12 +218,15 @@ class NameNormalizer:
     def _save_to_cache(self):
         """Save mapping to cache file."""
         try:
-            with open(self.CACHE_FILE, 'wb') as f:
-                pickle.dump({
-                    'mapping': self.mapping,
-                    'reverse_mapping': self.reverse_mapping,
-                    'created_at': datetime.now().isoformat()
-                }, f)
+            with open(self.CACHE_FILE, "wb") as f:
+                pickle.dump(
+                    {
+                        "mapping": self.mapping,
+                        "reverse_mapping": self.reverse_mapping,
+                        "created_at": datetime.now().isoformat(),
+                    },
+                    f,
+                )
             print(f"✓ Saved name mapping to cache")
         except Exception as e:
             print(f"Warning: Could not save cache: {e}")
@@ -246,39 +263,40 @@ class NameNormalizer:
 
             # Group by normalized name
             from collections import defaultdict
+
             name_groups = defaultdict(list)
 
             for full_name, player_id, game_count in rows:
                 normalized = self.normalize_name(full_name)
-                name_groups[normalized].append({
-                    'original_name': full_name,
-                    'player_id': player_id,
-                    'game_count': game_count
-                })
+                name_groups[normalized].append(
+                    {"original_name": full_name, "player_id": player_id, "game_count": game_count}
+                )
 
             # Build mapping - pick player_id with most game logs
             for normalized_name, players in name_groups.items():
                 # Sort by game_count descending
-                players_sorted = sorted(players, key=lambda p: p['game_count'], reverse=True)
+                players_sorted = sorted(players, key=lambda p: p["game_count"], reverse=True)
                 canonical = players_sorted[0]
 
                 # Store mapping
                 self.mapping[normalized_name] = {
-                    'player_id': canonical['player_id'],
-                    'game_count': canonical['game_count'],
-                    'original_names': [p['original_name'] for p in players],
-                    'all_player_ids': [p['player_id'] for p in players],
-                    'has_duplicates': len(players) > 1
+                    "player_id": canonical["player_id"],
+                    "game_count": canonical["game_count"],
+                    "original_names": [p["original_name"] for p in players],
+                    "all_player_ids": [p["player_id"] for p in players],
+                    "has_duplicates": len(players) > 1,
                 }
 
                 # Build reverse mapping (all original names point to normalized)
                 for player in players:
-                    self.reverse_mapping[player['original_name']] = normalized_name
+                    self.reverse_mapping[player["original_name"]] = normalized_name
 
-            print(f"✓ Built mapping for {len(self.mapping):,} normalized names from {len(rows):,} database entries")
+            print(
+                f"✓ Built mapping for {len(self.mapping):,} normalized names from {len(rows):,} database entries"
+            )
 
             # Show some statistics
-            duplicates = sum(1 for m in self.mapping.values() if m['has_duplicates'])
+            duplicates = sum(1 for m in self.mapping.values() if m["has_duplicates"])
             if duplicates > 0:
                 print(f"  → Resolved {duplicates:,} names with duplicate player_ids")
 
@@ -304,7 +322,7 @@ class NameNormalizer:
         normalized = self.normalize_name(player_name)
 
         if normalized in self.mapping:
-            return self.mapping[normalized]['player_id']
+            return self.mapping[normalized]["player_id"]
 
         return None
 
@@ -324,12 +342,12 @@ class NameNormalizer:
     def has_duplicates(self, player_name: str) -> bool:
         """Check if a player name has duplicate player_ids in database."""
         info = self.get_player_info(player_name)
-        return info['has_duplicates'] if info else False
+        return info["has_duplicates"] if info else False
 
     def get_all_variations(self, player_name: str) -> List[str]:
         """Get all name variations for a player."""
         info = self.get_player_info(player_name)
-        return info['original_names'] if info else []
+        return info["original_names"] if info else []
 
     def rebuild_cache(self):
         """Force rebuild of cache from database."""
@@ -340,25 +358,27 @@ class NameNormalizer:
 
     def print_stats(self):
         """Print mapping statistics."""
-        print("\n" + "="*80)
+        print("\n" + "=" * 80)
         print("NAME NORMALIZER STATISTICS")
-        print("="*80)
+        print("=" * 80)
         print(f"Total normalized names: {len(self.mapping):,}")
         print(f"Total original names: {len(self.reverse_mapping):,}")
 
-        duplicates = sum(1 for m in self.mapping.values() if m['has_duplicates'])
+        duplicates = sum(1 for m in self.mapping.values() if m["has_duplicates"])
         print(f"Names with duplicates: {duplicates:,}")
 
         # Show some examples
         print("\nDuplicate Examples (canonical player_id selected):")
-        dup_examples = [(k, v) for k, v in self.mapping.items() if v['has_duplicates']]
-        dup_examples.sort(key=lambda x: x[1]['game_count'], reverse=True)
+        dup_examples = [(k, v) for k, v in self.mapping.items() if v["has_duplicates"]]
+        dup_examples.sort(key=lambda x: x[1]["game_count"], reverse=True)
 
         for norm_name, info in dup_examples[:10]:
-            print(f"  {norm_name:30s} → player_id={info['player_id']:8d} "
-                  f"({info['game_count']:4d} games, {len(info['all_player_ids'])} IDs)")
+            print(
+                f"  {norm_name:30s} → player_id={info['player_id']:8d} "
+                f"({info['game_count']:4d} games, {len(info['all_player_ids'])} IDs)"
+            )
 
-        print("="*80 + "\n")
+        print("=" * 80 + "\n")
 
 
 # Global singleton instance
@@ -402,7 +422,7 @@ def get_player_info(player_name: str) -> Optional[Dict]:
     return get_normalizer().get_player_info(player_name)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Test the normalizer
     normalizer = NameNormalizer()
     normalizer.print_stats()
@@ -415,7 +435,7 @@ if __name__ == '__main__':
         "Luka Dončić",
         "P.J. Washington Jr.",
         "Russell Westbrook III",
-        "Mikal Bridges"
+        "Mikal Bridges",
     ]
 
     for name in test_names:
@@ -429,7 +449,7 @@ if __name__ == '__main__':
             print(f"  Canonical player_id: {player_id}")
             print(f"  Game logs: {info['game_count']}")
             print(f"  Has duplicates: {info['has_duplicates']}")
-            if info['has_duplicates']:
+            if info["has_duplicates"]:
                 print(f"  All player_ids: {info['all_player_ids']}")
         else:
             print(f"\n'{name}': NOT FOUND")

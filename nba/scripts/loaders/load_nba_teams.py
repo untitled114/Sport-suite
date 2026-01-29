@@ -10,31 +10,29 @@ Usage:
     python load_nba_teams.py --season 2021-22 2022-23 2023-24
 """
 
-import sys
-import os
 import argparse
 import logging
+import os
+import sys
+
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
 
 # Add utilities to path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utilities'))
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utilities"))
 from nba_api_wrapper import NBAApiWrapper
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Database connection params
 DB_CONFIG = {
-    'host': 'localhost',
-    'port': 5538,
-    'database': 'nba_team',
-    'user': os.getenv('DB_USER', 'nba_user'),
-    'password': os.getenv('DB_PASSWORD')
+    "host": "localhost",
+    "port": 5538,
+    "database": "nba_team",
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
 }
 
 
@@ -81,16 +79,36 @@ class NBATeamLoader:
         for _, row in teams_df.iterrows():
             # Parse conference/division from team data
             # Note: Static API doesn't include this, using defaults
-            insert_data.append((
-                row['id'],
-                row['abbreviation'],
-                row['full_name'],
-                'East' if row['id'] in [1610612737, 1610612738, 1610612739, 1610612751,
-                                         1610612765, 1610612752, 1610612756, 1610612748,
-                                         1610612753, 1610612755, 1610612749, 1610612764,
-                                         1610612741, 1610612754, 1610612766] else 'West',
-                None  # division - can be filled later
-            ))
+            insert_data.append(
+                (
+                    row["id"],
+                    row["abbreviation"],
+                    row["full_name"],
+                    (
+                        "East"
+                        if row["id"]
+                        in [
+                            1610612737,
+                            1610612738,
+                            1610612739,
+                            1610612751,
+                            1610612765,
+                            1610612752,
+                            1610612756,
+                            1610612748,
+                            1610612753,
+                            1610612755,
+                            1610612749,
+                            1610612764,
+                            1610612741,
+                            1610612754,
+                            1610612766,
+                        ]
+                        else "West"
+                    ),
+                    None,  # division - can be filled later
+                )
+            )
 
         # Insert into database
         cursor = self.conn.cursor()
@@ -130,7 +148,7 @@ class NBATeamLoader:
             return 0
 
         insert_data = []
-        season_year = int(season.split('-')[0])
+        season_year = int(season.split("-")[0])
 
         # Fetch game logs for each team and aggregate
         for _, team in teams_df.iterrows():
@@ -138,7 +156,7 @@ class NBATeamLoader:
                 logger.info(f"Fetching stats for {team['abbreviation']}...")
 
                 # Get team game logs
-                game_logs = self.api.get_team_game_logs(team['id'], season=season)
+                game_logs = self.api.get_team_game_logs(team["id"], season=season)
 
                 if game_logs.empty:
                     logger.warning(f"No game logs for {team['abbreviation']}")
@@ -146,26 +164,36 @@ class NBATeamLoader:
 
                 # Calculate aggregate stats
                 # Note: Column names vary by endpoint, adjust as needed
-                avg_pace = game_logs.get('PACE', pd.Series([0])).mean() if 'PACE' in game_logs.columns else None
+                avg_pace = (
+                    game_logs.get("PACE", pd.Series([0])).mean()
+                    if "PACE" in game_logs.columns
+                    else None
+                )
 
                 # Offensive/Defensive rating approximations
                 # These would ideally come from advanced stats endpoints
-                avg_pts = game_logs.get('PTS', pd.Series([0])).mean()
-                avg_opp_pts = game_logs.get('OPP_PTS', pd.Series([0])).mean() if 'OPP_PTS' in game_logs.columns else None
+                avg_pts = game_logs.get("PTS", pd.Series([0])).mean()
+                avg_opp_pts = (
+                    game_logs.get("OPP_PTS", pd.Series([0])).mean()
+                    if "OPP_PTS" in game_logs.columns
+                    else None
+                )
 
-                insert_data.append((
-                    team['abbreviation'],
-                    season_year,
-                    avg_pace,
-                    None,  # offensive_rating (requires possessions data)
-                    None,  # defensive_rating
-                    None,  # def_rating_vs_pg
-                    None,  # def_rating_vs_sg
-                    None,  # def_rating_vs_sf
-                    None,  # def_rating_vs_pf
-                    None,  # def_rating_vs_c
-                    None   # pace_neutral_off_rating
-                ))
+                insert_data.append(
+                    (
+                        team["abbreviation"],
+                        season_year,
+                        avg_pace,
+                        None,  # offensive_rating (requires possessions data)
+                        None,  # defensive_rating
+                        None,  # def_rating_vs_pg
+                        None,  # def_rating_vs_sg
+                        None,  # def_rating_vs_sf
+                        None,  # def_rating_vs_pf
+                        None,  # def_rating_vs_c
+                        None,  # pace_neutral_off_rating
+                    )
+                )
 
             except Exception as e:
                 logger.warning(f"Failed to load stats for {team['abbreviation']}: {e}")
@@ -198,9 +226,14 @@ class NBATeamLoader:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Load NBA team data into database')
-    parser.add_argument('--season', type=str, nargs='+', default=['2023-24'],
-                       help='NBA seasons to load (e.g., 2023-24)')
+    parser = argparse.ArgumentParser(description="Load NBA team data into database")
+    parser.add_argument(
+        "--season",
+        type=str,
+        nargs="+",
+        default=["2023-24"],
+        help="NBA seasons to load (e.g., 2023-24)",
+    )
 
     args = parser.parse_args()
 

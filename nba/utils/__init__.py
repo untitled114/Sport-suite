@@ -1,1 +1,5 @@
-"""NBA utilities package."""
+"""
+Utility Functions
+=================
+Common utilities for the NBA props system.
+"""
