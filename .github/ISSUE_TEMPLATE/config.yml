@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/untitled/Sport-suite#readme
+    about: Check the README for setup instructions and usage guides
+  - name: Model Registry
+    url: https://github.com/untitled/Sport-suite/blob/main/nba/models/MODEL_REGISTRY.toml
+    about: View current model versions and metadata
+  - name: System Design
+    url: https://github.com/untitled/Sport-suite/blob/main/SYSTEM_DESIGN.md
+    about: Understand the system architecture before reporting issues
