@@ -1,0 +1,103 @@
+# NBA Props Prediction API - Docker Compose
+# ==========================================
+#
+# Usage:
+#   # Start API with all dependencies
+#   docker-compose -f docker-compose.api.yml up -d
+#
+#   # Start only the API (databases already running)
+#   docker-compose -f docker-compose.api.yml up -d nba-api
+#
+#   # View logs
+#   docker-compose -f docker-compose.api.yml logs -f nba-api
+#
+#   # Stop
+#   docker-compose -f docker-compose.api.yml down
+#
+# Environment variables (see .env.example):
+#   - DB_USER, DB_PASSWORD: Database credentials
+#   - API_PORT: API port (default: 8000)
+#   - API_WORKERS: Number of uvicorn workers (default: 4)
+#   - API_PRELOAD_MODELS: Preload models at startup (default: false)
+
+version: '3.8'
+
+services:
+  # ==========================================================================
+  # NBA PROPS PREDICTION API
+  # ==========================================================================
+  nba-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: nba-props-api:latest
+    container_name: nba_props_api
+    restart: unless-stopped
+    environment:
+      # API Configuration
+      API_HOST: "0.0.0.0"
+      API_PORT: ${API_PORT:-8000}
+      API_WORKERS: ${API_WORKERS:-4}
+      API_PRELOAD_MODELS: ${API_PRELOAD_MODELS:-false}
+      API_RELOAD: "false"
+      DEBUG: ${DEBUG:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+
+      # Database Configuration (connect to host network databases)
+      # When running in Docker, use host.docker.internal to connect to host
+      NBA_PLAYERS_DB_HOST: ${NBA_PLAYERS_DB_HOST:-host.docker.internal}
+      NBA_PLAYERS_DB_PORT: ${NBA_PLAYERS_PORT:-5536}
+      NBA_GAMES_DB_HOST: ${NBA_GAMES_DB_HOST:-host.docker.internal}
+      NBA_GAMES_DB_PORT: ${NBA_GAMES_PORT:-5537}
+      NBA_TEAM_DB_HOST: ${NBA_TEAM_DB_HOST:-host.docker.internal}
+      NBA_TEAM_DB_PORT: ${NBA_TEAM_PORT:-5538}
+      NBA_INTEL_DB_HOST: ${NBA_INTEL_DB_HOST:-host.docker.internal}
+      NBA_INTEL_DB_PORT: ${NBA_INTELLIGENCE_PORT:-5539}
+
+      # Database Credentials
+      DB_USER: ${DB_USER:-mlb_user}
+      DB_PASSWORD: ${DB_PASSWORD:-REDACTED}
+
+      # MongoDB (optional)
+      MONGO_URI: ${MONGO_URI:-mongodb://host.docker.internal:27017/}
+
+    ports:
+      - "${API_PORT:-8000}:8000"
+
+    volumes:
+      # Mount models directory (read-only)
+      - ./nba/models/saved_xl:/app/nba/models/saved_xl:ro
+
+    networks:
+      - nba_network
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # For local development with databases running on host
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    depends_on: []  # Databases should already be running via docker/docker-compose.yml
+
+networks:
+  nba_network:
+    name: nba_network
+    external: true  # Use existing network from docker/docker-compose.yml
+
+# Alternative: If you want to run databases with this compose file,
+# uncomment the following and remove 'external: true' above:
+#
+# networks:
+#   nba_network:
+#     driver: bridge

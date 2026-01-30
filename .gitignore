@@ -153,3 +153,4 @@ FIX_*.md
 coverage.xml
 *.egg-info/
 coverage_html/
+airflow/airflow-webserver.pid

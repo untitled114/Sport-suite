@@ -191,13 +191,17 @@ output = "coverage.xml"
 
 # Bandit security linter configuration
 [tool.bandit]
-exclude_dirs = ["tests", "venv", ".venv", "docker"]
+exclude_dirs = ["tests", "venv", ".venv", "docker", "airflow"]
 skips = [
     "B101",  # assert (used in tests)
+    "B104",  # hardcoded_bind_all_interfaces (API needs 0.0.0.0 for containers)
     "B110",  # try_except_pass (intentional in data parsing)
     "B112",  # try_except_continue (intentional in data parsing)
     "B311",  # random (not used for crypto, just user agents/backoff)
     "B301",  # pickle (required for ML model serialization)
     "B403",  # pickle import (required for ML)
+    "B404",  # subprocess import (required for Airflow task orchestration)
+    "B603",  # subprocess_without_shell (Airflow DAGs use subprocess safely)
+    "B607",  # start_process_with_partial_path (controlled paths in DAGs)
     "B608",  # SQL injection (false positives - uses parameterized queries)
 ]
