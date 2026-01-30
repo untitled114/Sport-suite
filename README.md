@@ -49,8 +49,8 @@ Split:      Temporal (no future data leakage)
 |--------|----------|-----|-----|--------------|
 | **POINTS** | 166 | 0.537 | 0.736 | Two-head stacked |
 | **REBOUNDS** | 166 | 0.531 | 0.748 | Two-head stacked |
-| **ASSISTS** | 102 | - | - | Legacy (disabled) |
-| **THREES** | 102 | - | - | Legacy (disabled) |
+| **ASSISTS** | 102 | - | - | Legacy XL (disabled) |
+| **THREES** | 102 | - | - | Legacy XL (disabled) |
 
 ### Feature Breakdown (166 features)
 
@@ -146,27 +146,44 @@ Computed (1):
 nba/
 ├── betting_xl/
 │   ├── xl_predictor.py              # Model loading + inference
-│   ├── validate_predictions.py      # Results validation
 │   ├── line_optimizer.py            # Bet filtering logic
+│   ├── validate_predictions.py      # Results validation (all systems)
+│   ├── validate_xl_models.py        # Historical model backtesting
 │   ├── predictions/                 # Daily picks output
 │   └── fetchers/                    # Data collection (7 books)
+│       ├── fetch_bettingpros.py     # Main odds fetcher
+│       ├── fetch_cheatsheet.py      # BettingPros projections
+│       ├── fetch_pick6_live.py      # Odds API integration
+│       └── fetch_vegas_lines.py     # Vegas totals/spreads
 │
 ├── models/
 │   ├── saved_xl/                    # Production models
-│   │   ├── {market}_v3_*.pkl        # 3-head models (166 features)
-│   │   └── {market}_xl_*.pkl        # 2-head models (102 features)
+│   │   ├── {market}_xl_*.pkl        # 102-feature XL models (CURRENT PRODUCTION)
+│   │   ├── {market}_v3_*.pkl        # 166-feature V3 models (available, not deployed)
+│   │   └── {market}_matchup_*.pkl   # 44-feature matchup add-on models
 │   ├── train_market.py              # Model training
 │   └── model_cards/                 # Model documentation
 │
 ├── features/
 │   ├── extract_live_features_xl.py  # 166-feature extraction
+│   ├── extractors/                  # Modular feature extractors
+│   │   ├── book_features.py         # Book disagreement features
+│   │   ├── h2h_features.py          # Head-to-head features
+│   │   └── prop_history_features.py # Prop history features
 │   └── datasets/                    # Training data
 │
 ├── core/
 │   ├── schemas.py                   # Pydantic validation
-│   ├── exceptions.py                # Custom exceptions
+│   ├── exceptions.py                # Custom exception hierarchy
 │   ├── drift_detection.py           # Feature drift monitoring
-│   └── experiment_tracking.py       # MLflow integration
+│   ├── drift_service.py             # Production drift service
+│   ├── experiment_tracking.py       # MLflow integration
+│   └── logging_config.py            # Structured logging
+│
+├── config/
+│   ├── thresholds.py                # Betting thresholds config
+│   ├── constants.py                 # Shared constants
+│   └── database.py                  # Database connection config
 │
 └── nba-predictions.sh               # Pipeline orchestrator
 ```
@@ -201,11 +218,14 @@ pip install -e ".[dev]"
 ### Validate Results
 
 ```bash
-# Check recent performance
-python3 nba/betting_xl/validate_predictions.py \
-  --predictions-dir nba/betting_xl/predictions \
-  --start-date 2026-01-01 \
-  --end-date 2026-01-28
+# Using the CLI (recommended)
+./nba/nba-predictions.sh validate           # Yesterday's results
+./nba/nba-predictions.sh validate --7d      # Last 7 days
+./nba/nba-predictions.sh validate --30d     # Last 30 days
+
+# Or directly with Python
+cd nba/betting_xl
+python3 validate_predictions.py --start-date 2026-01-01 --end-date 2026-01-28
 ```
 
 ---
@@ -233,20 +253,21 @@ python3 nba/betting_xl/validate_predictions.py \
 ### Data Sources
 
 - **BettingPros API**: 7 sportsbooks (DraftKings, FanDuel, BetMGM, Caesars, BetRivers, ESPNBet, Underdog)
-- **ESPN API**: Game schedules, matchup data
+- **ESPN API**: Game schedules, matchup data (fallback for BettingPros)
 - **NBA Stats**: Box scores, player game logs
 
 ---
 
 ## Engineering Highlights
 
-- **390 tests** with pytest (unit + integration)
+- **512 tests** with pytest (unit + integration), 96% coverage
 - **Pydantic schemas** for data validation
 - **Custom exception hierarchy** for error handling
-- **Feature drift detection** with KS tests
-- **MLflow integration** for experiment tracking
+- **Feature drift detection** with KS tests and z-score monitoring
+- **MLflow integration** for experiment tracking (optional)
 - **Pre-commit hooks** (black, isort, flake8, bandit)
 - **GitHub Actions CI/CD** for automated testing
+- **Airflow DAGs** for pipeline orchestration
 
 ---
 

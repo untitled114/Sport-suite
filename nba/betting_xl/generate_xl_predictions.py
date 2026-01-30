@@ -247,15 +247,18 @@ class XLPredictionsGenerator:
         LEFT JOIN last_games lg ON pp.player_id = lg.player_id;
         """
 
-        # Query 2: Today's injury status from intelligence DB (injury_report)
+        # Query 2: Injury status for the target date from intelligence DB (injury_report)
+        # Uses self.game_date (not CURRENT_DATE) to support historical backtesting
         injury_query = """
         SELECT player_id, status AS injury_status
         FROM injury_report
-        WHERE report_date = CURRENT_DATE;
+        WHERE report_date = %s;
         """
 
         df_players = pd.read_sql_query(player_query, self.conn_players)
-        df_injuries = pd.read_sql_query(injury_query, self.conn_intelligence)
+        df_injuries = pd.read_sql_query(
+            injury_query, self.conn_intelligence, params=(self.game_date,)
+        )
 
         # Merge injury status into player data
         df = df_players.merge(df_injuries, on="player_id", how="left")

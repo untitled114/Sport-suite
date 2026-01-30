@@ -77,9 +77,9 @@ class XLMarketValidator:
     def load_model(self):
         """Load XL model components"""
         try:
-            # Try new naming convention first (*_market_*), then fall back to old (*_xl_*)
-            model_prefix = MODELS_DIR / f"{self.market}_market"
-            if not (MODELS_DIR / f"{self.market}_market_regressor.pkl").exists():
+            # Try V3 naming convention first (*_v3_*), then fall back to XL (*_xl_*)
+            model_prefix = MODELS_DIR / f"{self.market}_v3"
+            if not (MODELS_DIR / f"{self.market}_v3_regressor.pkl").exists():
                 model_prefix = MODELS_DIR / f"{self.market}_xl"
                 logger.info(
                     "Using legacy model naming",

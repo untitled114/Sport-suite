@@ -223,13 +223,13 @@ class TestModelSaving:
 
         # Check for expected files
         expected_files = [
-            "points_market_regressor.pkl",
-            "points_market_classifier.pkl",
-            "points_market_imputer.pkl",
-            "points_market_scaler.pkl",
-            "points_market_calibrator.pkl",
-            "points_market_features.pkl",
-            "points_market_metadata.json",
+            "points_v3_regressor.pkl",
+            "points_v3_classifier.pkl",
+            "points_v3_imputer.pkl",
+            "points_v3_scaler.pkl",
+            "points_v3_calibrator.pkl",
+            "points_v3_features.pkl",
+            "points_v3_metadata.json",
         ]
 
         for filename in expected_files:
@@ -246,7 +246,7 @@ class TestModelSaving:
 
         trained_model_mock.save(str(output_dir), metrics)
 
-        metadata_path = output_dir / "points_market_metadata.json"
+        metadata_path = output_dir / "points_v3_metadata.json"
         with open(metadata_path) as f:
             metadata = json.load(f)
 
