@@ -29,9 +29,9 @@ REFERENCE_DIR = PROJECT_ROOT / "nba" / "models" / "reference_distributions"
 TRAINING_DIR = PROJECT_ROOT / "nba" / "features" / "datasets"
 
 
-def generate_reference(market: str) -> int:
-    """Generate reference distributions from training data."""
-    from nba.core.reference_distributions import build_from_training_dataset
+def generate_reference(market: str, model_version: str = "xl") -> int:
+    """Generate reference distributions from training data using model features."""
+    from nba.core.reference_distributions import build_from_training_dataset, load_model_features
 
     market_upper = market.upper()
     market_lower = market.lower()
@@ -43,6 +43,14 @@ def generate_reference(market: str) -> int:
         logger.error(f"Training data not found: {training_file}")
         return 1
 
+    # Load model features to ensure reference matches deployed model
+    try:
+        model_features = load_model_features(market_upper, model_version)
+        logger.info(f"Using {len(model_features)} features from {model_version} model")
+    except FileNotFoundError as e:
+        logger.error(f"Model features not found: {e}")
+        return 1
+
     # Create output directory
     REFERENCE_DIR.mkdir(parents=True, exist_ok=True)
     output_path = REFERENCE_DIR / f"{market_lower}_reference.json"
@@ -52,10 +60,12 @@ def generate_reference(market: str) -> int:
         str(training_file),
         market_upper,
         str(output_path),
+        model_features=model_features,
     )
 
     print(f"\nReference Distributions Generated:")
     print(f"  Market: {reference.market}")
+    print(f"  Model: {model_version.upper()}")
     print(f"  Features: {len(reference.features)}")
     print(f"  Training Samples: {reference.training_samples}")
     print(f"  Output: {output_path}")
@@ -141,6 +151,13 @@ def main():
     )
 
     parser.add_argument(
+        "--model-version",
+        choices=["xl", "v3"],
+        default="xl",
+        help="Model version to use for feature list (default: xl)",
+    )
+
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Enable debug logging",
@@ -161,7 +178,7 @@ def main():
         if not args.market:
             logger.error("--market required with --generate-reference")
             return 1
-        return generate_reference(args.market)
+        return generate_reference(args.market, args.model_version)
 
     if args.check_latest:
         if not args.market:
