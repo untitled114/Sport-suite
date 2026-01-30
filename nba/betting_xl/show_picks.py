@@ -94,27 +94,22 @@ def find_picks_file(prefix, date_str):
 def format_tier(tier):
     """Format model tier with color."""
     # All tiers use XL model (102 features) - names reflect filter criteria
+    # Current tiers: Star, Goldmine, Standard
     tier_base = tier.upper()
-    # Current tier names
-    if tier_base == "X":
-        return f"{GREEN}{BOLD}X{RESET} {MUTED}(p>=0.85){RESET}"
-    elif tier_base == "Z":
-        return f"{CYAN}{BOLD}Z{RESET} {MUTED}(p>=0.70){RESET}"
-    elif "META" in tier_base:
-        return f"{GREEN}{BOLD}META{RESET} {MUTED}(~70% WR){RESET}"
-    elif tier_base == "A" or "TIER_A" in tier_base:
-        return f"{CYAN}{BOLD}A{RESET} {MUTED}(fallback){RESET}"
-    elif "STAR" in tier_base:
-        return f"{GREEN}{BOLD}STAR{RESET} {MUTED}(~80% WR){RESET}"
+
+    if "STAR" in tier_base:
+        return f"{GREEN}{BOLD}Star{RESET} {MUTED}(~80% WR){RESET}"
+    elif "GOLDMINE" in tier_base:
+        return f"{GREEN}{BOLD}Goldmine{RESET} {MUTED}(~70% WR){RESET}"
+    elif "STANDARD" in tier_base:
+        return f"{CYAN}{BOLD}Standard{RESET} {MUTED}(~56% WR){RESET}"
     elif "JAN_CONFIDENT" in tier_base:
         return f"{GREEN}{BOLD}JAN_CONF{RESET} {MUTED}(~87% WR){RESET}"
-    elif "GOLDMINE" in tier_base:
-        return f"{GREEN}{BOLD}GOLDMINE{RESET} {MUTED}(~70% WR){RESET}"
     # Legacy tier names for backwards compatibility
-    elif "XL_HIGHCONF" in tier_base or "V3" in tier_base:
-        return f"{GREEN}{BOLD}X{RESET} {MUTED}(legacy){RESET}"
-    elif "XL_EDGE" in tier_base:
-        return f"{CYAN}{BOLD}Z{RESET} {MUTED}(legacy){RESET}"
+    elif tier_base in ("X", "Y") or "XL_HIGHCONF" in tier_base or "META" in tier_base:
+        return f"{GREEN}{BOLD}Goldmine{RESET} {MUTED}(legacy){RESET}"
+    elif tier_base in ("Z", "E", "A") or "XL_EDGE" in tier_base or "TIER_A" in tier_base:
+        return f"{CYAN}{BOLD}Standard{RESET} {MUTED}(legacy){RESET}"
     else:
         return f"{MUTED}{tier}{RESET}"
 
@@ -460,16 +455,19 @@ def show_summary(date_str):
             total += reb_count
 
         # Tier breakdown (all use XL model - tiers are filter criteria)
-        # Count current + legacy tier names
+        # POINTS: X, Z | REBOUNDS: Y, E
         x_count = by_tier.get("X", 0) + by_tier.get("XL_HIGHCONF", 0) + by_tier.get("V3", 0)
         z_count = by_tier.get("Z", 0) + by_tier.get("XL_EDGE", 0)
-        meta_count = by_tier.get("META", 0)
+        y_count = by_tier.get("Y", 0) + by_tier.get("META", 0)
+        e_count = by_tier.get("E", 0) + by_tier.get("A", 0)
         if x_count:
             print(f"    {MUTED}└ X{RESET}            {x_count:>3}     {GREEN}p>=0.85{RESET}")
         if z_count:
             print(f"    {MUTED}└ Z{RESET}            {z_count:>3}     {CYAN}p>=0.70{RESET}")
-        if meta_count:
-            print(f"    {MUTED}└ META{RESET}         {meta_count:>3}     {GREEN}~70%{RESET}")
+        if y_count:
+            print(f"    {MUTED}└ Y{RESET}            {y_count:>3}     {GREEN}~70%{RESET}")
+        if e_count:
+            print(f"    {MUTED}└ E{RESET}            {e_count:>3}     {CYAN}fallback{RESET}")
 
         # Goldmine stats
         goldmine = [p for p in xl_data.get("picks", []) if p.get("line_spread", 0) >= 2.0]

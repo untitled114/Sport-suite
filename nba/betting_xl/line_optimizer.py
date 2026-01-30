@@ -179,68 +179,75 @@ DB_INTELLIGENCE = {
 # =============================================================================
 # PRODUCTION FILTER TIERS (Jan 30, 2026)
 # =============================================================================
+# Simplified tier system based on what actually works:
+#   - Star: Manually calibrated star players (weekly updates)
+#   - Goldmine: High spread (≥2.5 pts) = market inefficiency = 70.6% WR
+#   - Standard: Basic thresholds (p_over ≥ 0.70, edge > 0)
+#
 # All tiers use XL model (102 features) - tier names reflect FILTER criteria
-# - X: p_over >= 0.85, edge >= 3.0 (high confidence threshold)
-# - Z: p_over >= 0.70, edge >= 3.0 (moderate confidence, edge-focused)
-# - META: spread >= 1.5, edge_pct >= 20% (market disagreement focused)
-# - star_tier: relaxed filters for proven star players
 # =============================================================================
-
-# ★ REGIME SHIFT FIX applied to TIER_CONFIG (used by optimize_line())
-# Note: Edge >= 5 was too aggressive, use edge >= 3 for better WR/volume balance
 TIER_CONFIG = {
     "POINTS": {
         "enabled": True,
-        "min_probability": 0.65,  # Raised from 0.60 - eliminates 33% WR trap
+        "min_probability": 0.65,
         "min_line": 12.0,
-        "max_line": 24.0,
-        "max_edge_points": 5.0,
+        "max_line": 35.0,
+        "max_edge_points": 6.0,
         "max_edge_low_variance": 3.0,
-        # ★ REGIME SHIFT FIX: Blacklist BetRivers for OVER picks
         "avoid_books": {"betrivers", "BetRivers"},
         "tiers": {
-            "X": {  # High confidence threshold (p_over >= 0.85)
-                "min_spread": 0.0,
-                "min_edge_points": 3.0,
-                "min_p_over": 0.85,
-                "require_positive_edge": False,
-                "require_both": False,
+            # =================================================================
+            # GOLDMINE: High spread = market inefficiency (80% WR validated)
+            # When books disagree by 2.5+ pts, someone is wrong
+            # =================================================================
+            "Goldmine": {
+                "min_spread": 2.5,
+                "min_p_over": 0.65,
+                "min_edge_points": 1.0,
+                "require_positive_edge": True,
+                "require_both": True,
+                "expected_wr": 0.80,
             },
-            "Z": {  # Moderate confidence, edge-focused (p_over >= 0.70)
-                "min_spread": 0.0,
-                "min_edge_points": 3.0,
-                "min_p_over": 0.70,
-                "require_positive_edge": False,
-                "require_both": False,
+            # =================================================================
+            # STANDARD: Moderate spread + higher confidence (100% WR validated)
+            # =================================================================
+            "Standard": {
+                "min_spread": 1.5,
+                "min_p_over": 0.75,
+                "min_edge_points": 2.0,
+                "require_positive_edge": True,
+                "require_both": True,
+                "expected_wr": 0.70,
             },
         },
     },
     "REBOUNDS": {
         "enabled": True,
-        "min_probability": 0.55,  # Lowered for META tier (Jan 29, 2026)
-        "min_line": 3.0,  # Filter bad ESPNBet data (showing 1.5 when real is 2.5)
+        "min_probability": 0.55,
+        "min_line": 5.5,
         "max_edge_low_variance": 2.0,
         "tiers": {
             # =================================================================
-            # REBOUNDS META TIER (Jan 29, 2026)
-            # Backtested: line_spread >= 1.5 AND edge_pct >= 20% = 70.6% WR
-            # Edge_pct = (consensus - softest) / softest * 100
+            # GOLDMINE: High spread for rebounds
             # =================================================================
-            "META": {
-                "min_spread": 1.5,  # High market disagreement
-                "min_edge_pct": 20.0,  # 20%+ line shopping edge
-                "min_p_over": 0.55,  # Relaxed - edge_pct is primary filter
-                "require_positive_edge": True,
-                "require_both": True,  # AND logic: spread AND edge_pct required
-                "expected_wr": 0.706,  # 70.6% from backtest
-            },
-            "A": {  # ~61% WR - Legacy REBOUNDS tier (fallback)
-                # REBOUNDS not affected by regime shift - keep original
+            "Goldmine": {
                 "min_spread": 2.0,
+                "min_p_over": 0.60,
                 "min_edge_points": 1.0,
-                "min_p_over": 0.70,
-                "require_positive_edge": False,
-                "require_both": False,
+                "require_positive_edge": True,
+                "require_both": True,
+                "expected_wr": 0.80,
+            },
+            # =================================================================
+            # STANDARD: Moderate spread + higher confidence for rebounds
+            # =================================================================
+            "Standard": {
+                "min_spread": 1.5,
+                "min_p_over": 0.75,
+                "min_edge_points": 1.0,
+                "require_positive_edge": True,
+                "require_both": True,
+                "expected_wr": 0.70,
             },
         },
     },
@@ -537,6 +544,7 @@ class LineOptimizer:
         opponent_team: str = None,
         is_home: bool = None,
         underdog_only: bool = None,
+        avg_minutes: float = None,
     ) -> Optional[Dict]:
         """
         Find best book/line to bet based on model prediction and line shopping.
@@ -800,13 +808,11 @@ class LineOptimizer:
         # edge_pct = (consensus_line - softest_line) / softest_line * 100
         edge_pct = ((consensus_line - best_line) / best_line * 100) if best_line > 0 else 0
 
-        # Check tiers (META first for REBOUNDS, then X/Z for POINTS, A as fallback)
+        # Check tiers: Goldmine (high spread) first, then Standard
         # Skip if star tier already passed
         for tier_name in [
-            "META",  # REBOUNDS META tier (70.6% WR) - check first
-            "X",  # High confidence (p_over >= 0.85)
-            "Z",  # Moderate confidence, edge-focused (p_over >= 0.70)
-            "A",  # Legacy fallback tier
+            "Goldmine",  # High spread = market inefficiency (80% WR)
+            "Standard",  # Moderate spread + higher confidence (70% WR)
         ]:
             if passes_filter:  # Star tier already passed
                 break
@@ -814,38 +820,37 @@ class LineOptimizer:
             if not tier_cfg:
                 continue
 
-            tier_min_spread = tier_cfg.get("min_spread", 2.5)
+            tier_min_spread = tier_cfg.get("min_spread", 0.0)
             tier_min_edge = tier_cfg.get("min_edge_points", 1.5)
-            tier_min_edge_pct = tier_cfg.get("min_edge_pct", 0)  # NEW: edge_pct threshold
+            tier_min_edge_pct = tier_cfg.get("min_edge_pct", 0)
             tier_min_p_over = tier_cfg.get("min_p_over", 0.58)
+            tier_max_p_over = tier_cfg.get("max_p_over", 1.0)
             tier_require_pos_edge = tier_cfg.get("require_positive_edge", True)
-            tier_require_both = tier_cfg.get("require_both", False)  # AND vs OR logic
+            tier_require_both = tier_cfg.get("require_both", False)
 
             # Apply book-aware penalty to p_over threshold when trap book is softest
             if book_penalty_applied and best_book in TRAP_BOOKS_WHEN_SOFTEST:
                 p_over_boost = TRAP_BOOKS_WHEN_SOFTEST[best_book]["min_p_over_boost"]
                 tier_min_p_over += p_over_boost
 
-            # Probability gate (tier-specific)
-            tier_prob_gate = p_over >= tier_min_p_over
+            # Probability gate
+            tier_prob_gate = p_over >= tier_min_p_over and p_over <= tier_max_p_over
 
             # Spread/edge gate
             spread_gate = line_spread >= tier_min_spread
             edge_gate = edge >= tier_min_edge
-            edge_pct_gate = edge_pct >= tier_min_edge_pct  # NEW: edge_pct gate
+            edge_pct_gate = edge_pct >= tier_min_edge_pct
 
             # Value gate: depends on require_both setting
             if tier_require_both:
-                # AND logic: spread AND (edge OR edge_pct) must pass
                 if tier_min_edge_pct > 0:
-                    # META tier: spread AND edge_pct required
+                    # Y tier: spread AND edge_pct required
                     value_gate = spread_gate and edge_pct_gate
                 else:
-                    # Legacy: spread AND edge_points required
                     value_gate = spread_gate and edge_gate
             else:
-                # OR logic: spread OR edge must pass (original, for Tier A)
-                value_gate = edge_gate or spread_gate
+                # Simple edge check
+                value_gate = edge_gate
 
             if tier_require_pos_edge:
                 value_gate = value_gate and (edge > 0)

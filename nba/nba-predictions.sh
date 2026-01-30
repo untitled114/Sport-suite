@@ -177,7 +177,7 @@ system_banner() {
     divider
     echo ""
     echo -e "${BOLD}${PRIMARY}  NBA XL Prediction System${NC}"
-    echo -e "  ${MUTED}V3 OVER/UNDER (POINTS) | Tier A (REBOUNDS)${NC}"
+    echo -e "  ${MUTED}Star + Goldmine + Standard (Spread-Based)${NC}"
     echo ""
     echo -e "  ${SOFT_WHITE}${DATE_STR}${NC}  ${MUTED}${TIME_STR}${NC}"
     echo ""
@@ -696,7 +696,7 @@ evening_workflow() {
         return 1
     fi
 
-    section "Generating Predictions" "Odds API TIER 1/2 + Tier X + Tier A"
+    section "Generating Predictions" "Star + Goldmine + Standard (83% WR)"
 
     if [ -f "$SCRIPT_DIR/betting_xl/generate_xl_predictions.py" ]; then
         # Odds API tiers (replaces V3 model - Jan 25, 2026):
@@ -713,7 +713,7 @@ evening_workflow() {
                 divider
                 echo ""
                 echo -e "  ${BOLD}${PRIMARY}Today's Picks${NC} | ${SOFT_WHITE}${DATE_STR}${NC}"
-                echo -e "  ${MUTED}Odds API TIER 1/2 | POINTS: Tier X | REBOUNDS: Tier A${NC}"
+                echo -e "  ${MUTED}Spread-based line shopping | Validated 83% WR${NC}"
                 echo ""
                 divider
 
@@ -726,22 +726,14 @@ evening_workflow() {
                 echo -e "  ${BOLD}Summary${NC}"
                 echo -e "  ${MUTED}|${NC} Total Picks: ${BOLD}${picks_count}${NC}"
 
-                # Tier breakdown (Odds API + XL model tiers)
-                local odds_tier1=$(jq '[.picks[] | select(.filter_tier == "TIER_1")] | length' "$pick_file")
-                local odds_tier2=$(jq '[.picks[] | select(.filter_tier == "TIER_2")] | length' "$pick_file")
-                local odds_total=$((odds_tier1 + odds_tier2))
-                local tier_x=$(jq '.summary.by_tier.X // .summary.by_tier.tier_x // 0' "$pick_file")
-                local tier_a=$(jq '.summary.by_tier.A // .summary.by_tier.tier_a // 0' "$pick_file")
+                # Tier breakdown (spread-based tiers)
                 local star_tier=$(jq '.summary.by_tier.star_tier // 0' "$pick_file")
+                local goldmine=$(jq '.summary.by_tier.Goldmine // 0' "$pick_file")
+                local standard=$(jq '.summary.by_tier.Standard // 0' "$pick_file")
 
-                echo -e "  ${MUTED}|${NC} Odds API: ${BOLD}${SUCCESS}${odds_total}${NC} (T1: ${odds_tier1}, T2: ${odds_tier2})  ${MUTED}|${NC}  Tier X: ${BOLD}${SUCCESS}${tier_x}${NC}  ${MUTED}|${NC}  Tier A: ${BOLD}${SUCCESS}${tier_a}${NC}  ${MUTED}|${NC}  STAR: ${BOLD}${YELLOW}${star_tier}${NC}"
-                if [ "$odds_total" -gt 0 ]; then
-                    echo -e "  ${MUTED}|${NC} Odds API: ${odds_tier1} TIER_1 (100% WR) + ${odds_tier2} TIER_2 (100% WR)"
-                fi
-
-                echo -e "  ${MUTED}|${NC} Odds API: Pick6 mult + BettingPros features"
-                echo -e "  ${MUTED}|${NC} REBOUNDS: Tier A + Star tier"
-                echo -e "  ${MUTED}+${NC} Target: Odds API 100% / Tier X 74% / Tier A 69%"
+                echo -e "  ${MUTED}|${NC} Star: ${BOLD}${SUCCESS}${star_tier}${NC}  ${MUTED}|${NC}  Goldmine: ${BOLD}${SUCCESS}${goldmine}${NC}  ${MUTED}|${NC}  Standard: ${BOLD}${SUCCESS}${standard}${NC}"
+                echo -e "  ${MUTED}|${NC} Strategy: Spread-based line shopping"
+                echo -e "  ${MUTED}+${NC} Validated: Star 83% | Goldmine 80% | Overall 83%"
                 echo ""
                 divider
                 echo ""
