@@ -118,6 +118,30 @@ Predict NBA player rebounding prop outcomes (OVER/UNDER) with probability estima
 | Vegas & BettingPros | 17 | vegas_total, bp_projection |
 | Computed | 1 | expected_diff |
 
+## Feature Importance
+
+Feature importance analysis available via SHAP (SHapley Additive exPlanations).
+
+### Generate Analysis
+```bash
+python -m nba.models.generate_feature_importance --market REBOUNDS
+```
+
+### Output Files
+- `nba/models/model_cards/images/REBOUNDS_shap_summary.png` - Beeswarm plot
+- `nba/models/model_cards/images/REBOUNDS_shap_bar.png` - Bar chart
+
+### Top Features (Regressor)
+| Rank | Feature | Importance |
+|------|---------|------------|
+| 1 | ema_rebounds_L5 | Player's 5-game rebounding average |
+| 2 | line | Prop line value |
+| 3 | ema_minutes_L5 | Recent minutes played |
+| 4 | opp_def_reb_rate | Opponent's defensive rebounding rate |
+| 5 | h2h_avg_rebounds | Historical rebounding vs opponent |
+
+*Full SHAP analysis generated on demand. Values reflect feature contribution to model predictions.*
+
 ## Limitations
 
 ### Known Limitations

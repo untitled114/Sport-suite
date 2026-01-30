@@ -14,6 +14,17 @@ from typing import Any, Dict, List, Optional, Union
 import pandas as pd
 import psycopg2
 
+# Centralized configuration (available for future migration)
+# TODO: Migrate hardcoded values below to use config.thresholds
+from nba.config.thresholds import (
+    POINTS_CONFIG,
+    REBOUNDS_CONFIG,
+    STAR_POINTS_CONFIG,
+    STAR_REBOUNDS_CONFIG,
+    TRAP_BOOKS,
+    get_market_config,
+)
+
 logger = logging.getLogger(__name__)
 
 # Star players - profitable performers only (updated Jan 26, 2026)
