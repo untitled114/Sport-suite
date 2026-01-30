@@ -146,6 +146,10 @@ def compute_feature_distribution(
             is_categorical=False,
         )
 
+    # Convert booleans to float for numeric operations
+    if valid.dtype == "bool":
+        valid = valid.astype(float)
+
     # Check if categorical
     unique_count = valid.nunique()
     is_categorical = unique_count <= 10 or valid.dtype == "object"
@@ -202,6 +206,7 @@ def build_from_training_dataset(
     csv_path: str,
     market: str,
     output_path: str = None,
+    model_features: List[str] = None,
 ) -> ReferenceDistributions:
     """
     Build reference distributions from a training CSV file.
@@ -210,6 +215,9 @@ def build_from_training_dataset(
         csv_path: Path to training CSV
         market: Market name
         output_path: Optional output path for JSON
+        model_features: Optional list of features to use (from model's feature list).
+                       If provided, only these features are included in reference.
+                       If None, all numeric features in the CSV are used.
 
     Returns:
         ReferenceDistributions object
@@ -217,22 +225,37 @@ def build_from_training_dataset(
     logger.info(f"Loading training data from {csv_path}")
     df = pd.read_csv(csv_path)
 
-    # Exclude metadata columns
-    exclude_cols = [
-        "player_name",
-        "game_date",
-        "actual_result",
-        "actual_points",
-        "actual_rebounds",
-        "actual_assists",
-        "actual_threes",
-        "stat_type",
-        "source",
-        "season",
-        "hit_over",
-        "residual",
-    ]
-    feature_names = [c for c in df.columns if c not in exclude_cols]
+    if model_features is not None:
+        # Use only the features specified by the model
+        feature_names = [f for f in model_features if f in df.columns]
+        missing = set(model_features) - set(feature_names)
+        if missing:
+            logger.warning(f"Features not found in training data: {list(missing)[:5]}...")
+        logger.info(f"Using {len(feature_names)} model features for reference")
+    else:
+        # Exclude metadata and non-feature columns
+        exclude_cols = {
+            "player_name",
+            "game_date",
+            "actual_result",
+            "actual_points",
+            "actual_rebounds",
+            "actual_assists",
+            "actual_threes",
+            "stat_type",
+            "source",
+            "season",
+            "hit_over",
+            "residual",
+            "opponent_team",  # Categorical string
+            "split",  # train/test split label
+            "label",  # Target variable
+        }
+
+        # Only include numeric columns that are actual features
+        feature_names = [
+            c for c in df.columns if c not in exclude_cols and pd.api.types.is_numeric_dtype(df[c])
+        ]
 
     reference = build_reference_distributions(df, feature_names, market)
 
@@ -240,3 +263,33 @@ def build_from_training_dataset(
         reference.save(output_path)
 
     return reference
+
+
+def load_model_features(market: str, model_version: str = "xl") -> List[str]:
+    """
+    Load feature list from a trained model.
+
+    Args:
+        market: Market name (POINTS, REBOUNDS, etc.)
+        model_version: Model version (xl, v3, matchup)
+
+    Returns:
+        List of feature names used by the model
+    """
+    import os
+    import pickle
+
+    model_dir = os.getenv(
+        "NBA_MODEL_DIR",
+        str(Path(__file__).parent.parent / "models" / "saved_xl"),
+    )
+    features_file = Path(model_dir) / f"{market.lower()}_{model_version}_features.pkl"
+
+    if not features_file.exists():
+        raise FileNotFoundError(f"Model features file not found: {features_file}")
+
+    with open(features_file, "rb") as f:
+        features = pickle.load(f)
+
+    logger.info(f"Loaded {len(features)} features from {features_file.name}")
+    return features

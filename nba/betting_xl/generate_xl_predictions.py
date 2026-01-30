@@ -36,6 +36,7 @@ import psycopg2
 from nba.betting_xl.line_optimizer import PRODUCTION_CONFIG, LineOptimizer
 from nba.betting_xl.utils.hit_rate_loader import HitRateCache
 from nba.betting_xl.xl_predictor import XLPredictor
+from nba.core.drift_service import DriftService
 from nba.core.logging_config import add_logging_args, get_logger, setup_logging
 from nba.features.extract_live_features_xl import LiveFeatureExtractorXL
 from nba.utils.name_normalizer import NameNormalizer
@@ -62,6 +63,11 @@ DB_PLAYERS = {
     "password": os.getenv("NBA_PLAYERS_DB_PASSWORD", DB_DEFAULT_PASSWORD),
     "database": os.getenv("NBA_PLAYERS_DB_NAME", "nba_players"),
 }
+
+# Drift detection configuration
+DRIFT_DETECTION_ENABLED = os.getenv("NBA_DRIFT_DETECTION_ENABLED", "true").lower() == "true"
+DRIFT_Z_THRESHOLD = float(os.getenv("NBA_DRIFT_Z_THRESHOLD", "3.0"))
+DRIFT_BLOCK_ON_HIGH = os.getenv("NBA_DRIFT_BLOCK_ON_HIGH", "false").lower() == "true"
 
 
 class XLPredictionsGenerator:
@@ -112,6 +118,11 @@ class XLPredictionsGenerator:
         self.conn_intelligence = None
         self.conn_players = None
 
+        # Drift detection
+        self.drift_services: Dict[str, DriftService] = {}
+        self.drift_status: Dict[str, Dict[str, Any]] = {}
+        self._feature_samples: Dict[str, list] = {}  # market -> list of feature dicts
+
         # Results
         self.picks = []
 
@@ -151,6 +162,115 @@ class XLPredictionsGenerator:
         self.feature_extractor = LiveFeatureExtractorXL()
         self.line_optimizer = LineOptimizer()
         logger.info("[OK] Initialized feature extractor and line optimizer")
+
+    def initialize_drift_detection(self):
+        """Initialize drift detection services for enabled markets."""
+        if not DRIFT_DETECTION_ENABLED:
+            logger.info("[SKIP] Drift detection disabled via NBA_DRIFT_DETECTION_ENABLED")
+            return
+
+        enabled_markets = list(self.predictors.keys())
+        for market in enabled_markets:
+            try:
+                self.drift_services[market] = DriftService(
+                    market=market,
+                    z_threshold=DRIFT_Z_THRESHOLD,
+                )
+                status = self.drift_services[market].get_status()
+                if status["status"] == "ready":
+                    logger.info(
+                        f"[OK] Drift detection ready for {market} "
+                        f"({status['features']} features)"
+                    )
+                else:
+                    logger.warning(
+                        f"[WARN] Drift detection not ready for {market}: {status['status']}"
+                    )
+            except (FileNotFoundError, ValueError, KeyError) as e:
+                logger.warning(f"[WARN] Failed to initialize drift detection for {market}: {e}")
+
+    def check_feature_drift(self, market: str, features: Dict[str, float]) -> Dict[str, Any]:
+        """
+        Check if extracted features show drift from training distribution.
+
+        Args:
+            market: Market name (POINTS, REBOUNDS, etc.)
+            features: Dict of feature name -> value
+
+        Returns:
+            Dict with drift check result
+        """
+        if market not in self.drift_services:
+            return {"status": "disabled", "has_drift": False}
+
+        try:
+            result = self.drift_services[market].check_drift(features)
+            return result.to_dict()
+        except (ValueError, KeyError, TypeError) as e:
+            logger.debug(f"Drift check failed for {market}: {e}")
+            return {"status": "error", "has_drift": False, "error": str(e)}
+
+    def aggregate_drift_results(self):
+        """
+        Aggregate drift results from all predictions into summary.
+
+        Called after generate_picks to produce overall drift status.
+        Runs batch drift detection on collected feature samples.
+        """
+        for market in self.predictors.keys():
+            if market not in self.drift_services:
+                self.drift_status[market] = {"status": "disabled"}
+                continue
+
+            service = self.drift_services[market]
+            status = service.get_status()
+
+            market_status = {
+                "status": status["status"],
+                "features_monitored": status.get("features", 0),
+                "reference_created": status.get("reference_created"),
+                "thresholds": status.get("thresholds", {}),
+            }
+
+            # Run batch drift detection if we have feature samples
+            samples = self._feature_samples.get(market, [])
+            if samples and status["status"] == "ready":
+                try:
+                    feature_df = pd.DataFrame(samples)
+                    drift_result = service.check_batch_drift(feature_df)
+
+                    market_status["batch_check"] = {
+                        "samples_checked": len(samples),
+                        "features_checked": drift_result.checked_features,
+                        "drifted_count": len(drift_result.drifted_features),
+                        "drift_percentage": round(drift_result.drift_percentage, 2),
+                        "severity": drift_result.severity,
+                        "drifted_features": drift_result.drifted_features[:5],  # Top 5
+                    }
+
+                    # Log drift warnings
+                    if drift_result.severity in ("medium", "high"):
+                        logger.warning(
+                            f"[DRIFT] {market}: {drift_result.severity.upper()} drift detected "
+                            f"({len(drift_result.drifted_features)} features, "
+                            f"{drift_result.drift_percentage:.1f}%)"
+                        )
+                        for feat in drift_result.drifted_features[:3]:
+                            details = drift_result.drift_details.get(feat, {})
+                            logger.warning(f"  - {feat}: {details.get('reasons', ['unknown'])}")
+                    elif drift_result.has_drift:
+                        logger.info(
+                            f"[DRIFT] {market}: Low drift detected "
+                            f"({len(drift_result.drifted_features)} features)"
+                        )
+
+                except (ValueError, KeyError, TypeError) as e:
+                    logger.debug(f"Batch drift check failed for {market}: {e}")
+                    market_status["batch_check"] = {"status": "error", "error": str(e)}
+            else:
+                market_status["batch_check"] = {"status": "no_samples", "samples": len(samples)}
+
+            self.drift_status[market] = market_status
 
     def load_opponent_defense_ranks(self):
         """Load opponent defense ranks from cheatsheet_data for display"""
@@ -656,6 +776,11 @@ class XLPredictionsGenerator:
                     )
                     continue  # Skip this prediction
 
+                # Collect features for batch drift detection
+                if stat_type not in self._feature_samples:
+                    self._feature_samples[stat_type] = []
+                self._feature_samples[stat_type].append(features.copy())
+
                 # Convert numpy types to Python native types for psycopg2 compatibility
                 opp_team = str(row["opponent_team"]) if pd.notna(row["opponent_team"]) else None
                 home_flag = bool(row["is_home"]) if pd.notna(row["is_home"]) else None
@@ -675,6 +800,9 @@ class XLPredictionsGenerator:
                     adjusted_prediction = pred_result["predicted_value"] - bias_adj
 
                     # Find best line via line shopping (XL model path)
+                    # Get avg minutes for tier logic (X = starters, Z = bench)
+                    avg_minutes = features.get("ema_minutes_L5", 25.0)
+
                     optimized = self.line_optimizer.optimize_line(
                         player_name=player_name,
                         game_date=self.game_date,
@@ -684,6 +812,7 @@ class XLPredictionsGenerator:
                         opponent_team=opp_team,
                         is_home=home_flag,
                         underdog_only=self.underdog_only,
+                        avg_minutes=avg_minutes,
                     )
 
                     if optimized is not None:
@@ -696,6 +825,7 @@ class XLPredictionsGenerator:
                             "p_over": optimized["p_over"],
                             "confidence": optimized["confidence"],
                             "filter_tier": optimized.get("filter_tier", "unknown"),
+                            "avg_minutes": avg_minutes,  # For X/Z tier visibility
                             "consensus_line": optimized["consensus_line"],
                             "consensus_offset": optimized["consensus_offset"],
                             "line_spread": optimized["line_spread"],
@@ -865,6 +995,7 @@ class XLPredictionsGenerator:
                     "note": "Lower edge but higher user engagement",
                 },
             },
+            "drift_status": self.drift_status if self.drift_status else {"status": "disabled"},
         }
 
         if dry_run:
@@ -928,6 +1059,19 @@ class XLPredictionsGenerator:
         star_players = output["summary"].get("star_players", [])
         if star_players:
             logger.info("Star players included", extra={"players": star_players})
+
+        # Log drift detection status
+        drift_status = output.get("drift_status", {})
+        if drift_status and drift_status.get("status") != "disabled":
+            for market, status in drift_status.items():
+                if isinstance(status, dict) and status.get("status") == "ready":
+                    logger.info(
+                        f"Drift detection: {market}",
+                        extra={
+                            "market": market,
+                            "features_monitored": status.get("features_monitored", 0),
+                        },
+                    )
 
         # Log top 5 picks
         if output["picks"]:
@@ -1008,9 +1152,11 @@ class XLPredictionsGenerator:
             self.connect_databases()
             self.load_models()
             self.initialize_components()
+            self.initialize_drift_detection()
             self.load_opponent_defense_ranks()
             # NOTE: Odds API picks are now standalone (generate_odds_api_picks.py)
             self.generate_picks()
+            self.aggregate_drift_results()
 
             if len(self.picks) == 0:
                 logger.warning("\n[ERROR] No actionable picks found")
