@@ -56,6 +56,37 @@ STAR_PLAYERS = {
 }
 
 # =============================================================================
+# POINTS-SPECIFIC STAR PLAYERS (Jan 30, 2026)
+# =============================================================================
+# Analysis of Jan 15-30 data - only stars with 60%+ OVER WR on POINTS:
+#   Combined: 28W-5L = 84.8% WR
+# EXCLUDED (cold on POINTS): Tyrese Maxey (25%), Giannis (0%), Lauri (0%),
+#   SGA (37.5%), Jaylen Brown (37.5%), Curry (14%), Kawhi (33%)
+# =============================================================================
+POINTS_STAR_PLAYERS = {
+    # 60%+ WR on POINTS (Jan 15-30, 2026)
+    "Joel Embiid",  # 100% (6W-0L), +7.3 margin
+    "Brandon Miller",  # 89% (8W-1L), +4.8 margin
+    "Pascal Siakam",  # 83% (5W-1L), +2.2 margin
+    "Luka Doncic",  # 71% (5W-2L), +2.1 margin
+    "Anthony Edwards",  # 67% (4W-2L), +3.5 margin
+}
+
+# =============================================================================
+# REBOUNDS-SPECIFIC STAR PLAYERS (Jan 30, 2026)
+# =============================================================================
+# Top rebounders with 70%+ OVER WR - Combined: 14W-4L = 77.8% WR
+# EXCLUDED: Zubac, Bam, Sengun, Chet (67% or lower, smaller margins)
+# =============================================================================
+REBOUNDS_STAR_PLAYERS = {
+    "Donovan Clingan",  # 86% (6W-1L), +2.9 margin
+    "Mitchell Robinson",  # 75% (3W-1L), +2.5 margin
+    "Karl-Anthony Towns",  # 71% (5W-2L), +3.1 margin
+    "Jalen Johnson",  # 71% (5W-2L), +2.9 margin
+    "Victor Wembanyama",  # 71% (5W-2L), +2.4 margin
+}
+
+# =============================================================================
 # BOOK-AWARE FILTERING (Jan 2, 2026)
 # =============================================================================
 # Investigation found that traditional sportsbooks ADAPTED in December:
@@ -146,19 +177,17 @@ DB_INTELLIGENCE = {
 }
 
 # =============================================================================
-# PRODUCTION FILTER: TIER X + V3 (Jan 11, 2026)
+# PRODUCTION FILTER TIERS (Jan 30, 2026)
 # =============================================================================
-# Two model tiers now active:
-#   Tier X: OLD model (xl), p_over >= 0.65 → ~77% WR (legacy, was hitting)
-#   Tier V3: NEW model (market), p_over >= 0.85 → 84% WR, +60% ROI (validated)
-#
-# V3 model trained on deduplicated 166-feature dataset (Jan 11, 2026)
-# REBOUNDS unchanged - 0.60+ works fine
+# All tiers use XL model (102 features) - tier names reflect FILTER criteria
+# - X: p_over >= 0.85, edge >= 3.0 (high confidence threshold)
+# - Z: p_over >= 0.70, edge >= 3.0 (moderate confidence, edge-focused)
+# - META: spread >= 1.5, edge_pct >= 20% (market disagreement focused)
+# - star_tier: relaxed filters for proven star players
 # =============================================================================
 
-# ★ REGIME SHIFT FIX applied to TIER_CONFIG as well (used by optimize_line())
-# Note: Edge >= 5 was too aggressive for X/V3 tiers in TIER_CONFIG
-# Use edge >= 3 for a better balance between WR and volume
+# ★ REGIME SHIFT FIX applied to TIER_CONFIG (used by optimize_line())
+# Note: Edge >= 5 was too aggressive, use edge >= 3 for better WR/volume balance
 TIER_CONFIG = {
     "POINTS": {
         "enabled": True,
@@ -170,23 +199,19 @@ TIER_CONFIG = {
         # ★ REGIME SHIFT FIX: Blacklist BetRivers for OVER picks
         "avoid_books": {"betrivers", "BetRivers"},
         "tiers": {
-            "X": {  # Legacy XL model tier - moderate edge filter
-                # Edge >= 3.0 balances WR vs volume (edge >= 5 was too aggressive)
+            "X": {  # High confidence threshold (p_over >= 0.85)
                 "min_spread": 0.0,
-                "min_edge_points": 3.0,  # ★ REGIME SHIFT FIX: Edge>=3 required
+                "min_edge_points": 3.0,
+                "min_p_over": 0.85,
+                "require_positive_edge": False,
+                "require_both": False,
+            },
+            "Z": {  # Moderate confidence, edge-focused (p_over >= 0.70)
+                "min_spread": 0.0,
+                "min_edge_points": 3.0,
                 "min_p_over": 0.70,
                 "require_positive_edge": False,
                 "require_both": False,
-                "model_version": "xl",
-            },
-            "V3": {  # V3 model tier - moderate edge filter
-                # Edge >= 3.0 balances WR vs volume (edge >= 5 was too aggressive)
-                "min_spread": 0.0,
-                "min_edge_points": 3.0,  # ★ REGIME SHIFT FIX: Edge>=3 required
-                "min_p_over": 0.85,  # High confidence threshold
-                "require_positive_edge": False,
-                "require_both": False,
-                "model_version": "v3",
             },
         },
     },
@@ -339,29 +364,27 @@ V3_TIER_CONFIG = {
 # ★ REGIME SHIFT FIX: Apply moderate edge filter to STAR tier for POINTS
 # STAR tier was dragging down overall WR: 25% WR with edge 0.3-0.5
 # Edge >= 3.0 balances WR vs volume (edge >= 5 was too aggressive)
+# STAR_TIER_CONFIG - RECALIBRATED Jan 30, 2026
+# POINTS: Uses POINTS_STAR_PLAYERS (5 hot stars, 84.8% WR combined)
+# REBOUNDS: p_over 0.60-0.72 = 72.7% WR (was 52% with 0.55-0.80)
 STAR_TIER_CONFIG = {
     "POINTS": {
-        "enabled": True,
-        "min_p_over": 0.70,
-        "max_p_over": 0.80,  # Cap to avoid overconfident trap
-        "min_spread": 2.0,
-        "max_line": 29.0,
-        "min_edge": 3.0,  # ★ REGIME SHIFT FIX: Edge>=3 required (was 0.5)
-        "avoid_books_softest": {
-            "draftkings",
-            "DraftKings",
-            "betrivers",
-            "BetRivers",
-        },  # ★ Added BetRivers
-        "model_preference": "v3",
+        "enabled": True,  # RE-ENABLED - uses POINTS_STAR_PLAYERS (84.8% WR)
+        "min_p_over": 0.60,
+        "max_p_over": 0.85,
+        "min_spread": 0.5,
+        "min_line": 15.0,  # Stars have high lines (avg 25+)
+        "max_line": 35.0,
+        "min_edge": 0.5,
+        "avoid_books_softest": {"betrivers", "BetRivers"},
     },
     "REBOUNDS": {
         "enabled": True,
-        "min_p_over": 0.55,
-        "max_p_over": 0.80,  # Cap at 0.80 (45% WR above this)
-        "min_spread": 0.5,  # Relaxed from 1.0 (was filtering good picks)
-        "min_line": 3.0,  # Filter bad ESPNBet data
-        "max_line": 8.0,  # Lower lines only (82.6% WR)
+        "min_p_over": 0.60,
+        "max_p_over": 0.75,  # raised from 0.72 - curated star list is pre-vetted
+        "min_spread": 0.5,
+        "min_line": 4.5,
+        "max_line": 12.0,  # for Wemby/KAT (avg lines ~10)
         "min_edge": 0.25,
     },
     "ASSISTS": {"enabled": False},
@@ -694,8 +717,14 @@ class LineOptimizer:
         # =============================================================================
         # STAR TIER CHECK (Jan 16, 2026) - Check FIRST before regular tiers
         # Updated to include max_p_over cap (avoid overconfident trap zone)
+        # Use market-specific star lists for POINTS/REBOUNDS
         # =============================================================================
-        is_star_player = player_name in STAR_PLAYERS
+        if stat_type == "POINTS":
+            is_star_player = player_name in POINTS_STAR_PLAYERS
+        elif stat_type == "REBOUNDS":
+            is_star_player = player_name in REBOUNDS_STAR_PLAYERS
+        else:
+            is_star_player = player_name in STAR_PLAYERS
         star_config = STAR_TIER_CONFIG.get(stat_type, {})
 
         if is_star_player and star_config.get("enabled", False):
@@ -771,14 +800,14 @@ class LineOptimizer:
         # edge_pct = (consensus_line - softest_line) / softest_line * 100
         edge_pct = ((consensus_line - best_line) / best_line * 100) if best_line > 0 else 0
 
-        # Check tiers (META first for REBOUNDS, then V3/X for POINTS, A as fallback)
+        # Check tiers (META first for REBOUNDS, then X/Z for POINTS, A as fallback)
         # Skip if star tier already passed
         for tier_name in [
             "META",  # REBOUNDS META tier (70.6% WR) - check first
-            "V3",
-            "X",
-            "A",
-        ]:  # META=REBOUNDS meta, V3=new model, X=legacy POINTS, A=fallback
+            "X",  # High confidence (p_over >= 0.85)
+            "Z",  # Moderate confidence, edge-focused (p_over >= 0.70)
+            "A",  # Legacy fallback tier
+        ]:
             if passes_filter:  # Star tier already passed
                 break
             tier_cfg = tiers.get(tier_name)
@@ -1128,8 +1157,14 @@ class LineOptimizer:
             break
 
         # If no V3 tier matched, check STAR tier for star players (OVER only)
+        # Use market-specific star lists for POINTS/REBOUNDS
         if matched_tier is None:
-            is_star_player = player_name in STAR_PLAYERS
+            if stat_type == "POINTS":
+                is_star_player = player_name in POINTS_STAR_PLAYERS
+            elif stat_type == "REBOUNDS":
+                is_star_player = player_name in REBOUNDS_STAR_PLAYERS
+            else:
+                is_star_player = player_name in STAR_PLAYERS
             star_config = STAR_TIER_CONFIG.get(stat_type, {})
 
             if is_star_player and star_config.get("enabled", False):
@@ -1142,7 +1177,7 @@ class LineOptimizer:
                 star_avoid_books = star_config.get("avoid_books_softest", set())
 
                 # ★ REGIME SHIFT FIX: Use valid_lines_df_over (excludes blacklisted books)
-                # This ensures STAR tier uses same filtered book set as V3 tiers
+                # This ensures STAR tier uses same filtered book set as XL tiers
                 edge = (
                     prediction - softest_line
                 )  # softest_line already calculated from filtered set

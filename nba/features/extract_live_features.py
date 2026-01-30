@@ -406,7 +406,7 @@ class LiveFeatureExtractor:
             pgl.plus_minus
         FROM player_game_logs pgl
         JOIN player_profile pp ON pgl.player_id = pp.player_id
-        WHERE pp.full_name = %s
+        WHERE unaccent(pp.full_name) = unaccent(%s)
           AND pgl.game_date < %s
         ORDER BY pgl.game_date DESC
         LIMIT %s
@@ -468,7 +468,7 @@ class LiveFeatureExtractor:
             pgl.plus_minus
         FROM player_game_logs pgl
         JOIN player_profile pp ON pgl.player_id = pp.player_id
-        WHERE pp.full_name = %s
+        WHERE unaccent(pp.full_name) = unaccent(%s)
           AND pgl.season = %s
           AND pgl.game_date < %s
         ORDER BY pgl.game_date DESC
@@ -567,7 +567,7 @@ class LiveFeatureExtractor:
             pgl.{stat_column} as stat_value
         FROM player_game_logs pgl
         JOIN player_profile pp ON pgl.player_id = pp.player_id
-        WHERE pp.full_name = %s
+        WHERE unaccent(pp.full_name) = unaccent(%s)
           AND pgl.opponent_abbrev = %s
           AND pgl.game_date < %s
         ORDER BY pgl.game_date DESC
@@ -624,7 +624,7 @@ class LiveFeatureExtractor:
         SELECT pgl.game_date
         FROM player_game_logs pgl
         JOIN player_profile pp ON pgl.player_id = pp.player_id
-        WHERE pp.full_name = %s
+        WHERE unaccent(pp.full_name) = unaccent(%s)
           AND pgl.game_date < %s
           AND pgl.{stat} >= %s
         ORDER BY pgl.game_date DESC
@@ -709,7 +709,7 @@ class LiveFeatureExtractor:
             pgl.plus_minus
         FROM player_game_logs pgl
         JOIN player_profile pp ON pgl.player_id = pp.player_id
-        WHERE pp.full_name = %s
+        WHERE unaccent(pp.full_name) = unaccent(%s)
           AND pgl.game_date < %s
           AND pgl.plus_minus IS NOT NULL
         ORDER BY pgl.game_date DESC
@@ -1266,7 +1266,7 @@ class LiveFeatureExtractor:
         SELECT pgl.minutes_played
         FROM player_game_logs pgl
         JOIN player_profile pp ON pgl.player_id = pp.player_id
-        WHERE pp.full_name = %s
+        WHERE unaccent(pp.full_name) = unaccent(%s)
           AND pgl.game_date < %s
           AND pgl.minutes_played IS NOT NULL
         ORDER BY pgl.game_date DESC
@@ -1399,7 +1399,7 @@ class LiveFeatureExtractor:
                     SELECT DISTINCT pgl.game_date
                     FROM player_game_logs pgl
                     JOIN player_profile pp ON pgl.player_id = pp.player_id
-                    WHERE pp.full_name = %s
+                    WHERE unaccent(pp.full_name) = unaccent(%s)
                       AND pgl.game_date < %s
                     ORDER BY pgl.game_date DESC
                     LIMIT %s
@@ -1577,7 +1577,7 @@ class LiveFeatureExtractor:
                     SELECT COUNT(*) as matchup_count
                     FROM player_game_logs pgl
                     JOIN player_profile pp ON pgl.player_id = pp.player_id
-                    WHERE pp.full_name = %s
+                    WHERE unaccent(pp.full_name) = unaccent(%s)
                       AND pgl.opponent_abbrev = %s
                       AND pgl.game_date < %s
                       AND pgl.game_date >= %s - INTERVAL '30 days'

@@ -9,13 +9,14 @@ bet rating, opponent rank).
 This mirrors the generate_cheatsheet_picks.py pattern:
   fetch_pick6_live.py -> load to DB -> generate_odds_api_picks.py -> JSON -> validate
 
-Validated filters (Jan 15-24, 2026):
-- TIER 1: mult<1.5 + R>=3 + opp>=6 + L5=100% + L15>=60%
-- TIER 2: mult<1.0 + opp>=20 + L5>=80% + L15>=60%
-- TRAP:   mult > 5.0 = 0% WR (NEVER bet)
+RECALIBRATED Jan 30, 2026 (based on last 15 days: Jan 14-28):
+- POINTS:   mult<0.9 + opp>=6 + L5>=40% + L15>=40%
+- REBOUNDS: mult<0.8 + L15>=60%
+- ASSISTS:  mult<1.5 + opp>=11 + szn>=60% + EV>=10% + Diff>=1.0 (NEW)
+- TRAP:     mult > 5.0 = 0% WR (NEVER bet)
 
 Usage:
-    python3 generate_odds_api_picks.py --date 2026-01-25
+    python3 generate_odds_api_picks.py --date 2026-01-30
     python3 generate_odds_api_picks.py --pick6-file /path/to/historical.json
     python3 generate_odds_api_picks.py --dry-run
 """
@@ -93,10 +94,27 @@ ODDS_API_FILTERS = {
         "expected_wr": 100.0,
         "description": "POINTS + mult<0.9 + opp>=6 + L5>=40% + L15>=40%",
     },
-    # ASSISTS: Moderate multiplier + season consistency
-    # Backtested: 100% WR (10W-0L) Jan 10-24, 0.7 picks/day
-    "assists_season": {
+    # ASSISTS: Tighter filter with EV + Diff requirements
+    # RECALIBRATED Jan 30, 2026 - old filter dropped to 63.6% WR (Jan 14-28)
+    # New filter adds EV 10%+ and Diff 1.0+ (matching PRO assists filter pattern)
+    "assists_ev_diff": {
         "enabled": True,
+        "stat_type": "ASSISTS",
+        "max_multiplier": 1.5,
+        "min_bet_rating": None,
+        "min_opp_rank": 11,
+        "max_opp_rank": None,
+        "min_hit_rate_l5": None,
+        "min_hit_rate_l15": None,
+        "min_hit_rate_season": 0.60,
+        "min_ev_pct": 10.0,
+        "min_projection_diff": 1.0,
+        "expected_wr": 100.0,
+        "description": "ASSISTS + mult<1.5 + opp>=11 + szn>=60% + EV>=10% + Diff>=1.0",
+    },
+    # OLD FILTER - DISABLED (dropped to 63.6% WR Jan 14-28)
+    "assists_season": {
+        "enabled": False,
         "stat_type": "ASSISTS",
         "max_multiplier": 1.5,
         "min_bet_rating": None,
@@ -107,8 +125,8 @@ ODDS_API_FILTERS = {
         "min_hit_rate_season": 0.60,
         "min_ev_pct": None,
         "min_projection_diff": None,
-        "expected_wr": 100.0,
-        "description": "ASSISTS + mult<1.5 + opp>=6 + szn>=60%",
+        "expected_wr": 63.6,
+        "description": "ASSISTS + mult<1.5 + opp>=6 + szn>=60% (DISABLED - 63.6% WR)",
     },
     # REBOUNDS: Very low multiplier + L15 guard
     # Backtested: 100% WR (5W-0L) Jan 10-24, 0.4 picks/day

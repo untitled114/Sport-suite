@@ -299,13 +299,13 @@ class TestFilePathConfiguration:
         """Test model file naming convention."""
         market = "points"
         expected_files = [
-            f"{market}_market_regressor.pkl",
-            f"{market}_market_classifier.pkl",
-            f"{market}_market_calibrator.pkl",
-            f"{market}_market_imputer.pkl",
-            f"{market}_market_scaler.pkl",
-            f"{market}_market_features.pkl",
-            f"{market}_market_metadata.json",
+            f"{market}_v3_regressor.pkl",
+            f"{market}_v3_classifier.pkl",
+            f"{market}_v3_calibrator.pkl",
+            f"{market}_v3_imputer.pkl",
+            f"{market}_v3_scaler.pkl",
+            f"{market}_v3_features.pkl",
+            f"{market}_v3_metadata.json",
         ]
 
         for filename in expected_files:

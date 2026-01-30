@@ -220,7 +220,7 @@ class XLPredictor:
             as_of_date: Historical date for backtesting (default: None = production mode)
             backtest_mode: If True, relaxes freshness checks (but still uses JSON calibration)
             predictions_dir: Directory to read predictions from for calibration (default: standard location)
-            model_version: 'xl' for legacy models (*_xl_*.pkl), 'v3' for new models (*_market_*.pkl)
+            model_version: 'xl' for XL models (*_xl_*.pkl, 102 feat), 'v3' for V3 models (*_v3_*.pkl, 166 feat)
         """
         # Backtest support
         self.as_of_date = as_of_date
@@ -229,7 +229,7 @@ class XLPredictor:
         self.market = market.upper()
         self.market_lower = market.lower()
         self.use_3head = use_3head
-        self.model_version = model_version  # 'xl' for legacy, 'v3' for new models
+        self.model_version = model_version  # 'xl' (102 feat) or 'v3' (166 feat)
         self.enable_book_intelligence = enable_book_intelligence
         self.enable_dynamic_calibration = (
             enable_dynamic_calibration and DYNAMIC_CALIBRATION_AVAILABLE
@@ -302,13 +302,14 @@ class XLPredictor:
         """Load all 6 XL model components."""
         try:
             # Determine model prefix based on version
-            # 'xl' = legacy (*_xl_*.pkl), 'v3' = new (*_market_*.pkl)
+            # 'xl' = XL models (102 features) - CURRENT PRODUCTION
+            # 'v3' = V3 models (166 features) - available but not deployed
             if self.model_version == "v3":
-                model_prefix = MODELS_DIR / f"{self.market_lower}_market"
-                version_label = "V3"
+                model_prefix = MODELS_DIR / f"{self.market_lower}_v3"
+                version_label = "V3_166"
             else:
                 model_prefix = MODELS_DIR / f"{self.market_lower}_xl"
-                version_label = "XL"
+                version_label = "XL_102"
 
             with open(f"{model_prefix}_regressor.pkl", "rb") as f:
                 self.regressor = pickle.load(f)

@@ -292,7 +292,7 @@ class HistoricalBacktest:
                 as_of_date=as_of_date,
                 backtest_mode=True,
                 predictions_dir=str(self.output_dir),  # Calibrator reads from backtest output
-                pick6_file=self.pick6_file,
+                # pick6_file not supported by XLPredictionsGenerator
             )
 
             # Run the generator
@@ -366,7 +366,7 @@ class HistoricalBacktest:
                     as_of_date=as_of_date,
                     backtest_mode=True,
                     predictions_dir=str(self.output_dir),
-                    pick6_file=self.pick6_file,
+                    # pick6_file not supported by XLPredictionsGenerator
                 )
 
                 generator.run(output_file=str(output_file), dry_run=self.dry_run)

@@ -664,17 +664,18 @@ class StackedMarketModel:
         Save both models and metadata
 
         Files saved:
-        - {market}_regressor_model.pkl
-        - {market}_classifier_model.pkl
-        - {market}_market_imputer.pkl
-        - {market}_market_scaler.pkl
-        - {market}_market_features.pkl
-        - {market}_market_metadata.json
+        - {market}_v3_regressor.pkl
+        - {market}_v3_classifier.pkl
+        - {market}_v3_calibrator.pkl
+        - {market}_v3_imputer.pkl
+        - {market}_v3_scaler.pkl
+        - {market}_v3_features.pkl
+        - {market}_v3_metadata.json
         """
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        prefix = f"{self.market.lower()}_market"
+        prefix = f"{self.market.lower()}_v3"
 
         # Save models
         with open(output_path / f"{prefix}_regressor.pkl", "wb") as f:

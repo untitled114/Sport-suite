@@ -5,21 +5,24 @@ BettingPros Cheatsheet Picks Generator
 Generates picks from BettingPros cheat sheet recommendations
 using validated high-WR filters.
 
-RECALIBRATED Jan 15, 2026 (regime shift detected Jan 5-14):
-- Old filters (L5 80%+ L15 70%+) collapsed from ~80% to ~50% WR
-- New filters require EV% and/or projection_diff
+RECALIBRATED Jan 30, 2026 (based on last 15 days: Jan 14-28):
+- Regime shift: December filters no longer predictive
+- New filters emphasize projection_diff (Diff) as critical factor
+- All filters validated on recent 15-day window only
 
-Current Performance (Jan 5-14, 2026):
-- POINTS: L15 60%+ Season 60%+ Opp 11+ Diff 2+ = 77.8% WR (1.8/day)
-- ASSISTS: L5 80%+ EV 10%+ = 70.8% WR (2.4/day)
-- REBOUNDS: L15 60%+ Season 60%+ EV 10%+ = 84.2% WR (1.9/day)
+Current Performance (Jan 14-28, 2026):
+- ASSISTS: Opp 11+ EV 10%+ Diff 1.5+ = 100% WR (5W/0L)
+- REBOUNDS: L5 50%+ Season 60%+ Opp <=25 Diff 1.0+ = 100% WR (8W/0L)
+- PA: Opp 16-20 Diff 2.0+ = 87.5% WR (7W/1L)
+- PR: Season 60%+ Opp 21+ Diff 1.0+ = 85.7% WR (6W/1L)
+- RA: L15 60%+ Season 55%+ Opp 21+ Rating 4+ = 100% WR (7W/0L)
 
 This is SEPARATE from the XL model predictions - uses BettingPros
 projections and hit rate data directly.
 
 Usage:
-    python3 generate_cheatsheet_picks.py --date 2026-01-15
-    python3 generate_cheatsheet_picks.py --output predictions/pro_picks_20260115.json
+    python3 generate_cheatsheet_picks.py --date 2026-01-30
+    python3 generate_cheatsheet_picks.py --output predictions/pro_picks_20260130.json
 """
 
 import argparse
@@ -90,9 +93,9 @@ LINE_FILTERS = {
 # =============================================================================
 # VALIDATED FILTER CONFIGURATIONS
 # =============================================================================
-# RECALIBRATED Jan 15, 2026 based on Jan 5-14, 2026 data (regime shift detected)
-# Old hit-rate-only filters collapsed from ~80% to ~50% WR
-# New filters add EV% and projection_diff requirements
+# RECALIBRATED Jan 30, 2026 based on last 15 days (Jan 14-28, 2026)
+# Key insight: projection_diff (Diff) is critical for ALL underperforming categories
+# December data no longer predictive - regime shift in effect
 
 PRO_FILTERS = {
     # =========================================================================
@@ -135,12 +138,29 @@ PRO_FILTERS = {
         "description": "POINTS Season 60%+ Opp 11+ EV 20%+ Diff 2+ (76.5% WR)",
     },
     # =========================================================================
-    # ASSISTS FILTERS - Recalibrated Jan 15, 2026
-    # Key insight: EV 10%+ is now required for consistent performance
+    # ASSISTS FILTERS - Recalibrated Jan 30, 2026 (last 15 days: Jan 14-28)
+    # Key insight: EV 10%+ AND Diff 1.5+ now required for consistent performance
     # =========================================================================
-    # ASSISTS: L5/L15 60%+ Opp 21-30 Rating 3+ = 71.4% WR (10W/4L, 2.0/day) - HYBRID Jan 16
-    "assists_L5_L15_opp_rating": {
+    # ASSISTS: Opp 11+ EV 10%+ Diff 1.5+ = 100% WR (5W/0L, 0.3/day) - RECALIBRATED Jan 30
+    "assists_opp_ev_diff": {
         "enabled": True,
+        "stat_type": "ASSISTS",
+        "min_hit_rate_l5": None,
+        "min_hit_rate_l15": None,
+        "min_hit_rate_season": None,
+        "min_opp_rank": 11,
+        "max_opp_rank": 30,
+        "min_bet_rating": None,
+        "min_ev_pct": 10.0,
+        "min_projection_diff": 1.5,
+        "expected_wr": 100.0,
+        "expected_volume": 0.3,
+        "tier_label": "pro",
+        "description": "ASSISTS Opp 11+ EV 10%+ Diff 1.5+ (100% WR Jan 14-28)",
+    },
+    # OLD FILTERS - DISABLED (poor performance in regime shift)
+    "assists_L5_L15_opp_rating": {
+        "enabled": False,  # DISABLED - 63.6% WR in last 15 days
         "stat_type": "ASSISTS",
         "min_hit_rate_l5": 0.60,
         "min_hit_rate_l15": 0.60,
@@ -150,54 +170,35 @@ PRO_FILTERS = {
         "min_bet_rating": 3,
         "min_ev_pct": None,
         "min_projection_diff": None,
-        "expected_wr": 71.4,
+        "expected_wr": 63.6,
         "expected_volume": 2.0,
-        "tier_label": "pro",
-        "description": "ASSISTS L5/L15 60%+ Opp 21-30 Rating 3+ (71.4% WR)",
-    },
-    # ASSISTS: L5_80 + Opp11+ + EV10+ = 73.7% WR (14W/5L, 1.9/day)
-    # DISABLED: Using only assists_L5_L15_opp_rating (tighter Opp 21+)
-    "assists_L5_opp_ev": {
-        "enabled": False,
-        "stat_type": "ASSISTS",
-        "min_hit_rate_l5": 0.80,
-        "min_hit_rate_l15": None,
-        "min_hit_rate_season": None,
-        "min_opp_rank": 11,
-        "max_opp_rank": 30,
-        "min_bet_rating": None,
-        "min_ev_pct": 10.0,
-        "min_projection_diff": None,
-        "expected_wr": 73.7,
-        "expected_volume": 1.9,
-        "tier_label": "pro",
-        "description": "ASSISTS L5 80%+ Opp 11+ EV 10%+ (73.7% WR)",
-    },
-    # ASSISTS: L5_60 + L15_60 + Opp11+ + Rating4+ = 76.5% WR (13W/4L, 1.7/day)
-    # DISABLED: Using only assists_L5_L15_opp_rating (tighter Opp 21+)
-    "assists_rating_opp": {
-        "enabled": False,
-        "stat_type": "ASSISTS",
-        "min_hit_rate_l5": 0.60,
-        "min_hit_rate_l15": 0.60,
-        "min_hit_rate_season": None,
-        "min_opp_rank": 11,
-        "max_opp_rank": 30,
-        "min_bet_rating": 4,
-        "min_ev_pct": None,
-        "min_projection_diff": None,
-        "expected_wr": 76.5,
-        "expected_volume": 1.7,
-        "tier_label": "pro",
-        "description": "ASSISTS L5 60%+ L15 60%+ Opp 11+ Rating 4+ (76.5% WR)",
+        "tier_label": "disabled",
+        "description": "ASSISTS L5/L15 60%+ Opp 21-30 Rating 3+ (DISABLED - 63.6% WR)",
     },
     # =========================================================================
-    # REBOUNDS FILTERS - Recalibrated Jan 15, 2026
-    # Key insight: EV 10%+ combined with season hit rate is key
+    # REBOUNDS FILTERS - Recalibrated Jan 30, 2026 (last 15 days: Jan 14-28)
+    # Key insight: L5 50%+ Season 60%+ Opp <=25 AND Diff 1.0+ is key
     # =========================================================================
-    # REBOUNDS: L5/L15/Season 60%+ Opp 11-30 Rating 3+ = 77.8% WR (7W/2L, 1.3/day) - HYBRID Jan 16
-    "rebounds_full_filter": {
+    # REBOUNDS: L5 50%+ Season 60%+ Opp <=25 Diff 1.0+ = 100% WR (8W/0L, 0.5/day) - RECALIBRATED Jan 30
+    "rebounds_L5_szn_opp_diff": {
         "enabled": True,
+        "stat_type": "REBOUNDS",
+        "min_hit_rate_l5": 0.50,
+        "min_hit_rate_l15": None,
+        "min_hit_rate_season": 0.60,
+        "min_opp_rank": None,
+        "max_opp_rank": 25,
+        "min_bet_rating": None,
+        "min_ev_pct": None,
+        "min_projection_diff": 1.0,
+        "expected_wr": 100.0,
+        "expected_volume": 0.5,
+        "tier_label": "pro",
+        "description": "REBOUNDS L5 50%+ Season 60%+ Opp <=25 Diff 1.0+ (100% WR Jan 14-28)",
+    },
+    # OLD FILTER - DISABLED (poor performance in regime shift)
+    "rebounds_full_filter": {
+        "enabled": False,  # DISABLED - 56.2% WR in last 15 days
         "stat_type": "REBOUNDS",
         "min_hit_rate_l5": 0.60,
         "min_hit_rate_l15": 0.60,
@@ -207,38 +208,70 @@ PRO_FILTERS = {
         "min_bet_rating": 3,
         "min_ev_pct": None,
         "min_projection_diff": None,
-        "expected_wr": 77.8,
+        "expected_wr": 56.2,
         "expected_volume": 1.3,
-        "tier_label": "pro",
-        "description": "REBOUNDS L5/L15/Season 60%+ Opp 11-30 Rating 3+ (77.8% WR)",
+        "tier_label": "disabled",
+        "description": "REBOUNDS L5/L15/Season 60%+ Opp 11-30 Rating 3+ (DISABLED - 56.2% WR)",
     },
     # =========================================================================
-    # COMBO STATS - Recalibrated Jan 15, 2026
-    # Based on Jan 5-14, 2026 data (regime shift from old L5 80%+ L15 70%+)
+    # COMBO STATS - Recalibrated Jan 30, 2026 (last 15 days: Jan 14-28)
+    # Key insight: projection_diff (Diff) is critical across all combos
     # =========================================================================
-    # PA (Points + Assists): L15 70%+ Season 60%+ Line 20+ = 83.3% WR (5W/1L) - TIGHTENED Jan 17
-    # Key insight: Low-line picks (<20) and low-season HR (<60%) are losers
-    # Filtered: VJ Edgecombe (Season 53%), Amen Thompson (Season 58%), rookies
-    "pa_L15_opp": {
+    # PA (Points + Assists): Opp 16-20 Diff 2.0+ = 87.5% WR (7W/1L, 0.5/day) - RECALIBRATED Jan 30
+    "pa_opp_diff": {
         "enabled": True,
         "stat_type": "PA",
         "min_hit_rate_l5": None,
+        "min_hit_rate_l15": None,
+        "min_hit_rate_season": None,
+        "min_opp_rank": 16,
+        "max_opp_rank": 20,
+        "min_bet_rating": None,
+        "min_ev_pct": None,
+        "min_projection_diff": 2.0,
+        "expected_wr": 87.5,
+        "expected_volume": 0.5,
+        "tier_label": "combo",
+        "description": "PA Opp 16-20 Diff 2.0+ (87.5% WR Jan 14-28)",
+    },
+    # OLD PA FILTER - DISABLED (poor performance in regime shift)
+    "pa_L15_opp": {
+        "enabled": False,  # DISABLED - 33.3% WR in last 15 days
+        "stat_type": "PA",
+        "min_hit_rate_l5": None,
         "min_hit_rate_l15": 0.70,
-        "min_hit_rate_season": 0.60,  # Added Jan 17 - filters low-season players
+        "min_hit_rate_season": 0.60,
         "min_opp_rank": 11,
         "max_opp_rank": 30,
         "min_bet_rating": None,
         "min_ev_pct": None,
         "min_projection_diff": None,
-        "min_line": 20.0,  # Added Jan 17 - filters rookies/low-volume
-        "expected_wr": 83.3,
+        "min_line": 20.0,
+        "expected_wr": 33.3,
         "expected_volume": 0.6,
-        "tier_label": "combo",
-        "description": "PA L15 70%+ Season 60%+ Line 20+ (83.3% WR)",
+        "tier_label": "disabled",
+        "description": "PA L15 70%+ Season 60%+ Line 20+ (DISABLED - 33.3% WR)",
     },
-    # PR (Points + Rebounds): L15 70%+ Opp 16-30 = 75% WR (6W/2L, 1.6/day) - USER OPTIMIZED Jan 16
-    "pr_L15_opp": {
+    # PR (Points + Rebounds): Season 60%+ Opp 21+ Diff 1.0+ = 85.7% WR (6W/1L, 0.5/day) - RECALIBRATED Jan 30
+    "pr_szn_opp_diff": {
         "enabled": True,
+        "stat_type": "PR",
+        "min_hit_rate_l5": None,
+        "min_hit_rate_l15": None,
+        "min_hit_rate_season": 0.60,
+        "min_opp_rank": 21,
+        "max_opp_rank": 30,
+        "min_bet_rating": None,
+        "min_ev_pct": None,
+        "min_projection_diff": 1.0,
+        "expected_wr": 85.7,
+        "expected_volume": 0.5,
+        "tier_label": "combo",
+        "description": "PR Season 60%+ Opp 21+ Diff 1.0+ (85.7% WR Jan 14-28)",
+    },
+    # OLD PR FILTER - DISABLED (poor performance in regime shift)
+    "pr_L15_opp": {
+        "enabled": False,  # DISABLED - 44.4% WR in last 15 days
         "stat_type": "PR",
         "min_hit_rate_l5": None,
         "min_hit_rate_l15": 0.70,
@@ -248,14 +281,31 @@ PRO_FILTERS = {
         "min_bet_rating": None,
         "min_ev_pct": None,
         "min_projection_diff": None,
-        "expected_wr": 75.0,
+        "expected_wr": 44.4,
         "expected_volume": 1.6,
-        "tier_label": "combo",
-        "description": "PR L15 70%+ Opp 16-30 (75% WR)",
+        "tier_label": "disabled",
+        "description": "PR L15 70%+ Opp 16-30 (DISABLED - 44.4% WR)",
     },
-    # RA (Rebounds + Assists): Diff 2+ Opp 21-30 = 100% WR (6W/0L, 1.2/day) - USER OPTIMIZED Jan 16
-    "ra_opp_diff": {
+    # RA (Rebounds + Assists): L15 60%+ Season 55%+ Opp 21+ Rating 4+ = 100% WR (7W/0L, 0.5/day) - RECALIBRATED Jan 30
+    "ra_L15_szn_opp_rating": {
         "enabled": True,
+        "stat_type": "RA",
+        "min_hit_rate_l5": None,
+        "min_hit_rate_l15": 0.60,
+        "min_hit_rate_season": 0.55,
+        "min_opp_rank": 21,
+        "max_opp_rank": 30,
+        "min_bet_rating": 4,
+        "min_ev_pct": None,
+        "min_projection_diff": None,
+        "expected_wr": 100.0,
+        "expected_volume": 0.5,
+        "tier_label": "combo",
+        "description": "RA L15 60%+ Season 55%+ Opp 21+ Rating 4+ (100% WR Jan 14-28)",
+    },
+    # OLD RA FILTER - DISABLED (poor performance in regime shift)
+    "ra_opp_diff": {
+        "enabled": False,  # DISABLED - 54.5% WR in last 15 days
         "stat_type": "RA",
         "min_hit_rate_l5": None,
         "min_hit_rate_l15": None,
@@ -265,10 +315,10 @@ PRO_FILTERS = {
         "min_bet_rating": None,
         "min_ev_pct": None,
         "min_projection_diff": 2.0,
-        "expected_wr": 100.0,
+        "expected_wr": 54.5,
         "expected_volume": 1.2,
-        "tier_label": "combo",
-        "description": "RA Diff 2+ Opp 21-30 (100% WR)",
+        "tier_label": "disabled",
+        "description": "RA Diff 2+ Opp 21-30 (DISABLED - 54.5% WR)",
     },
     # =========================================================================
     # THREES - DISABLED (29.7% WR on overs - terrible performance)

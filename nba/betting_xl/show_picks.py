@@ -15,10 +15,13 @@ BOLD = "\033[1m"
 RESET = "\033[0m"
 GREEN = "\033[92m"
 RED = "\033[91m"
-ORANGE = "\033[93m"
 CYAN = "\033[96m"
+MAGENTA = "\033[95m"
 MUTED = "\033[90m"
 WHITE = "\033[97m"
+
+# Projection color (used for predicted values)
+PROJ_COLOR = WHITE  # Change to CYAN, MAGENTA, or GREEN if preferred
 
 PREDICTIONS_DIR = Path(__file__).parent / "predictions"
 
@@ -49,7 +52,7 @@ def format_confidence(confidence, p_over):
     if confidence == "HIGH":
         return f"{GREEN}{BOLD}HIGH{RESET} ({p_pct}%)"
     elif confidence == "MEDIUM":
-        return f"{ORANGE}{BOLD}MEDIUM{RESET} ({p_pct}%)"
+        return f"{CYAN}{BOLD}MEDIUM{RESET} ({p_pct}%)"
     else:
         return f"{CYAN}STANDARD{RESET} ({p_pct}%)"
 
@@ -90,24 +93,34 @@ def find_picks_file(prefix, date_str):
 
 def format_tier(tier):
     """Format model tier with color."""
-    # Normalize tier name (V3_STANDARD_OVER -> V3, etc.)
+    # All tiers use XL model (102 features) - names reflect filter criteria
     tier_base = tier.upper()
-    if "V3" in tier_base:
-        return f"{GREEN}{BOLD}V3{RESET} {MUTED}(~85% WR){RESET}"
-    elif tier_base == "X" or "TIER_X" in tier_base:
-        return f"{CYAN}{BOLD}X{RESET} {MUTED}(~75% WR){RESET}"
+    # Current tier names
+    if tier_base == "X":
+        return f"{GREEN}{BOLD}X{RESET} {MUTED}(p>=0.85){RESET}"
+    elif tier_base == "Z":
+        return f"{CYAN}{BOLD}Z{RESET} {MUTED}(p>=0.70){RESET}"
+    elif "META" in tier_base:
+        return f"{GREEN}{BOLD}META{RESET} {MUTED}(~70% WR){RESET}"
     elif tier_base == "A" or "TIER_A" in tier_base:
-        return f"{ORANGE}{BOLD}A{RESET} {MUTED}(~70% WR){RESET}"
+        return f"{CYAN}{BOLD}A{RESET} {MUTED}(fallback){RESET}"
     elif "STAR" in tier_base:
         return f"{GREEN}{BOLD}STAR{RESET} {MUTED}(~80% WR){RESET}"
+    elif "JAN_CONFIDENT" in tier_base:
+        return f"{GREEN}{BOLD}JAN_CONF{RESET} {MUTED}(~87% WR){RESET}"
     elif "GOLDMINE" in tier_base:
         return f"{GREEN}{BOLD}GOLDMINE{RESET} {MUTED}(~70% WR){RESET}"
+    # Legacy tier names for backwards compatibility
+    elif "XL_HIGHCONF" in tier_base or "V3" in tier_base:
+        return f"{GREEN}{BOLD}X{RESET} {MUTED}(legacy){RESET}"
+    elif "XL_EDGE" in tier_base:
+        return f"{CYAN}{BOLD}Z{RESET} {MUTED}(legacy){RESET}"
     else:
         return f"{MUTED}{tier}{RESET}"
 
 
 def show_xl_picks(date_str, compact=False):
-    """Display XL model picks with full betting details."""
+    """Display XL model picks with full betting details, grouped by stat type."""
     filepath = find_picks_file("xl_picks", date_str)
     if not filepath:
         print(f"\n  {MUTED}No XL picks file for {date_str}.{RESET}")
@@ -124,92 +137,109 @@ def show_xl_picks(date_str, compact=False):
     print(f"  {MUTED}Strategy:{RESET} {data.get('strategy', 'N/A')}")
     print(f"  {MUTED}Markets:{RESET} {', '.join(data.get('markets_enabled', []))}")
 
-    # Sort by edge for priority
-    picks_sorted = sorted(picks, key=lambda p: p.get("edge_pct", 0), reverse=True)
+    # Group by stat type
+    by_stat = {}
+    for pick in picks:
+        stat = pick.get("stat_type", "OTHER")
+        if stat not in by_stat:
+            by_stat[stat] = []
+        by_stat[stat].append(pick)
 
-    for i, pick in enumerate(picks_sorted):
-        if i > 0:
-            print_divider()
+    # Define stat type order
+    stat_order = ["POINTS", "REBOUNDS", "ASSISTS", "THREES", "PA", "PR", "RA", "PRA"]
 
-        player = pick["player_name"]
-        stat = pick["stat_type"]
-        side = pick["side"]
-        best_line = pick["best_line"]
-        best_book = pick["best_book"].upper()
-        edge_pct = pick.get("edge_pct", 0)
-        edge = pick.get("edge", 0)
-        pred = pick["prediction"]
-        p_over = pick.get("p_over", 0.5)
-        confidence = pick.get("confidence", "STANDARD")
-        opp = pick.get("opponent_team", "?")
-        is_home = pick.get("is_home", True)
-        consensus = pick.get("consensus_line", best_line)
-        line_spread = pick.get("line_spread", 0)
-        num_books = pick.get("num_books", 1)
-        line_dist = pick.get("line_distribution", [])
-        top_3 = pick.get("top_3_lines", [])
-        tier = pick.get("filter_tier", "?")
+    for stat in stat_order:
+        if stat not in by_stat:
+            continue
 
-        matchup = f"vs {opp}" if is_home else f"@ {opp}"
-        home_away = "HOME" if is_home else "AWAY"
+        stat_picks = by_stat[stat]
+        # Sort by edge within stat type
+        stat_picks_sorted = sorted(stat_picks, key=lambda p: p.get("edge_pct", 0), reverse=True)
 
-        # Goldmine indicator for high spread
-        spread_tag = ""
-        if line_spread >= 2.0:
-            spread_tag = f" {GREEN}{BOLD}[GOLDMINE]{RESET}"
-        elif line_spread >= 1.0:
-            spread_tag = f" {MUTED}[spread: {line_spread}]{RESET}"
+        print(f"\n  {BOLD}{CYAN}── {stat} ({len(stat_picks)}) ──{RESET}")
 
-        print()
-        # Player name + matchup + home/away
-        print(f"  {BOLD}{WHITE}{player}{RESET}  {MUTED}{matchup} ({home_away}){RESET}")
+        for i, pick in enumerate(stat_picks_sorted):
+            if i > 0:
+                print_divider()
 
-        # Main bet line + tier
-        print(
-            f"  {MUTED}│{RESET} {stat} {side} {BOLD}{best_line}{RESET} @ {BOLD}{best_book}{RESET}{spread_tag}"
-        )
-        print(f"  {MUTED}│{RESET}  Tier: {format_tier(tier)}")
+            player = pick["player_name"]
+            side = pick["side"]
+            best_line = pick["best_line"]
+            best_book = pick["best_book"].upper()
+            edge_pct = pick.get("edge_pct", 0)
+            edge = pick.get("edge", 0)
+            pred = pick["prediction"]
+            p_over = pick.get("p_over", 0.5)
+            confidence = pick.get("confidence", "STANDARD")
+            opp = pick.get("opponent_team", "?")
+            is_home = pick.get("is_home", True)
+            consensus = pick.get("consensus_line", best_line)
+            line_spread = pick.get("line_spread", 0)
+            num_books = pick.get("num_books", 1)
+            line_dist = pick.get("line_distribution", [])
+            top_3 = pick.get("top_3_lines", [])
+            tier = pick.get("filter_tier", "?")
 
-        # Projection and Edge
-        print(
-            f"  {MUTED}│{RESET}  Prediction: {BOLD}{ORANGE}{pred:.1f}{RESET}  {MUTED}│{RESET}  Edge: {format_edge(edge_pct, edge)}"
-        )
+            matchup = f"vs {opp}" if is_home else f"@ {opp}"
+            home_away = "HOME" if is_home else "AWAY"
 
-        # Consensus and Books
-        consensus_diff = best_line - consensus
-        diff_color = GREEN if consensus_diff < 0 else (RED if consensus_diff > 0 else MUTED)
-        print(
-            f"  {MUTED}│{RESET}  Consensus: {consensus:.1f} {diff_color}({consensus_diff:+.1f}){RESET}  {MUTED}│{RESET}  Books: {num_books} offering"
-        )
+            # Goldmine indicator for high spread
+            spread_tag = ""
+            if line_spread >= 2.0:
+                spread_tag = f" {GREEN}{BOLD}[GOLDMINE]{RESET}"
+            elif line_spread >= 1.0:
+                spread_tag = f" {MUTED}[spread: {line_spread}]{RESET}"
 
-        # Confidence and P(over)
-        print(f"  {MUTED}│{RESET}  Confidence: {format_confidence(confidence, p_over)}")
+            print()
+            # Player name + matchup + home/away
+            print(f"  {BOLD}{WHITE}{player}{RESET}  {MUTED}{matchup} ({home_away}){RESET}")
 
-        if not compact:
-            # Line distribution
-            if line_dist:
-                dist_str = format_line_distribution(line_dist)
-                if len(dist_str) > 60:
-                    # Multi-line for long distributions
-                    print(f"  {MUTED}│{RESET}  Lines:")
-                    for item in line_dist:
-                        books_list = ", ".join(item.get("books", []))
-                        item_edge = item.get("edge_pct", 0)
-                        edge_color = GREEN if item_edge >= 0 else RED
-                        print(
-                            f"  {MUTED}│{RESET}    {item['line']}: {books_list} {edge_color}({item_edge:+.1f}%){RESET}"
-                        )
-                else:
-                    print(f"  {MUTED}│{RESET}  Lines: {dist_str}")
+            # Main bet line + tier
+            print(
+                f"  {MUTED}│{RESET} {side} {BOLD}{best_line}{RESET} @ {BOLD}{best_book}{RESET}{spread_tag}"
+            )
+            print(f"  {MUTED}│{RESET}  Tier: {format_tier(tier)}")
 
-            # Alternative books (from top_3 excluding best)
-            alt_books = [
-                t["book"].upper() for t in top_3[1:3] if t["book"].lower() != best_book.lower()
-            ]
-            if alt_books:
-                print(f"  {MUTED}│{RESET}  Also at: {', '.join(alt_books)}")
+            # Projection and Edge
+            print(
+                f"  {MUTED}│{RESET}  Prediction: {BOLD}{PROJ_COLOR}{pred:.1f}{RESET}  {MUTED}│{RESET}  Edge: {format_edge(edge_pct, edge)}"
+            )
 
-        print()
+            # Consensus and Books
+            consensus_diff = best_line - consensus
+            diff_color = GREEN if consensus_diff < 0 else (RED if consensus_diff > 0 else MUTED)
+            print(
+                f"  {MUTED}│{RESET}  Consensus: {consensus:.1f} {diff_color}({consensus_diff:+.1f}){RESET}  {MUTED}│{RESET}  Books: {num_books} offering"
+            )
+
+            # Confidence and P(over)
+            print(f"  {MUTED}│{RESET}  Confidence: {format_confidence(confidence, p_over)}")
+
+            if not compact:
+                # Line distribution
+                if line_dist:
+                    dist_str = format_line_distribution(line_dist)
+                    if len(dist_str) > 60:
+                        # Multi-line for long distributions
+                        print(f"  {MUTED}│{RESET}  Lines:")
+                        for item in line_dist:
+                            books_list = ", ".join(item.get("books", []))
+                            item_edge = item.get("edge_pct", 0)
+                            edge_color = GREEN if item_edge >= 0 else RED
+                            print(
+                                f"  {MUTED}│{RESET}    {item['line']}: {books_list} {edge_color}({item_edge:+.1f}%){RESET}"
+                            )
+                    else:
+                        print(f"  {MUTED}│{RESET}  Lines: {dist_str}")
+
+                # Alternative books (from top_3 excluding best)
+                alt_books = [
+                    t["book"].upper() for t in top_3[1:3] if t["book"].lower() != best_book.lower()
+                ]
+                if alt_books:
+                    print(f"  {MUTED}│{RESET}  Also at: {', '.join(alt_books)}")
+
+            print()
 
 
 def show_pro_picks(date_str, compact=False):
@@ -257,7 +287,7 @@ def show_pro_picks(date_str, compact=False):
             print(f"  {BOLD}{WHITE}{player}{RESET}")
             print(f"  {MUTED}│{RESET} {stat} {side} {BOLD}{line}{RESET} @ Underdog")
             print(
-                f"  {MUTED}│{RESET}  Projection: {BOLD}{ORANGE}{projection:.1f}{RESET}  {MUTED}│{RESET}  Edge: {edge_color}{BOLD}{diff:+.1f}{RESET}"
+                f"  {MUTED}│{RESET}  Projection: {BOLD}{CYAN}{projection:.1f}{RESET}  {MUTED}│{RESET}  Edge: {edge_color}{BOLD}{diff:+.1f}{RESET}"
             )
 
             if not compact:
@@ -282,7 +312,7 @@ def show_pro_picks(date_str, compact=False):
 
 
 def show_odds_api_picks(date_str, compact=False):
-    """Display Odds API picks (Pick6 + BettingPros)."""
+    """Display Odds API picks (Pick6 + BettingPros), grouped by stat type."""
     filepath = find_picks_file("odds_api_picks", date_str)
     if not filepath:
         print(f"\n  {MUTED}No Odds API picks file for {date_str}.{RESET}")
@@ -298,65 +328,83 @@ def show_odds_api_picks(date_str, compact=False):
     print_header(f"ODDS API PICKS ({len(picks)})")
     print(f"  {MUTED}Strategy:{RESET} Pick6 multipliers + BettingPros cheatsheet")
 
-    for i, pick in enumerate(picks):
-        if i > 0:
-            print_divider()
+    # Group by stat type
+    by_stat = {}
+    for pick in picks:
+        stat = pick.get("stat_type", "OTHER")
+        if stat not in by_stat:
+            by_stat[stat] = []
+        by_stat[stat].append(pick)
 
-        player = pick.get("player_name", "Unknown")
-        stat = pick.get("stat_type", "?")
-        side = pick.get("side", "OVER")
-        line = pick.get("line", "?")
-        multiplier = pick.get("pick6_multiplier", 1.0)
-        projection = pick.get("projection", 0)
-        proj_diff = pick.get("projection_diff", 0)
-        ev_pct = pick.get("ev_pct", 0)
-        l5 = pick.get("hit_rate_l5", 0)
-        l15 = pick.get("hit_rate_l15", 0)
-        season = pick.get("hit_rate_season", 0)
-        opp_rank = pick.get("opp_rank", "?")
-        confidence = pick.get("confidence", "STANDARD")
-        filter_name = pick.get("filter_name", "")
-        expected_wr = pick.get("expected_wr", "?")
-        reasoning = pick.get("reasoning", "")
-        platform = pick.get("platform", "underdog").upper()
+    # Define stat type order
+    stat_order = ["POINTS", "REBOUNDS", "ASSISTS", "THREES", "PA", "PR", "RA", "PRA"]
 
-        # Multiplier color (lower = easier = green)
-        mult_color = GREEN if multiplier < 0.9 else (ORANGE if multiplier < 1.2 else RED)
+    for stat in stat_order:
+        if stat not in by_stat:
+            continue
 
-        # Edge color
-        edge_color = GREEN if proj_diff > 0 else RED
+        stat_picks = by_stat[stat]
+        # Sort by multiplier (lower = better) within stat type
+        stat_picks_sorted = sorted(stat_picks, key=lambda p: p.get("pick6_multiplier", 1.0))
 
-        print()
-        print(f"  {BOLD}{WHITE}{player}{RESET}")
-        print(f"  {MUTED}│{RESET} {stat} {side} {BOLD}{line}{RESET} @ {BOLD}{platform}{RESET}")
-        print(
-            f"  {MUTED}│{RESET}  Pick6 Mult: {mult_color}{BOLD}{multiplier:.2f}x{RESET}  {MUTED}│{RESET}  EV: {GREEN}{BOLD}{ev_pct:.1f}%{RESET}"
-        )
-        print(
-            f"  {MUTED}│{RESET}  Projection: {BOLD}{ORANGE}{projection:.1f}{RESET}  {MUTED}│{RESET}  Edge: {edge_color}{BOLD}{proj_diff:+.1f}{RESET}"
-        )
+        print(f"\n  {BOLD}{CYAN}── {stat} ({len(stat_picks)}) ──{RESET}")
 
-        # Hit rates
-        l5_pct = int(l5 * 100) if l5 <= 1 else int(l5)
-        l15_pct = int(l15 * 100) if l15 <= 1 else int(l15)
-        szn_pct = int(season * 100) if season <= 1 else int(season)
-        print(
-            f"  {MUTED}│{RESET}  L5: {BOLD}{l5_pct}%{RESET}  {MUTED}│{RESET}  L15: {BOLD}{l15_pct}%{RESET}  {MUTED}│{RESET}  Season: {BOLD}{szn_pct}%{RESET}"
-        )
+        for i, pick in enumerate(stat_picks_sorted):
+            if i > 0:
+                print_divider()
 
-        # Opponent rank
-        print(
-            f"  {MUTED}│{RESET}  vs #{opp_rank} defense  {MUTED}│{RESET}  Expected: {GREEN}{BOLD}{expected_wr}%{RESET} WR"
-        )
+            player = pick.get("player_name", "Unknown")
+            side = pick.get("side", "OVER")
+            line = pick.get("line", "?")
+            multiplier = pick.get("pick6_multiplier", 1.0)
+            projection = pick.get("projection", 0)
+            proj_diff = pick.get("projection_diff", 0)
+            ev_pct = pick.get("ev_pct", 0)
+            l5 = pick.get("hit_rate_l5", 0)
+            l15 = pick.get("hit_rate_l15", 0)
+            season = pick.get("hit_rate_season", 0)
+            opp_rank = pick.get("opp_rank", "?")
+            expected_wr = pick.get("expected_wr", "?")
+            reasoning = pick.get("reasoning", "")
+            platform = pick.get("platform", "underdog").upper()
 
-        if not compact and reasoning:
-            # Wrap reasoning if too long
-            if len(reasoning) > 65:
-                print(f"  {MUTED}│{RESET}  {MUTED}Reason: {reasoning[:65]}...{RESET}")
-            else:
-                print(f"  {MUTED}│{RESET}  {MUTED}Reason: {reasoning}{RESET}")
+            # Multiplier color (lower = easier = green)
+            mult_color = GREEN if multiplier < 0.9 else (CYAN if multiplier < 1.2 else RED)
 
-        print()
+            # Edge color
+            edge_color = GREEN if proj_diff > 0 else RED
+
+            print()
+            print(f"  {BOLD}{WHITE}{player}{RESET}")
+            print(f"  {MUTED}│{RESET} {side} {BOLD}{line}{RESET} @ {BOLD}{platform}{RESET}")
+            print(
+                f"  {MUTED}│{RESET}  Pick6 Mult: {mult_color}{BOLD}{multiplier:.2f}x{RESET}  {MUTED}│{RESET}  EV: {GREEN}{BOLD}{ev_pct:.1f}%{RESET}"
+            )
+            print(
+                f"  {MUTED}│{RESET}  Projection: {BOLD}{CYAN}{projection:.1f}{RESET}  {MUTED}│{RESET}  Edge: {edge_color}{BOLD}{proj_diff:+.1f}{RESET}"
+            )
+
+            # Hit rates
+            l5_pct = int(l5 * 100) if l5 <= 1 else int(l5)
+            l15_pct = int(l15 * 100) if l15 <= 1 else int(l15)
+            szn_pct = int(season * 100) if season <= 1 else int(season)
+            print(
+                f"  {MUTED}│{RESET}  L5: {BOLD}{l5_pct}%{RESET}  {MUTED}│{RESET}  L15: {BOLD}{l15_pct}%{RESET}  {MUTED}│{RESET}  Season: {BOLD}{szn_pct}%{RESET}"
+            )
+
+            # Opponent rank
+            print(
+                f"  {MUTED}│{RESET}  vs #{opp_rank} defense  {MUTED}│{RESET}  Expected: {GREEN}{BOLD}{expected_wr}%{RESET} WR"
+            )
+
+            if not compact and reasoning:
+                # Wrap reasoning if too long
+                if len(reasoning) > 65:
+                    print(f"  {MUTED}│{RESET}  {MUTED}Reason: {reasoning[:65]}...{RESET}")
+                else:
+                    print(f"  {MUTED}│{RESET}  {MUTED}Reason: {reasoning}{RESET}")
+
+            print()
 
 
 def show_summary(date_str):
@@ -411,13 +459,17 @@ def show_summary(date_str):
             print(f"  XL REBOUNDS      {reb_count:>3}     ~{rebounds_wr:.0f}%")
             total += reb_count
 
-        # Tier breakdown
-        v3_count = by_tier.get("V3", 0)
-        x_count = by_tier.get("X", 0)
-        if v3_count:
-            print(f"    {MUTED}└ Tier V3{RESET}      {v3_count:>3}     {GREEN}~85%{RESET}")
+        # Tier breakdown (all use XL model - tiers are filter criteria)
+        # Count current + legacy tier names
+        x_count = by_tier.get("X", 0) + by_tier.get("XL_HIGHCONF", 0) + by_tier.get("V3", 0)
+        z_count = by_tier.get("Z", 0) + by_tier.get("XL_EDGE", 0)
+        meta_count = by_tier.get("META", 0)
         if x_count:
-            print(f"    {MUTED}└ Tier X{RESET}       {x_count:>3}     {CYAN}~75%{RESET}")
+            print(f"    {MUTED}└ X{RESET}            {x_count:>3}     {GREEN}p>=0.85{RESET}")
+        if z_count:
+            print(f"    {MUTED}└ Z{RESET}            {z_count:>3}     {CYAN}p>=0.70{RESET}")
+        if meta_count:
+            print(f"    {MUTED}└ META{RESET}         {meta_count:>3}     {GREEN}~70%{RESET}")
 
         # Goldmine stats
         goldmine = [p for p in xl_data.get("picks", []) if p.get("line_spread", 0) >= 2.0]
