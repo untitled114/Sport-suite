@@ -486,8 +486,11 @@ class LineOptimizer:
         try:
             df = pd.read_sql_query(query, self.conn, params=params)
             return df if len(df) > 0 else None
-        except Exception as e:
-            logger.error(f"Error querying book lines: {e}")
+        except psycopg2.Error as e:
+            logger.error(f"Database error querying book lines: {e}")
+            return None
+        except (ValueError, KeyError) as e:
+            logger.error(f"Data error querying book lines: {e}")
             return None
 
     def optimize_line(

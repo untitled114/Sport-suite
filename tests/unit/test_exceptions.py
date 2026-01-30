@@ -231,3 +231,189 @@ class TestExceptionHierarchy:
 
         with pytest.raises(NBAPropsError):
             raise ModelNotFoundError("/path/model.pkl")
+
+
+class TestSerializationExceptions:
+    """Tests for serialization-related exceptions."""
+
+    def test_pickle_load_error(self):
+        """Test PickleLoadError with file path and reason."""
+        from nba.core.exceptions import PickleLoadError, SerializationError
+
+        error = PickleLoadError("/models/model.pkl", reason="corrupted file")
+        assert error.file_path == "/models/model.pkl"
+        assert error.reason == "corrupted file"
+        assert "Failed to load pickle file" in str(error)
+        assert "/models/model.pkl" in str(error)
+        assert "corrupted file" in str(error)
+        assert isinstance(error, SerializationError)
+
+    def test_pickle_load_error_without_reason(self):
+        """Test PickleLoadError without reason."""
+        from nba.core.exceptions import PickleLoadError
+
+        error = PickleLoadError("/models/model.pkl")
+        assert "Failed to load pickle file" in str(error)
+        assert error.reason is None
+
+    def test_json_load_error(self):
+        """Test JSONLoadError with file path and reason."""
+        from nba.core.exceptions import JSONLoadError, SerializationError
+
+        error = JSONLoadError("/config/settings.json", reason="invalid JSON")
+        assert error.file_path == "/config/settings.json"
+        assert error.reason == "invalid JSON"
+        assert "Failed to load JSON file" in str(error)
+        assert isinstance(error, SerializationError)
+
+
+class TestCalibrationExceptions:
+    """Tests for calibration-related exceptions."""
+
+    def test_calibration_error_is_base(self):
+        """Test CalibrationError is NBAPropsError."""
+        from nba.core.exceptions import CalibrationError, NBAPropsError
+
+        assert issubclass(CalibrationError, NBAPropsError)
+
+    def test_calibration_data_error(self):
+        """Test CalibrationDataError with market, reason, samples."""
+        from nba.core.exceptions import CalibrationDataError, CalibrationError
+
+        error = CalibrationDataError(market="POINTS", reason="insufficient samples", samples=10)
+        assert error.market == "POINTS"
+        assert error.reason == "insufficient samples"
+        assert error.samples == 10
+        assert "POINTS" in str(error)
+        assert "insufficient samples" in str(error)
+        assert "samples=10" in str(error)
+        assert isinstance(error, CalibrationError)
+
+    def test_calibration_data_error_without_samples(self):
+        """Test CalibrationDataError without samples."""
+        from nba.core.exceptions import CalibrationDataError
+
+        error = CalibrationDataError(market="REBOUNDS", reason="invalid data")
+        assert error.samples is None
+        assert "REBOUNDS" in str(error)
+
+    def test_calibration_fit_error(self):
+        """Test CalibrationFitError with market and reason."""
+        from nba.core.exceptions import CalibrationError, CalibrationFitError
+
+        error = CalibrationFitError(market="POINTS", reason="non-monotonic data")
+        assert error.market == "POINTS"
+        assert error.reason == "non-monotonic data"
+        assert "Failed to fit calibrator" in str(error)
+        assert "POINTS" in str(error)
+        assert isinstance(error, CalibrationError)
+
+    def test_calibration_fit_error_without_reason(self):
+        """Test CalibrationFitError without reason."""
+        from nba.core.exceptions import CalibrationFitError
+
+        error = CalibrationFitError(market="ASSISTS")
+        assert error.reason is None
+
+
+class TestMongoDBExceptions:
+    """Tests for MongoDB-related exceptions."""
+
+    def test_mongodb_error_inherits_database_error(self):
+        """Test MongoDBError inherits from DatabaseError."""
+        from nba.core.exceptions import DatabaseError, MongoDBError
+
+        assert issubclass(MongoDBError, DatabaseError)
+
+    def test_mongodb_connection_error(self):
+        """Test MongoDBConnectionError with host, port, reason."""
+        from nba.core.exceptions import MongoDBConnectionError, MongoDBError
+
+        error = MongoDBConnectionError(host="localhost", port=27017, reason="authentication failed")
+        assert error.host == "localhost"
+        assert error.port == 27017
+        assert error.reason == "authentication failed"
+        assert "Failed to connect to MongoDB" in str(error)
+        assert "localhost:27017" in str(error)
+        assert "authentication failed" in str(error)
+        assert isinstance(error, MongoDBError)
+
+    def test_mongodb_connection_error_minimal(self):
+        """Test MongoDBConnectionError with minimal args."""
+        from nba.core.exceptions import MongoDBConnectionError
+
+        error = MongoDBConnectionError()
+        assert "Failed to connect to MongoDB" in str(error)
+        assert error.host is None
+        assert error.port is None
+        assert error.reason is None
+
+    def test_mongodb_query_error(self):
+        """Test MongoDBQueryError with collection and operation."""
+        from nba.core.exceptions import MongoDBError, MongoDBQueryError
+
+        error = MongoDBQueryError(
+            collection="player_stats", message="invalid filter", operation="find"
+        )
+        assert error.collection == "player_stats"
+        assert error.operation == "find"
+        assert "MongoDB query error" in str(error)
+        assert "player_stats" in str(error)
+        assert "operation=find" in str(error)
+        assert isinstance(error, MongoDBError)
+
+
+class TestLineShoppingExceptions:
+    """Tests for line shopping exceptions."""
+
+    def test_line_shopping_error_inheritance(self):
+        """Test LineShoppingError inherits from NBAPropsError."""
+        from nba.core.exceptions import LineShoppingError, NBAPropsError
+
+        assert issubclass(LineShoppingError, NBAPropsError)
+
+    def test_no_lines_found_error(self):
+        """Test NoLinesFoundError with player, stat, date."""
+        from nba.core.exceptions import LineShoppingError, NoLinesFoundError
+
+        error = NoLinesFoundError(
+            player_name="Stephen Curry", stat_type="POINTS", game_date="2024-01-15"
+        )
+        assert error.player_name == "Stephen Curry"
+        assert error.stat_type == "POINTS"
+        assert error.game_date == "2024-01-15"
+        assert "No book lines found" in str(error)
+        assert "Stephen Curry" in str(error)
+        assert "POINTS" in str(error)
+        assert "2024-01-15" in str(error)
+        assert isinstance(error, LineShoppingError)
+
+    def test_no_lines_found_error_without_date(self):
+        """Test NoLinesFoundError without game_date."""
+        from nba.core.exceptions import NoLinesFoundError
+
+        error = NoLinesFoundError(player_name="Kevin Durant", stat_type="REBOUNDS")
+        assert error.game_date is None
+        assert "2024" not in str(error)
+
+    def test_all_books_blacklisted_error(self):
+        """Test AllBooksBlacklistedError with player, stat, books."""
+        from nba.core.exceptions import AllBooksBlacklistedError, LineShoppingError
+
+        error = AllBooksBlacklistedError(
+            player_name="LeBron James", stat_type="ASSISTS", books=["FanDuel", "BetRivers"]
+        )
+        assert error.player_name == "LeBron James"
+        assert error.stat_type == "ASSISTS"
+        assert error.books == ["FanDuel", "BetRivers"]
+        assert "blacklisted" in str(error)
+        assert "LeBron James" in str(error)
+        assert "FanDuel" in str(error)
+        assert isinstance(error, LineShoppingError)
+
+    def test_all_books_blacklisted_error_without_books(self):
+        """Test AllBooksBlacklistedError without books list."""
+        from nba.core.exceptions import AllBooksBlacklistedError
+
+        error = AllBooksBlacklistedError(player_name="Giannis Antetokounmpo", stat_type="THREES")
+        assert error.books is None

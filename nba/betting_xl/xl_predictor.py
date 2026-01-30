@@ -20,6 +20,15 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import pandas as pd
 
+from nba.core.exceptions import (
+    CalibrationDataError,
+    CalibrationError,
+    ModelLoadError,
+    ModelNotFoundError,
+    ModelPredictionError,
+    PickleLoadError,
+)
+
 # Suppress sklearn feature name warnings
 warnings.filterwarnings("ignore", message=".*feature names.*")
 warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
@@ -98,12 +107,15 @@ class BookIntelligencePredictor:
 
             logger.info(f"[OK] {self.market}: Loaded book intelligence model")
 
-        except FileNotFoundError:
+        except FileNotFoundError as e:
             logger.warning(f"[WARN]  {self.market}: Book intelligence model not found - skipping")
-            raise
-        except Exception as e:
-            logger.error(f"[ERROR] {self.market}: Failed to load book intelligence model: {e}")
-            raise
+            raise ModelNotFoundError(str(model_prefix), self.market) from e
+        except pickle.UnpicklingError as e:
+            logger.error(f"[ERROR] {self.market}: Corrupted book intelligence model: {e}")
+            raise PickleLoadError(str(model_prefix), "pickle file corrupted") from e
+        except OSError as e:
+            logger.error(f"[ERROR] {self.market}: I/O error loading book intelligence model: {e}")
+            raise ModelLoadError(str(model_prefix), str(e)) from e
 
     def predict(self, book_features: Dict) -> Optional[float]:
         """
@@ -147,8 +159,11 @@ class BookIntelligencePredictor:
 
             return float(np.clip(prob_over_cal, 0.01, 0.99))
 
-        except Exception as e:
-            logger.error(f"Book intelligence prediction error: {e}")
+        except (ValueError, KeyError) as e:
+            logger.error(f"Book intelligence prediction error (data): {e}")
+            return None
+        except (AttributeError, TypeError) as e:
+            logger.error(f"Book intelligence prediction error (model): {e}")
             return None
 
 
@@ -264,7 +279,11 @@ class XLPredictor:
                 logger.info(
                     f"   {self.market}: Calibration enabled ({cal_type}, lookback={dynamic_lookback_days} days, dir={dir_str})"
                 )
-            except Exception as e:
+            except (FileNotFoundError, json.JSONDecodeError) as e:
+                logger.warning(f"   {self.market}: Dynamic calibration data unavailable: {e}")
+                self.dynamic_calibrator = None
+                self.enable_dynamic_calibration = False
+            except (ValueError, CalibrationError) as e:
                 logger.warning(f"   {self.market}: Dynamic calibration failed to initialize: {e}")
                 self.dynamic_calibrator = None
                 self.enable_dynamic_calibration = False
@@ -314,9 +333,15 @@ class XLPredictor:
                 f"[OK] {self.market}: Loaded {version_label} model ({len(self.features)} features)"
             )
 
-        except Exception as e:
-            logger.error(f"[ERROR] {self.market}: Failed to load model: {e}")
-            raise
+        except FileNotFoundError as e:
+            logger.error(f"[ERROR] {self.market}: Model file not found: {e}")
+            raise ModelNotFoundError(str(model_prefix), self.market) from e
+        except pickle.UnpicklingError as e:
+            logger.error(f"[ERROR] {self.market}: Model file corrupted: {e}")
+            raise PickleLoadError(str(model_prefix), "pickle file corrupted") from e
+        except OSError as e:
+            logger.error(f"[ERROR] {self.market}: I/O error loading model: {e}")
+            raise ModelLoadError(str(model_prefix), str(e)) from e
 
     def load_3head_models(self):
         """Load 3-head matchup architecture: base regressor + matchup head + enhanced classifier"""
@@ -374,9 +399,12 @@ class XLPredictor:
             logger.info(f"   Falling back to 2-head model...")
             self.use_3head = False
             self.load_model()
-        except Exception as e:
-            logger.error(f"[ERROR] {self.market}: Failed to load 3-head model: {e}")
-            raise
+        except pickle.UnpicklingError as e:
+            logger.error(f"[ERROR] {self.market}: 3-head model file corrupted: {e}")
+            raise PickleLoadError(str(model_prefix), "pickle file corrupted") from e
+        except OSError as e:
+            logger.error(f"[ERROR] {self.market}: I/O error loading 3-head model: {e}")
+            raise ModelLoadError(str(model_prefix), str(e)) from e
 
     def load_book_intelligence(self):
         """Load book intelligence model (third head) if available"""
@@ -439,9 +467,17 @@ class XLPredictor:
                 return self._predict_2head(
                     features_dict, line, book_features, player_name, game_date
                 )
-        except Exception as e:
-            logger.error(f"Prediction error for {self.market}: {e}")
+        except (ValueError, KeyError) as e:
+            logger.error(f"Prediction error for {self.market} (data): {e}")
             return None
+        except (AttributeError, TypeError) as e:
+            logger.error(f"Prediction error for {self.market} (model): {e}")
+            return None
+        except ModelPredictionError:
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected prediction error for {self.market}: {type(e).__name__}: {e}")
+            raise ModelPredictionError(str(e), stat_type=self.market) from e
 
     def _predict_2head(
         self,
@@ -510,8 +546,8 @@ class XLPredictor:
                         "reason": adjustment_result["reason"],
                         "was_adjusted": adjustment_result["was_adjusted"],
                     }
-                except Exception as e:
-                    logger.debug(f"Dynamic calibration failed: {e}")
+                except (ValueError, KeyError, CalibrationError) as e:
+                    logger.debug(f"Dynamic calibration failed ({type(e).__name__}): {e}")
 
             # Book intelligence ensemble (third head)
             prob_over_book = None
@@ -533,8 +569,8 @@ class XLPredictor:
                         prob_over_book = self.book_intelligence_predictor.predict(book_features)
                     else:
                         logger.debug(f"Book intelligence features incomplete: {book_features}")
-                except Exception as e:
-                    logger.debug(f"Book intelligence prediction failed: {e}")
+                except (ValueError, KeyError, AttributeError) as e:
+                    logger.debug(f"Book intelligence prediction failed ({type(e).__name__}): {e}")
                     prob_over_book = None
 
             # Ensemble blend (70% base, 30% book intelligence)
@@ -657,8 +693,8 @@ class XLPredictor:
                         "reason": adjustment_result["reason"],
                         "was_adjusted": adjustment_result["was_adjusted"],
                     }
-                except Exception as e:
-                    logger.debug(f"Dynamic calibration failed: {e}")
+                except (ValueError, KeyError, CalibrationError) as e:
+                    logger.debug(f"Dynamic calibration failed ({type(e).__name__}): {e}")
 
             # Book intelligence ensemble (optional separate head)
             prob_over_book = None
@@ -676,8 +712,8 @@ class XLPredictor:
 
                     if all(v is not None for v in book_features.values()):
                         prob_over_book = self.book_intelligence_predictor.predict(book_features)
-                except Exception as e:
-                    logger.debug(f"Book intelligence prediction failed: {e}")
+                except (ValueError, KeyError, AttributeError) as e:
+                    logger.debug(f"Book intelligence prediction failed ({type(e).__name__}): {e}")
                     prob_over_book = None
 
             # Final ensemble blend
@@ -718,9 +754,19 @@ class XLPredictor:
 
             return result
 
-        except Exception as e:
-            logger.error(f"3-head prediction error for {self.market}: {e}")
+        except (ValueError, KeyError) as e:
+            logger.error(f"3-head prediction error for {self.market} (data): {e}")
             return None
+        except (AttributeError, TypeError) as e:
+            logger.error(f"3-head prediction error for {self.market} (model): {e}")
+            return None
+        except ModelPredictionError:
+            raise
+        except Exception as e:
+            logger.error(
+                f"Unexpected 3-head prediction error for {self.market}: {type(e).__name__}: {e}"
+            )
+            raise ModelPredictionError(str(e), stat_type=self.market) from e
 
     def get_dynamic_calibration_status(self) -> Optional[Dict]:
         """
