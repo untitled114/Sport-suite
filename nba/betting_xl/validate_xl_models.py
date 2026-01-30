@@ -25,7 +25,11 @@ import numpy as np
 import pandas as pd
 import psycopg2
 
+from nba.core.logging_config import get_logger, setup_logging
 from nba.features.extract_live_features_xl import LiveFeatureExtractorXL
+
+# Initialize logger
+logger = get_logger(__name__)
 
 # Database connections
 DB_INTELLIGENCE = {
@@ -77,7 +81,10 @@ class XLMarketValidator:
             model_prefix = MODELS_DIR / f"{self.market}_market"
             if not (MODELS_DIR / f"{self.market}_market_regressor.pkl").exists():
                 model_prefix = MODELS_DIR / f"{self.market}_xl"
-                print(f"[INFO] {self.market_key}: Using legacy *_xl_* naming")
+                logger.info(
+                    "Using legacy model naming",
+                    extra={"market": self.market_key, "naming": "*_xl_*"},
+                )
 
             with open(f"{model_prefix}_regressor.pkl", "rb") as f:
                 self.regressor = pickle.load(f)
@@ -92,10 +99,13 @@ class XLMarketValidator:
             with open(f"{model_prefix}_features.pkl", "rb") as f:
                 self.features = pickle.load(f)
 
-            print(f"[OK] {self.market_key}: Loaded model ({len(self.features)} features)")
+            logger.info(
+                "Loaded model successfully",
+                extra={"market": self.market_key, "feature_count": len(self.features)},
+            )
             return True
         except Exception as e:
-            print(f"[ERROR] {self.market_key}: Failed to load model: {e}")
+            logger.error("Failed to load model", extra={"market": self.market_key, "error": str(e)})
             return False
 
     def predict(self, features_dict, line):
@@ -149,7 +159,7 @@ class XLMarketValidator:
             return base_pred, prob_over, side, abs(edge)
 
         except Exception as e:
-            print(f"[WARN]  Prediction error: {e}")
+            logger.warning("Prediction error", extra={"error": str(e)})
             return None, None, None, None
 
     def validate_props(self, props_df):
@@ -164,11 +174,17 @@ class XLMarketValidator:
         """
         results = []
 
-        print(f"\n🔮 {self.market_key}: Generating predictions for {len(props_df)} props...")
+        logger.info(
+            "Generating predictions for market",
+            extra={"market": self.market_key, "prop_count": len(props_df)},
+        )
 
         for idx, row in props_df.iterrows():
             if idx % 100 == 0:
-                print(f"   Progress: {idx}/{len(props_df)}")
+                logger.debug(
+                    "Validation progress",
+                    extra={"market": self.market_key, "processed": idx, "total": len(props_df)},
+                )
 
             try:
                 # CRITICAL: Extract features AS OF the game date (prevent leakage)
@@ -268,22 +284,23 @@ class XLHistoricalValidator:
 
     def validate_all_markets(self):
         """Run validation on all markets"""
-        print("=" * 100)
-        print(f"VALIDATING XL MODELS: {self.start_date} to {self.end_date}")
-        print("=" * 100)
+        logger.info(
+            "Starting XL model validation",
+            extra={"start_date": self.start_date, "end_date": self.end_date},
+        )
 
         self.connect_db()
 
         all_results = {}
 
         for market_key, validator in self.market_validators.items():
-            print(f"\n{'='*100}")
-            print(f"{market_key} VALIDATION")
-            print(f"{'='*100}")
+            logger.info("Starting market validation", extra={"market": market_key})
 
             # Fetch props
             props_df = self.fetch_props(market_key)
-            print(f"[DATA] Loaded {len(props_df)} {market_key} props with actuals")
+            logger.info(
+                "Loaded props with actuals", extra={"market": market_key, "count": len(props_df)}
+            )
 
             if len(props_df) == 0:
                 continue
@@ -292,10 +309,12 @@ class XLHistoricalValidator:
             results_df = validator.validate_props(props_df)
 
             if len(results_df) == 0:
-                print(f"[WARN]  No predictions generated for {market_key}")
+                logger.warning("No predictions generated for market", extra={"market": market_key})
                 continue
 
-            print(f"[OK] Generated {len(results_df)} predictions")
+            logger.info(
+                "Generated predictions", extra={"market": market_key, "count": len(results_df)}
+            )
 
             # Store results
             all_results[market_key] = results_df
@@ -303,7 +322,9 @@ class XLHistoricalValidator:
             # Save to CSV
             output_file = OUTPUT_DIR / f"validation_{market_key}_oct23_nov4.csv"
             results_df.to_csv(output_file, index=False)
-            print(f"💾 Saved to: {output_file}")
+            logger.info(
+                "Saved validation results", extra={"market": market_key, "file": str(output_file)}
+            )
 
         self.conn_intelligence.close()
         self.conn_players.close()
@@ -312,9 +333,7 @@ class XLHistoricalValidator:
 
     def generate_reports(self, all_results):
         """Generate comprehensive validation reports"""
-        print("\n" + "=" * 100)
-        print("GENERATING REPORTS")
-        print("=" * 100)
+        logger.info("Generating validation reports")
 
         report_lines = []
         report_lines.append("# NBA XL Models Validation Report")
@@ -355,10 +374,20 @@ class XLHistoricalValidator:
         with open(report_file, "w") as f:
             f.write("\n".join(report_lines))
 
-        print(f"📄 Report saved to: {report_file}")
+        logger.info("Report saved", extra={"file": str(report_file)})
 
-        # Print to console
-        print("\n" + "\n".join(report_lines))
+        # Log key metrics
+        logger.info(
+            "Overall validation results",
+            extra={
+                "total_bets": total_bets,
+                "wins": total_wins,
+                "losses": total_bets - total_wins,
+                "win_rate": round(overall_wr, 1),
+                "roi": round(overall_roi, 1),
+                "profitable": overall_wr >= 52.4,
+            },
+        )
 
     def _generate_market_report(self, market_key, df):
         """Generate detailed report for a single market"""
@@ -589,10 +618,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Validate XL models on historical props")
     parser.add_argument("--start-date", default="2025-10-23", help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end-date", default="2025-11-04", help="End date (YYYY-MM-DD)")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
+
+    # Setup logging
+    import logging
+
+    setup_logging(
+        "xl_validation",
+        level=logging.DEBUG if args.debug else logging.INFO,
+    )
 
     validator = XLHistoricalValidator(args.start_date, args.end_date)
     results = validator.validate_all_markets()
     validator.generate_reports(results)
 
-    print("\n[OK] Validation complete!")
+    logger.info("Validation complete")

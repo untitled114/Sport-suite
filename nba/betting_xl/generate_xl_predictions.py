@@ -22,7 +22,6 @@ Usage:
 
 import argparse
 import json
-import logging
 import os
 import sys
 from collections import Counter
@@ -36,8 +35,8 @@ import psycopg2
 
 from nba.betting_xl.line_optimizer import PRODUCTION_CONFIG, LineOptimizer
 from nba.betting_xl.utils.hit_rate_loader import HitRateCache
-from nba.betting_xl.utils.logging_config import add_logging_args, get_logger, setup_logging
 from nba.betting_xl.xl_predictor import XLPredictor
+from nba.core.logging_config import add_logging_args, get_logger, setup_logging
 from nba.features.extract_live_features_xl import LiveFeatureExtractorXL
 from nba.utils.name_normalizer import NameNormalizer
 
@@ -589,7 +588,7 @@ class XLPredictionsGenerator:
             script_dir, "predictions", f"debug_all_props_{self.game_date}.csv"
         )
         df.to_csv(debug_file, index=False)
-        logger.info(f"💾 Saved all props to {debug_file}")
+        logger.debug("Saved all props to debug file", extra={"file": debug_file, "count": len(df)})
 
         return df
 
@@ -610,7 +609,7 @@ class XLPredictionsGenerator:
             logger.warning("[ERROR] No props found for today")
             return
 
-        logger.info(f"\n🔮 Generating predictions for {len(props_df)} props...\n")
+        logger.info("Generating predictions", extra={"prop_count": len(props_df)})
 
         # Track skips for transparency
         skip_reasons = Counter()
@@ -866,8 +865,8 @@ class XLPredictionsGenerator:
         }
 
         if dry_run:
-            logger.info("\n[SEARCH] DRY RUN MODE - No file saved")
-            logger.info(f"Tier breakdown: {dict(tier_counts)}")
+            logger.info("DRY RUN MODE - No file saved")
+            logger.info("Tier breakdown", extra={"tiers": dict(tier_counts)})
             self._print_summary(output)
             return
 
@@ -878,47 +877,57 @@ class XLPredictionsGenerator:
         with open(output_path, "w") as f:
             json.dump(output, f, indent=2)
 
-        logger.info(f"\n💾 Saved {len(self.picks)} picks to: {output_path}")
-        logger.info(f"Tier breakdown: {dict(tier_counts)}")
+        logger.info(
+            "Saved picks to file", extra={"count": len(self.picks), "path": str(output_path)}
+        )
+        logger.info("Tier breakdown", extra={"tiers": dict(tier_counts)})
         self._print_summary(output)
 
     def _print_summary(self, output: dict):
-        """Print formatted summary"""
-        print("\n" + "=" * 80)
-        print(f"NBA XL PICKS - {output['date']}")
-        print("=" * 80)
-        print(f"Strategy: {output['strategy']}")
-        print(f"Total Picks: {output['total_picks']}")
-        for market, count in output["summary"]["by_market"].items():
-            print(f"  - {market}: {count}")
-        print(f"  - High Confidence: {output['summary']['high_confidence']}")
-        print(f"Avg Edge: {output['summary']['avg_edge']}")
-        print(f"Avg Line Spread: {output['summary']['avg_line_spread']}")
+        """Log formatted summary using structured logging"""
+        # Log summary header
+        logger.info(
+            "XL Picks Summary",
+            extra={
+                "date": output["date"],
+                "strategy": output["strategy"],
+                "total_picks": output["total_picks"],
+            },
+        )
+
+        # Log market breakdown
+        logger.info(
+            "Picks by market",
+            extra={
+                "by_market": output["summary"]["by_market"],
+                "high_confidence": output["summary"]["high_confidence"],
+                "avg_edge": output["summary"]["avg_edge"],
+                "avg_line_spread": output["summary"]["avg_line_spread"],
+            },
+        )
+
+        # Log tier breakdown
         tier_counts = output["summary"].get("by_tier", {})
         if tier_counts:
-            print("Tier Breakdown:")
-            # V3 tiers (OVER/UNDER support)
-            v3_tiers = ["V3_ELITE_OVER", "V3_ELITE_UNDER", "V3_STANDARD_OVER", "V3_STANDARD_UNDER"]
-            legacy_tiers = ["tier_a", "star_tier", "tier_b", "X", "A", "legacy", "unknown"]
-            for tier in v3_tiers + legacy_tiers:
-                if tier in tier_counts:
-                    print(f"  - {tier.upper()}: {tier_counts[tier]}")
+            logger.info("Tier breakdown", extra={"tiers": tier_counts})
+
             # V3 summary
             v3_over = tier_counts.get("V3_ELITE_OVER", 0) + tier_counts.get("V3_STANDARD_OVER", 0)
             v3_under = tier_counts.get("V3_ELITE_UNDER", 0) + tier_counts.get(
                 "V3_STANDARD_UNDER", 0
             )
             if v3_over + v3_under > 0:
-                print(f"  -> V3 OVER: {v3_over} | V3 UNDER: {v3_under}")
+                logger.info(
+                    "V3 direction summary", extra={"v3_over": v3_over, "v3_under": v3_under}
+                )
 
-        # Show star players in picks
+        # Log star players in picks
         star_players = output["summary"].get("star_players", [])
         if star_players:
-            print(f"\nStar Players Included: {', '.join(star_players)}")
-        print("=" * 80)
+            logger.info("Star players included", extra={"players": star_players})
 
+        # Log top 5 picks
         if output["picks"]:
-            print("\nTOP 5 PICKS (by edge):")
             unique_picks = []
             seen_keys = set()
             for pick in sorted(output["picks"], key=lambda x: x["edge"], reverse=True):
@@ -931,79 +940,57 @@ class XLPredictionsGenerator:
                     break
 
             for i, pick in enumerate(unique_picks, 1):
-                print(f"\n{i}. {pick['player_name']} {pick['stat_type']} {pick['side']}")
-                print(
-                    f"   Prediction: {pick['prediction']:.1f} | Consensus: {pick['consensus_line']:.1f} | Spread: {pick['line_spread']:.1f} pts"
-                )
                 tier = pick.get("filter_tier", "unknown").upper()
-                print(f"   Tier: {tier} | Confidence: {pick['confidence']}")
 
-                # Display line range with book agreement
+                # Build line distribution info
+                line_info = {}
                 if "line_distribution" in pick and len(pick["line_distribution"]) > 0:
-                    print(f"   Line Range:")
                     line_dist = pick["line_distribution"]
                     is_under = pick["side"] == "UNDER"
 
                     if is_under:
-                        # For UNDER: HARDEST (highest) is BEST, SOFTEST (lowest) is worst
                         best = line_dist[-1]
-                        best_label = "BEST (H)"
                         worst = line_dist[0]
-                        worst_label = "WORST(S)"
                     else:
-                        # For OVER: SOFTEST (lowest) is BEST, HARDEST (highest) is worst
                         best = line_dist[0]
-                        best_label = "BEST (S)"
                         worst = line_dist[-1]
-                        worst_label = "WORST(H)"
 
-                    # BEST line
-                    best_book = best["books"][0]
-                    best_extra = (
-                        f" + {best['count']-1} other books"
-                        if best["count"] > 1
-                        else " (single source)"
-                    )
-                    print(
-                        f"      {best_label}: {best_book:12} {best['line']:.1f}{best_extra} (Edge: +{best['edge']:.1f})"
-                    )
+                    line_info = {
+                        "best_book": best["books"][0],
+                        "best_line": best["line"],
+                        "best_edge": best["edge"],
+                        "worst_book": worst["books"][0] if len(line_dist) >= 2 else None,
+                        "worst_line": worst["line"] if len(line_dist) >= 2 else None,
+                    }
 
-                    # MID (middle if 3+ lines)
-                    if len(line_dist) >= 3:
-                        mid_idx = len(line_dist) // 2
-                        mid = line_dist[mid_idx]
-                        mid_book = mid["books"][0]
-                        mid_extra = (
-                            f" + {mid['count']-1} other books"
-                            if mid["count"] > 1
-                            else " (single source)"
-                        )
-                        print(f"      MID:      {mid_book:12} {mid['line']:.1f}{mid_extra}")
+                logger.info(
+                    f"Top pick #{i}",
+                    extra={
+                        "rank": i,
+                        "player": pick["player_name"],
+                        "stat_type": pick["stat_type"],
+                        "side": pick["side"],
+                        "prediction": round(pick["prediction"], 1),
+                        "consensus_line": round(pick["consensus_line"], 1),
+                        "line_spread": round(pick["line_spread"], 1),
+                        "tier": tier,
+                        "confidence": pick["confidence"],
+                        "edge": round(pick["edge"], 2),
+                        **line_info,
+                    },
+                )
 
-                    # WORST line
-                    if len(line_dist) >= 2:
-                        worst_book = worst["books"][0]
-                        worst_extra = (
-                            f" + {worst['count']-1} other books"
-                            if worst["count"] > 1
-                            else " (single source)"
-                        )
-                        print(
-                            f"      {worst_label}: {worst_book:12} {worst['line']:.1f}{worst_extra}"
-                        )
-                else:
-                    # Fallback to old format if line_distribution not available
-                    print(f"   Top 3 Lines:")
-                    for j, line_opt in enumerate(pick["top_3_lines"], 1):
-                        print(
-                            f"      {j}. {line_opt['book']:12} {line_opt['line']:.1f} (Edge: +{line_opt['edge']:.1f}, {line_opt['edge_pct']:.1f}%)"
-                        )
-
+                # Log warning for large consensus offset
                 if abs(pick["consensus_offset"]) >= 1.5:
-                    print(
-                        f"   [WARN]  Softest line is {abs(pick['consensus_offset']):.1f} pts {'below' if pick['consensus_offset'] < 0 else 'above'} consensus"
+                    direction = "below" if pick["consensus_offset"] < 0 else "above"
+                    logger.warning(
+                        "Large consensus offset detected",
+                        extra={
+                            "player": pick["player_name"],
+                            "offset": abs(pick["consensus_offset"]),
+                            "direction": direction,
+                        },
                     )
-        print("=" * 80 + "\n")
 
     def run(self, output_file: str, dry_run: bool = False):
         """Main execution"""
@@ -1080,13 +1067,20 @@ def main():
     add_logging_args(parser)  # Adds --debug and --quiet flags
     args = parser.parse_args()
 
-    # Setup unified logging
-    setup_logging("xl_predictions", debug=args.debug, quiet=args.quiet)
-    logger.info(f"Starting XL predictions for {args.date}")
+    # Setup unified logging with JSON structured format
+    import logging
+
+    setup_logging(
+        "xl_predictions",
+        level=logging.DEBUG if args.debug else None,
+        quiet=args.quiet,
+        console_format="json" if getattr(args, "log_json", False) else "text",
+    )
+    logger.info("Starting XL predictions", extra={"date": args.date})
 
     # Star player tier is ALWAYS ENABLED by default in PRODUCTION_CONFIG
     # No CLI flags needed - star_tier.enabled = True in line_optimizer.py
-    logger.info("Star player tier: ENABLED (default - no flag needed)")
+    logger.info("Star player tier enabled (default)")
 
     # Default output path
     if not args.output:
@@ -1097,17 +1091,17 @@ def main():
     as_of_date = None
     if args.as_of_date:
         as_of_date = datetime.strptime(args.as_of_date, "%Y-%m-%d")
-        logger.info(f"Backtest as_of_date: {args.as_of_date}")
+        logger.info("Backtest as_of_date set", extra={"as_of_date": args.as_of_date})
 
     # Enable backtest_mode automatically if as_of_date is in the past
     backtest_mode = args.backtest_mode
     if as_of_date and as_of_date.date() < datetime.now().date():
         backtest_mode = True
-        logger.info("Backtest mode: ENABLED (as_of_date is in the past)")
+        logger.info("Backtest mode enabled (as_of_date is in the past)")
 
     # Log underdog-only mode if enabled
     if args.underdog_only:
-        logger.info("🐕 UNDERDOG-ONLY MODE: Only accepting props where Underdog is softest")
+        logger.info("Underdog-only mode enabled: Only accepting props where Underdog is softest")
 
     # Run generator
     # FIX Jan 15: Only pass underdog_only if explicitly set to True, otherwise let global config decide

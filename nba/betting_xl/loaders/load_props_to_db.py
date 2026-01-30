@@ -224,6 +224,7 @@ class PropsLoader:
         under_odds = prop.get("under_odds", -110)
         game_id = prop.get("game_id", "")
         game_time = prop.get("game_time")
+        player_team = prop.get("player_team") or None  # Player's team from API
         opponent_team = prop.get("opponent_team") or None  # Use NULL instead of empty string
         is_home = prop.get("is_home")
         consensus_line = prop.get("consensus_line")
@@ -264,12 +265,12 @@ class PropsLoader:
             INSERT INTO nba_props_xl (
                 player_id, player_name, stat_type, book_name, game_date, game_time,
                 over_line, over_odds, under_line, under_odds,
-                game_id, opponent_team, is_home,
+                game_id, player_team, opponent_team, is_home,
                 consensus_line, actual_value, fetch_timestamp, source_url, is_active
             ) VALUES (
                 %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s,
-                %s, %s, %s,
+                %s, %s, %s, %s,
                 %s, %s, %s, %s, %s
             )
             ON CONFLICT (player_id, game_date, stat_type, book_name, fetch_timestamp)
@@ -278,6 +279,7 @@ class PropsLoader:
                 over_odds = EXCLUDED.over_odds,
                 under_line = EXCLUDED.under_line,
                 under_odds = EXCLUDED.under_odds,
+                player_team = COALESCE(EXCLUDED.player_team, nba_props_xl.player_team),
                 actual_value = EXCLUDED.actual_value,
                 updated_at = CURRENT_TIMESTAMP
             RETURNING id;
@@ -295,6 +297,7 @@ class PropsLoader:
             float(under_line),
             under_odds,
             game_id,
+            player_team,
             opponent_team,
             is_home,
             float(consensus_line) if consensus_line else None,

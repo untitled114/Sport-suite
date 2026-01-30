@@ -29,11 +29,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Database config for player team lookup
+# Note: Production uses mlb_user for all databases (legacy naming)
 DB_PLAYERS = {
     "host": os.getenv("NBA_PLAYERS_DB_HOST", "localhost"),
     "port": int(os.getenv("NBA_PLAYERS_DB_PORT", 5536)),
     "user": os.getenv(
-        "NBA_PLAYERS_DB_USER", os.getenv("NBA_DB_USER", os.getenv("DB_USER", "nba_user"))
+        "NBA_PLAYERS_DB_USER", os.getenv("NBA_DB_USER", os.getenv("DB_USER", "mlb_user"))
     ),
     "password": os.getenv(
         "NBA_PLAYERS_DB_PASSWORD", os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
@@ -297,8 +298,14 @@ class OpponentMapper:
             if isinstance(game_date, datetime):
                 game_date = game_date.strftime("%Y-%m-%d")
 
-            # Get player's team
-            player_team = self.get_player_team(player_name)
+            # Get player's team - prefer prop's player_team, fallback to database lookup
+            player_team = prop.get("player_team")
+            if player_team:
+                player_team = normalize_team_abbrev(player_team)
+
+            # Fallback to database if prop doesn't have team
+            if not player_team:
+                player_team = self.get_player_team(player_name)
 
             if not player_team:
                 if self.verbose:

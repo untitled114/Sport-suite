@@ -1073,6 +1073,12 @@ main() {
         echo -e "${YELLOW}[DEBUG] Debug mode enabled${NC}"
     fi
 
+    # Quick commands that skip the intro
+    if [ "$command" = "picks" ]; then
+        python3 "$SCRIPT_DIR/betting_xl/show_picks.py"
+        exit 0
+    fi
+
     intro_sequence
     system_banner
 
@@ -1094,26 +1100,23 @@ main() {
             ;;
         *)
             echo ""
-            echo -e "${BOLD}${BRIGHT_WHITE}Usage:${NC} $0 ${PRIMARY}[--debug] {morning|evening|health}${NC}"
+            echo -e "${BOLD}${BRIGHT_WHITE}Usage:${NC} $0 ${PRIMARY}[--debug] {morning|evening|health|picks}${NC}"
             echo ""
             echo -e "  ${PRIMARY}morning${NC}   Data collection workflow (run ~10am EST)"
             echo -e "            ${MUTED}|${NC} Fetch props from 7 sportsbooks"
             echo -e "            ${MUTED}|${NC} Load to database"
-            echo -e "            ${MUTED}|${NC} Enrich matchup data"
-            echo -e "            ${MUTED}+${NC} Update injuries & rolling stats"
+            echo -e "            ${MUTED}+${NC} Enrich matchup data"
             echo ""
             echo -e "  ${PRIMARY}evening${NC}   Generate predictions (run ~5pm EST)"
             echo -e "            ${MUTED}|${NC} Pre-flight validation"
             echo -e "            ${MUTED}|${NC} Refresh lines (capture movements)"
-            echo -e "            ${MUTED}|${NC} Run V3 models (OVER/UNDER)"
-            echo -e "            ${MUTED}|${NC} POINTS: V3 Elite (82% WR) + V3 Standard (67% WR)"
-            echo -e "            ${MUTED}+${NC} REBOUNDS: Tier A (69% WR)"
+            echo -e "            ${MUTED}+${NC} Run XL models & output picks"
+            echo ""
+            echo -e "  ${PRIMARY}picks${NC}     View today's picks"
+            echo -e "            ${MUTED}+${NC} Options: --xl-only, --pro-only, --date YYYY-MM-DD"
             echo ""
             echo -e "  ${PRIMARY}health${NC}    System diagnostics"
             echo -e "            ${MUTED}+${NC} Check DB, models, props, coverage"
-            echo ""
-            echo -e "  ${PRIMARY}--debug${NC}   Enable verbose logging (DEBUG=1)"
-            echo -e "            ${MUTED}+${NC} Also: DEBUG=1 $0 morning"
             echo ""
             exit 1
             ;;

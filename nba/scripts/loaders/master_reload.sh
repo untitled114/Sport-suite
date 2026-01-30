@@ -5,8 +5,10 @@
 # Completely reloads NBA player data with fixed loaders
 # - Truncates player_game_logs and player_season_stats
 # - Reloads all seasons (2021-2024) with complete columns
-# - Recalculates rolling stats
 # - Verifies no NULLs in critical columns
+#
+# NOTE: Rolling stats are calculated on-the-fly from player_game_logs
+# during feature extraction - no separate table needed.
 ################################################################################
 
 set -e  # Exit on error
@@ -21,13 +23,11 @@ cd "$(dirname "$0")"
 
 echo "📊 Step 1: Truncating existing data..."
 echo "--------------------------------------------------------------------------------"
-PGPASSWORD="${DB_PASSWORD}" psql -h localhost -p 5536 -U "${DB_USER:-nba_user}" -d nba_players << 'EOF'
-TRUNCATE TABLE player_rolling_stats CASCADE;
+PGPASSWORD="${DB_PASSWORD}" psql -h localhost -p 5536 -U "${DB_USER:-mlb_user}" -d nba_players << 'EOF'
 TRUNCATE TABLE player_game_logs CASCADE;
 TRUNCATE TABLE player_season_stats CASCADE;
 SELECT 'player_game_logs' as table, COUNT(*) FROM player_game_logs
-UNION ALL SELECT 'player_season_stats', COUNT(*) FROM player_season_stats
-UNION ALL SELECT 'player_rolling_stats', COUNT(*) FROM player_rolling_stats;
+UNION ALL SELECT 'player_season_stats', COUNT(*) FROM player_season_stats;
 EOF
 echo "✅ Tables truncated"
 echo ""
@@ -50,21 +50,15 @@ done
 echo "✅ Game logs loaded"
 echo ""
 
-echo "📊 Step 4: Calculating rolling stats..."
-echo "--------------------------------------------------------------------------------"
-python3 calculate_rolling_stats.py
-echo "✅ Rolling stats calculated"
-echo ""
-
-echo "📊 Step 5: Calculating team season stats (offensive/defensive ratings)..."
+echo "📊 Step 4: Calculating team season stats (offensive/defensive ratings)..."
 echo "--------------------------------------------------------------------------------"
 python3 calculate_team_stats.py --season 2020 2021 2022 2023 2024
 echo "✅ Team season stats calculated"
 echo ""
 
-echo "📊 Step 6: Final verification - checking for NULLs in critical columns..."
+echo "📊 Step 5: Final verification - checking for NULLs in critical columns..."
 echo "--------------------------------------------------------------------------------"
-PGPASSWORD="${DB_PASSWORD}" psql -h localhost -p 5536 -U "${DB_USER:-nba_user}" -d nba_players << 'EOF'
+PGPASSWORD="${DB_PASSWORD}" psql -h localhost -p 5536 -U "${DB_USER:-mlb_user}" -d nba_players << 'EOF'
 -- Check critical columns for NULLs
 SELECT 'player_profile' as table_name,
        COUNT(*) as total,
@@ -82,13 +76,7 @@ SELECT 'player_game_logs',
        COUNT(*),
        COUNT(CASE WHEN ft_attempted IS NULL THEN 1 END),
        COUNT(CASE WHEN three_pt_attempted IS NULL THEN 1 END)
-FROM player_game_logs
-UNION ALL
-SELECT 'player_rolling_stats',
-       COUNT(*),
-       COUNT(CASE WHEN ema_three_pt_pct IS NULL THEN 1 END),
-       COUNT(CASE WHEN ema_fg_pct IS NULL THEN 1 END)
-FROM player_rolling_stats;
+FROM player_game_logs;
 
 -- Show record counts by season
 SELECT 'Season Stats' as data_type, season, COUNT(*) as records
@@ -104,6 +92,6 @@ echo "==========================================================================
 echo ""
 echo "Next steps:"
 echo "1. Review NULL counts above"
-echo "2. If acceptable, proceed with Phase 2 feature engineering"
+echo "2. If acceptable, proceed with feature engineering"
 echo "3. Run: cd ../../features && python3 build_nba_dataset.py"
 echo ""

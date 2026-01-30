@@ -37,6 +37,12 @@ TEAM_NORMALIZATION_MAP = {
     # Utah Jazz
     "UTAH": "UTA",
     "UTH": "UTA",
+    # Phoenix Suns (ESPN uses PHO, NBA.com uses PHX)
+    "PHO": "PHX",
+    "PHOENIX": "PHX",
+    # Brooklyn Nets (some sources use BRK)
+    "BRK": "BKN",
+    "BROOKLYN": "BKN",
     # Empty string → NULL
     "": None,
 }

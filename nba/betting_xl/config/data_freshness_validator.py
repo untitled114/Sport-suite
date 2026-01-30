@@ -24,7 +24,8 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 from betting_xl.config.production_policies import DATA_FRESHNESS_POLICY
 
 # Database configuration (override with environment variables as needed)
-DB_DEFAULT_USER = os.getenv("NBA_DB_USER", os.getenv("DB_USER", "nba_user"))
+# Note: Production uses mlb_user for all databases (legacy naming)
+DB_DEFAULT_USER = os.getenv("NBA_DB_USER", os.getenv("DB_USER", "mlb_user"))
 DB_DEFAULT_PASSWORD = os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
 
 DB_CONFIG = {
@@ -66,7 +67,6 @@ class DataFreshnessValidator:
         results = {
             "props_freshness": self._validate_props_freshness(),
             "game_results_freshness": self._validate_game_results_freshness(),
-            "rolling_stats_freshness": self._validate_rolling_stats_freshness(),
             "injury_reports_freshness": self._validate_injury_reports_freshness(),
             "model_age": self._validate_model_age(),
             "timestamp": datetime.now().isoformat(),
@@ -174,48 +174,6 @@ class DataFreshnessValidator:
 
         except Exception as e:
             self.warnings.append(f"Game results check failed: {str(e)}")
-            result["status"] = "ERROR"
-            result["error"] = str(e)
-
-        return result
-
-    def _validate_rolling_stats_freshness(self) -> Dict[str, any]:
-        """Validate rolling stats are current."""
-        result = {"status": "pending", "stats_count": 0}
-
-        if not self.policy["rolling_stats_required"]:
-            result["status"] = "SKIPPED"
-            return result
-
-        try:
-            conn = psycopg2.connect(**PLAYERS_DB_CONFIG)
-            cursor = conn.cursor()
-
-            # Check if rolling stats table has recent data
-            query = """
-                SELECT COUNT(DISTINCT player_id)
-                FROM player_rolling_stats
-                WHERE as_of_date >= CURRENT_DATE - INTERVAL '30 days'
-            """
-            cursor.execute(query)
-            stats_count = cursor.fetchone()[0]
-
-            result["stats_count"] = stats_count
-
-            if stats_count < 50:  # Expect at least 50 players with rolling stats
-                self.warnings.append(
-                    f"Low rolling stats count: {stats_count} players (expected 50+)"
-                )
-                result["status"] = "WARNING"
-            else:
-                result["status"] = "PASSED"
-                self.logger.info(f"✅ Rolling stats: {stats_count} players tracked")
-
-            cursor.close()
-            conn.close()
-
-        except Exception as e:
-            self.warnings.append(f"Rolling stats check failed: {str(e)}")
             result["status"] = "ERROR"
             result["error"] = str(e)
 
@@ -360,11 +318,6 @@ class DataFreshnessValidator:
         print(f"\nGame Results: [{games['status']}]")
         print(f"  - Latest Game: {games.get('latest_game_date', 'N/A')}")
         print(f"  - Age: {games.get('age_hours', 'N/A')} hours")
-
-        # Rolling stats
-        stats = results["rolling_stats_freshness"]
-        print(f"\nRolling Stats: [{stats['status']}]")
-        print(f"  - Players Tracked: {stats.get('stats_count', 'N/A')}")
 
         # Injury reports
         injuries = results["injury_reports_freshness"]

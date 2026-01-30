@@ -6,6 +6,7 @@ Core utilities for ML operations including:
 - Experiment tracking (MLflow integration)
 - Feature monitoring (drift detection)
 - Custom exceptions
+- Structured logging configuration
 """
 
 from nba.core.exceptions import (
@@ -31,6 +32,7 @@ from nba.core.exceptions import (
     ModelPredictionError,
     NBAPropsError,
 )
+from nba.core.logging_config import add_logging_args, get_logger, setup_logging
 from nba.core.schemas import (
     FeatureVector,
     MarketType,
@@ -41,6 +43,10 @@ from nba.core.schemas import (
 )
 
 __all__ = [
+    # Logging
+    "setup_logging",
+    "get_logger",
+    "add_logging_args",
     # Schemas
     "PropLine",
     "Prediction",
