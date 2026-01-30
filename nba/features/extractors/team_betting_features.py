@@ -166,7 +166,7 @@ class TeamBettingExtractor(BaseFeatureExtractor):
             self._cache[cache_key] = stats
             return stats
 
-        except Exception as e:
+        except (KeyError, IndexError, TypeError, ZeroDivisionError) as e:
             logger.debug(f"Team betting stats query failed: {e}")
             return {}
 
@@ -221,7 +221,7 @@ class TeamBettingExtractor(BaseFeatureExtractor):
             self._cache[cache_key] = stats
             return stats
 
-        except Exception as e:
+        except (KeyError, IndexError, TypeError, ZeroDivisionError) as e:
             logger.debug(f"Opponent allowed stats query failed: {e}")
             return {}
 

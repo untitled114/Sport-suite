@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
+import psycopg2
 
 from nba.core.exceptions import (
     CalibrationDataError,
@@ -423,7 +424,7 @@ class XLPredictor:
                 f"   {self.market}: Book intelligence model not found - using base model only"
             )
             self.enable_book_intelligence = False
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"   {self.market}: Failed to load book intelligence: {e}")
             self.enable_book_intelligence = False
 
@@ -475,7 +476,7 @@ class XLPredictor:
             return None
         except ModelPredictionError:
             raise
-        except Exception as e:
+        except psycopg2.Error as e:
             logger.error(f"Unexpected prediction error for {self.market}: {type(e).__name__}: {e}")
             raise ModelPredictionError(str(e), stat_type=self.market) from e
 
@@ -609,7 +610,7 @@ class XLPredictor:
 
             return result
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"2-head prediction error for {self.market}: {e}")
             return None
 
@@ -762,7 +763,7 @@ class XLPredictor:
             return None
         except ModelPredictionError:
             raise
-        except Exception as e:
+        except psycopg2.Error as e:
             logger.error(
                 f"Unexpected 3-head prediction error for {self.market}: {type(e).__name__}: {e}"
             )
@@ -802,7 +803,7 @@ if __name__ == "__main__":
         try:
             predictor = XLPredictor(market)
             print(f"  {market}: {len(predictor.features)} features loaded (base model)")
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             print(f"  {market}: {e}")
 
     # Test loading with book intelligence
@@ -814,7 +815,7 @@ if __name__ == "__main__":
                 print(f"  {market}: Book intelligence enabled (ensemble mode)")
             else:
                 print(f"  {market}: Book intelligence not available (base mode)")
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             print(f"  {market}: {e}")
 
     # Test dynamic calibration
@@ -835,5 +836,5 @@ if __name__ == "__main__":
                     print(f"  {market}: Dynamic calibration enabled (insufficient data)")
             else:
                 print(f"  {market}: Dynamic calibration not available")
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             print(f"  {market}: {e}")

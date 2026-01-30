@@ -192,7 +192,13 @@ class PropsMatchupEnricher:
 
             return games_map
 
-        except Exception as e:
+        except (
+            requests.exceptions.RequestException,
+            psycopg2.Error,
+            KeyError,
+            TypeError,
+            ValueError,
+        ) as e:
             logger.error(f"Failed to fetch games from BettingPros API: {e}")
             logger.info("Trying ESPN API fallback...")
             return self._fetch_games_from_espn()
@@ -277,7 +283,13 @@ class PropsMatchupEnricher:
 
             return games_map
 
-        except Exception as e:
+        except (
+            requests.exceptions.RequestException,
+            psycopg2.Error,
+            KeyError,
+            TypeError,
+            ValueError,
+        ) as e:
             logger.error(f"ESPN Scoreboard API failed: {e}")
             logger.warning("All APIs failed - enrichment will be incomplete")
             return {}
@@ -341,7 +353,7 @@ class PropsMatchupEnricher:
 
             return games_map
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"Failed to load from cache: {e}")
             return {}
 
@@ -441,7 +453,7 @@ class PropsMatchupEnricher:
                 f"[OK] Loaded {len(rows)} players -> {len(self.player_teams)} name mappings (with normalization)"
             )
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"Failed to load player teams: {e}")
 
     def enrich_from_game_logs(self) -> int:
@@ -757,7 +769,7 @@ class PropsMatchupEnricher:
                 logger.info("\n[OK] Dry run complete!")
                 return True
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"[ERROR] Enrichment failed with error: {e}")
             if self.conn_intelligence:
                 self.conn_intelligence.rollback()
@@ -799,7 +811,7 @@ def main():
         else:
             sys.exit(1)
 
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         logger.error(f"Fatal error: {e}")
         sys.exit(1)
 

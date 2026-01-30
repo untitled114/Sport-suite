@@ -34,6 +34,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from callbacks import on_failure, on_retry, on_success
+
 from airflow.decorators import dag, task
 from airflow.models import Variable
 from airflow.utils.email import send_email
@@ -63,6 +65,9 @@ default_args = {
     "retry_exponential_backoff": True,
     "max_retry_delay": timedelta(minutes=30),
     "execution_timeout": timedelta(minutes=30),
+    "on_success_callback": on_success,
+    "on_failure_callback": on_failure,
+    "on_retry_callback": on_retry,
 }
 
 
@@ -556,7 +561,8 @@ def nba_morning_pipeline():
 
     @task(
         task_id="update_prop_history",
-        doc_md="### Update Prop History\n\nBayesian hit rate calculations (incremental, last 7 days).",
+        doc_md="### Update Prop History\n\n"
+        "Bayesian hit rate calculations (incremental, last 7 days).",
     )
     def update_prop_history() -> dict[str, Any]:
         """Update prop performance history."""

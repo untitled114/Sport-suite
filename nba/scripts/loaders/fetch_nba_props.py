@@ -227,7 +227,7 @@ class NBAPropsFetcher:
                 print(f"  {date}: 0 relevant props")
                 return pd.DataFrame()
 
-        except Exception as e:
+        except (requests.RequestException, KeyError, ValueError, TypeError) as e:
             print(f"  {date}: Error - {e}")
             import traceback
 

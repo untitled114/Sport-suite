@@ -17,6 +17,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+import psycopg2
+
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent))
 
@@ -61,7 +63,7 @@ class PerformanceMonitor:
         try:
             with open(self.picks_log_path, "r") as f:
                 return json.load(f)
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             self.logger.error(f"Failed to load picks log: {e}")
             return {"picks": []}
 
@@ -71,7 +73,7 @@ class PerformanceMonitor:
             self.picks_log_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.picks_log_path, "w") as f:
                 json.dump(self.picks_data, f, indent=2)
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             self.logger.error(f"Failed to save picks log: {e}")
 
     def calculate_rolling_performance(self, days: int = 7) -> Dict[str, Dict]:

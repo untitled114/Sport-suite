@@ -25,8 +25,13 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 # Database configuration
 DB_USER="${DB_USER:-mlb_user}"
-DB_PASSWORD="${DB_PASSWORD:-${DB_PASSWORD}}"
 DB_HOST="${DB_HOST:-localhost}"
+
+# Require password from environment
+if [ -z "${DB_PASSWORD:-}" ]; then
+    echo "Error: DB_PASSWORD environment variable is required"
+    exit 1
+fi
 
 # PostgreSQL databases
 declare -A PG_DATABASES=(
@@ -83,8 +88,13 @@ backup_mongodb() {
 
     log_info "Backing up MongoDB..."
 
+    if [ -z "${MONGO_PASSWORD:-}" ]; then
+        log_warn "MONGO_PASSWORD not set, skipping MongoDB backup"
+        return 1
+    fi
+
     if mongodump \
-        --uri="mongodb://${MONGO_USER:-nba_user}:${MONGO_PASSWORD:-${MONGO_PASSWORD}}@localhost:27017" \
+        --uri="mongodb://${MONGO_USER:-nba_user}:${MONGO_PASSWORD}@localhost:27017" \
         --archive \
         --gzip \
         --out="$backup_file" 2>/dev/null; then

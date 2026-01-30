@@ -80,7 +80,7 @@ def fetch_season_gamelogs(season):
             logger.info(f"✅ Received {len(df)} game logs for {season}")
             return df
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.warning(f"Attempt {attempt+1} failed: {e}")
             time.sleep(5 * (2**attempt))
 

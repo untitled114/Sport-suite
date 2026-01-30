@@ -338,7 +338,7 @@ class JSONCalibrator:
                 f"({start_date.date()} to {end_date.date()})"
             )
 
-        except Exception as e:
+        except (OSError, KeyError, ValueError, TypeError) as e:
             logger.error(f"Failed to load predictions from DB: {e}")
         finally:
             if conn:
@@ -701,7 +701,7 @@ class JSONCalibrator:
 
             return metrics
 
-        except Exception as e:
+        except (OSError, KeyError, ValueError, TypeError) as e:
             logger.error(f"Error in get_recent_performance: {e}")
             return self._return_no_data_metrics()
 
@@ -825,7 +825,7 @@ class JSONCalibrator:
         try:
             with open(log_file, "a") as f:
                 f.write(json.dumps(result) + "\n")
-        except Exception as e:
+        except (OSError, KeyError, ValueError, TypeError) as e:
             logger.warning(f"Failed to log adjustment: {e}")
 
     def get_adjustment_summary(self) -> Dict:
@@ -843,7 +843,7 @@ class JSONCalibrator:
             with open(log_file, "r") as f:
                 for line in f:
                     adjustments.append(json.loads(line))
-        except Exception as e:
+        except (OSError, KeyError, ValueError, TypeError) as e:
             logger.warning(f"Failed to read adjustment log: {e}")
             return {
                 "adjustments_today": 0,

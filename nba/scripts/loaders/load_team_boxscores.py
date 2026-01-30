@@ -127,7 +127,7 @@ def main():
             fixed_count += 1
             print(f"✅ {fg_made}/{fg_attempted} FG, {rebounds} REB, {assists} AST")
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             print(f"❌ Error: {e}")
             conn.rollback()
             continue

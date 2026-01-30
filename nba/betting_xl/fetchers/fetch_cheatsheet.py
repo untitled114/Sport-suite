@@ -238,7 +238,7 @@ class CheatSheetFetcher(BaseFetcher):
             logger.info(f"Fetched schedule: {len(teams_today)} teams playing on {self.date}")
             return teams_today
 
-        except Exception as e:
+        except (requests.RequestException, KeyError, ValueError, TypeError) as e:
             logger.error(f"Failed to fetch ESPN schedule: {e}")
             return set()
 
@@ -288,7 +288,7 @@ class CheatSheetFetcher(BaseFetcher):
 
             try:
                 data = response.json()
-            except Exception as e:
+            except (requests.RequestException, KeyError, ValueError, TypeError) as e:
                 logger.error(f"JSON parse error for {market_name}: {e}")
                 break
 
@@ -484,7 +484,7 @@ class CheatSheetFetcher(BaseFetcher):
 
             return prop
 
-        except Exception as e:
+        except (requests.RequestException, KeyError, ValueError, TypeError) as e:
             if self.verbose:
                 logger.warning(f"Error parsing cheat sheet prop: {e}")
             return None

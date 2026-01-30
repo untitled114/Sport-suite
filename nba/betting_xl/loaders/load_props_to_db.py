@@ -104,7 +104,7 @@ class PropsLoader:
 
         try:
             self.conn = psycopg2.connect(**DB_CONFIG)
-        except Exception as exc:
+        except psycopg2.Error as exc:
             raise RuntimeError(
                 f"❌ Failed to connect to PostgreSQL ({DB_CONFIG['database']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}): {exc}"
             ) from exc
@@ -137,7 +137,7 @@ class PropsLoader:
 
                 if self.verbose:
                     print("✅ MongoDB connected\n")
-            except Exception as e:
+            except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
                 warning = f"⚠️  MongoDB connection failed: {e}"
                 print(warning)
                 if self.verbose:
@@ -319,7 +319,7 @@ class PropsLoader:
 
             return inserted
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             # Rollback to clear the aborted transaction state
             self.conn.rollback()
             if self.verbose:
@@ -465,7 +465,7 @@ class PropsLoader:
 
                 upserted += 1
 
-            except Exception as e:
+            except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
                 errors += 1
                 if self.verbose:
                     print(f"  ❌ Error upserting MongoDB doc: {e}")
@@ -502,7 +502,7 @@ class PropsLoader:
                 else:
                     stats["skipped"] += 1
 
-            except Exception as e:
+            except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
                 stats["errors"] += 1
                 if self.verbose:
                     print(f"  ❌ Error on prop {i}: {e}")
@@ -559,7 +559,7 @@ class PropsLoader:
             if self.verbose:
                 print(f"⚠️  Consensus metrics function not available (skipping)")
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             # Other errors - log but don't crash
             self.conn.rollback()
             if self.verbose:

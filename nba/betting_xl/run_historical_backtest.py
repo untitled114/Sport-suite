@@ -315,7 +315,7 @@ class HistoricalBacktest:
                     f"  Validation: {result.wins}W / {result.losses}L ({result.win_rate:.1f}%)"
                 )
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             result.error = str(e)
             logger.error(f"  Error: {e}")
 
@@ -380,7 +380,7 @@ class HistoricalBacktest:
                     if picks > 0:
                         logger.info(f"  {date_str}: {picks} picks generated")
 
-            except Exception as e:
+            except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
                 logger.debug(f"  {date_str}: Error - {e}")
 
             processed += 1

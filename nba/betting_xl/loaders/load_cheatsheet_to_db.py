@@ -152,7 +152,7 @@ def insert_cheatsheet_data(conn, props: List[Dict[str, Any]], platform: str) -> 
             cursor.execute(insert_sql, record)
             rows_affected += 1
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             print(
                 f"  [WARN] Failed to insert {prop.get('player_name')} {prop.get('stat_type')}: {e}"
             )

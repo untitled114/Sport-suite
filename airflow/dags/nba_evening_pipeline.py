@@ -29,6 +29,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from callbacks import on_failure, on_retry, on_success
+
 from airflow.decorators import dag, task
 from airflow.models import Variable
 from airflow.utils.email import send_email
@@ -57,6 +59,9 @@ default_args = {
     "retry_exponential_backoff": True,
     "max_retry_delay": timedelta(minutes=30),
     "execution_timeout": timedelta(minutes=30),
+    "on_success_callback": on_success,
+    "on_failure_callback": on_failure,
+    "on_retry_callback": on_retry,
 }
 
 
@@ -170,8 +175,8 @@ def nba_evening_pipeline():
         )
 
         if result.returncode != 0:
-            # Combine stdout and stderr for full context
-            full_output = f"STDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}"
+            # Log full output for debugging (stdout + stderr)
+            _full_output = f"STDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}"  # noqa: F841
             # Extract failure lines from output
             failures = [
                 line for line in result.stdout.split("\n") if "❌" in line or "FAILED" in line
@@ -183,7 +188,8 @@ def nba_evening_pipeline():
 
     @task(
         task_id="check_performance_thresholds",
-        doc_md="### Check Performance Thresholds\n\nStop-loss monitoring to pause if performance degrades.",
+        doc_md="### Check Performance Thresholds\n\n"
+        "Stop-loss monitoring to pause if performance degrades.",
     )
     def check_performance_thresholds() -> dict[str, Any]:
         """Check performance thresholds and stop-loss conditions."""
@@ -341,7 +347,7 @@ def nba_evening_pipeline():
         date_str = datetime.now().strftime("%Y-%m-%d")
         script_path = f"{SCRIPT_DIR}/betting_xl/enrich_props_with_matchups.py"
 
-        result = subprocess.run(
+        subprocess.run(
             ["python3", script_path, "--date", date_str],
             capture_output=True,
             text=True,
@@ -654,8 +660,8 @@ def nba_evening_pipeline():
     pro_picks = generate_pro_picks(enrichment)
     odds_picks = generate_odds_api_picks(enrichment)
 
-    # Final output
-    final = output_final_picks(xl_predictions, pro_picks, odds_picks)
+    # Final output (terminal task in DAG)
+    output_final_picks(xl_predictions, pro_picks, odds_picks)
 
 
 # Instantiate the DAG

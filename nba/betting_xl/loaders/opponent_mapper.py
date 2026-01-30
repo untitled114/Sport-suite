@@ -125,7 +125,7 @@ class OpponentMapper:
             self._schedule_cache[game_date] = games_map
             return games_map
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"Failed to fetch ESPN schedule for {game_date}: {e}")
             return {}
 
@@ -183,7 +183,7 @@ class OpponentMapper:
                     if name not in self._player_teams_cache:
                         self._player_teams_cache[name] = None
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.warning(f"Batch player team lookup failed: {e}")
             self._close_connection()
 
@@ -239,7 +239,7 @@ class OpponentMapper:
                     self._player_teams_cache[player_name] = team
                     return team
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.warning(f"Failed to lookup team for {player_name}: {e}")
             # Reset connection on error
             self._close_connection()

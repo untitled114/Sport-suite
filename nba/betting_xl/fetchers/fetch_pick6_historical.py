@@ -257,7 +257,7 @@ def fetch_historical_range(start_date: str, end_date: str) -> List[Dict]:
                     est_time = utc_time - timedelta(hours=5)
                     if est_time.strftime("%Y-%m-%d") == date_str:
                         target_events.append(event)
-                except Exception:
+                except ValueError:
                     pass
 
         logger.info(f"  {len(target_events)} games on {date_str}")

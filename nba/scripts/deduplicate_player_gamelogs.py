@@ -265,7 +265,7 @@ def main():
 
         return 0
 
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         logger.error(f"Error: {e}")
         return 1
 

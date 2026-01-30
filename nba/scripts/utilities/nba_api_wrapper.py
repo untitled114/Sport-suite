@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
+import requests
 from nba_api.stats.endpoints.boxscoretraditionalv2 import BoxScoreTraditionalV2
 from nba_api.stats.endpoints.commonplayerinfo import CommonPlayerInfo
 from nba_api.stats.endpoints.leaguedashplayerstats import LeagueDashPlayerStats
@@ -97,7 +98,7 @@ class NBAApiWrapper:
                 logger.info(f"API call successful: {endpoint_func.__name__} ({len(df)} records)")
                 return df
 
-            except Exception as e:
+            except (requests.RequestException, KeyError, ValueError, TypeError) as e:
                 wait_time = 2**attempt  # Exponential backoff
                 logger.warning(f"API call failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
 

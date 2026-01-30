@@ -139,7 +139,7 @@ class XLPredictionsGenerator:
                     model_version="xl",
                     enable_dynamic_calibration=True,
                 )
-            except Exception as e:
+            except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
                 logger.error(f"Failed to load {market} XL model: {e}")
 
         # NOTE: Odds API picks are now handled by standalone generate_odds_api_picks.py
@@ -186,7 +186,7 @@ class XLPredictionsGenerator:
 
             cursor.close()
             logger.info(f"[OK] Loaded {len(self.opp_rank_cache)} opponent defense ranks")
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.warning(f"Could not load opponent defense ranks: {e}")
             # Rollback in case of error to reset transaction state
             try:
@@ -367,7 +367,7 @@ class XLPredictionsGenerator:
                 file_date_str = file.stem.replace("xl_picks_", "")
                 cleaned = file_date_str.replace("-", "")
                 file_date_obj = datetime.strptime(cleaned, "%Y%m%d").date()
-            except Exception:
+            except ValueError:
                 continue
 
             if not (start_date <= file_date_obj < self.game_date_obj):
@@ -729,7 +729,7 @@ class XLPredictionsGenerator:
 
                         self.picks.append(pick)
 
-            except Exception as e:
+            except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
                 logger.debug(f"Skipped {player_name} {stat_type}: {e}")
                 continue
 

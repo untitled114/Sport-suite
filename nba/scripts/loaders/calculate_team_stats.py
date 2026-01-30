@@ -198,7 +198,7 @@ def calculate_team_season_stats(seasons: list):
             else:
                 logger.warning(f"No team stats calculated for {season}")
 
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         logger.error(f"Error calculating team stats: {e}")
         raise
     finally:

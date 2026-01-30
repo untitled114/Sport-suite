@@ -272,7 +272,7 @@ class Pick6Fetcher(BaseFetcher):
                 utc_time = datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
                 est_time = utc_time - timedelta(hours=5)
                 game_date = est_time.strftime("%Y-%m-%d")
-            except Exception as e:
+            except (requests.RequestException, KeyError, ValueError, TypeError) as e:
                 logger.warning(f"Failed to parse commence_time: {e}")
 
         # Parse main market props
@@ -392,7 +392,7 @@ class Pick6Fetcher(BaseFetcher):
                     event_date = est_time.strftime("%Y-%m-%d")
                     if event_date == today:
                         today_events.append(event)
-                except Exception:
+                except ValueError:
                     pass
 
         if self.verbose:
@@ -461,7 +461,7 @@ class Pick6Fetcher(BaseFetcher):
                     event_date = est_time.strftime("%Y-%m-%d")
                     if event_date == target_date:
                         target_events.append(event)
-                except Exception:
+                except ValueError:
                     pass
 
         if self.verbose:

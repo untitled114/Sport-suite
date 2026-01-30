@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import psycopg2
+import requests
 
 from nba.utils.name_normalizer import NameNormalizer
 
@@ -185,7 +186,7 @@ class OddsApiPicksGenerator:
     def _load_pick6_live(self):
         """Fetch live Pick6 data from The Odds API."""
         try:
-            from betting_xl.fetchers.fetch_pick6_live import fetch_pick6_for_pipeline
+            from nba.betting_xl.fetchers.fetch_pick6_live import fetch_pick6_for_pipeline
 
             result = fetch_pick6_for_pipeline(verbose=True)
 
@@ -206,7 +207,7 @@ class OddsApiPicksGenerator:
                 f"[DATA] Loaded {len(self.pick6_data)} Pick6 props for {self.game_date} "
                 f"(easy: {result['easy_count']}, traps: {result['trap_count']})"
             )
-        except Exception as e:
+        except (requests.RequestException, KeyError, ValueError, TypeError) as e:
             logger.error(f"Failed to load live Pick6 data: {e}")
 
     def _load_pick6_from_file(self, filepath: str):
@@ -246,7 +247,7 @@ class OddsApiPicksGenerator:
                 f"[DATA] Loaded {len(day_props)} Pick6 props from file "
                 f"(easy: {easy_count}, traps: {trap_count})"
             )
-        except Exception as e:
+        except (requests.RequestException, KeyError, ValueError, TypeError) as e:
             logger.error(f"Failed to load Pick6 file: {e}")
 
     def load_cheatsheet_data(self):

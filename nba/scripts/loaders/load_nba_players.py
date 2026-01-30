@@ -52,7 +52,7 @@ class NBAPlayerLoader:
         try:
             self.conn = psycopg2.connect(**DB_CONFIG)
             logger.info("✅ Connected to nba_players database")
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"❌ Database connection failed: {e}")
             raise
 
@@ -233,7 +233,7 @@ class NBAPlayerLoader:
                         apg_per100,
                     )
                 )
-            except Exception as e:
+            except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
                 logger.warning(f"Skipping player {row.get('PLAYER_ID', 'unknown')}: {e}")
                 continue
 
@@ -338,7 +338,7 @@ class NBAPlayerLoader:
                         int(row.get("PLUS_MINUS", 0)) if pd.notna(row.get("PLUS_MINUS")) else 0,
                     )
                 )
-            except Exception as e:
+            except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
                 logger.warning(f"Skipping game {row.get('Game_ID', 'unknown')}: {e}")
                 continue
 
@@ -404,7 +404,7 @@ class NBAPlayerLoader:
             try:
                 logs_count = self.load_player_game_logs(player_id, season)
                 total_logs += logs_count
-            except Exception as e:
+            except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
                 logger.warning(f"Failed to load logs for player {player_id}: {e}")
                 continue
 
@@ -459,7 +459,7 @@ def main():
 
         logger.info("🎉 Player data loading complete!")
 
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         logger.error(f"❌ Loading failed: {e}")
         raise
     finally:

@@ -148,7 +148,7 @@ class ResultsTracker:
             else:
                 return None
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"Error querying stat: {e}")
             return None
 

@@ -165,7 +165,7 @@ def aggregate_team_shooting_stats():
         else:
             logger.info("🎉 All team game logs now have shooting stats!")
 
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         logger.error(f"Error: {e}")
         games_conn.rollback()
         raise

@@ -188,7 +188,7 @@ class ESPNGamelogScraper:
             logger.info(f"  Found {len(players)} players for {team_abbr}")
             return players
 
-        except Exception as e:
+        except (requests.RequestException, KeyError, ValueError, TypeError) as e:
             logger.error(f"Error fetching roster for {team_abbr} ({season}): {e}")
             return []
 
@@ -305,7 +305,7 @@ class ESPNGamelogScraper:
 
             return games
 
-        except Exception as e:
+        except (requests.RequestException, KeyError, ValueError, TypeError) as e:
             logger.error(f"Error fetching gamelog for {player_name} ({player_id}, {season}): {e}")
             return []
 

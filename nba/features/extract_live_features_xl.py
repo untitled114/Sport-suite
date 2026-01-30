@@ -65,23 +65,18 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
         self._team_betting_cache = {}
 
         # MongoDB connection for hybrid feature extraction (preferred for book features)
-        try:
-            from pymongo import MongoClient
+        # TEMPORARILY DISABLED - MongoDB not needed for current pipeline
+        self.use_mongodb = False
+        self.mongo_client = None
+        self.mongo_db = None
+        self.mongo_collection = None
 
-            mongo_uri = os.getenv(
-                "MONGO_URI", "mongodb://${MONGO_USER}:${MONGO_PASSWORD}@localhost:27017/"
-            )
-            self.mongo_client = MongoClient(mongo_uri)
-            self.mongo_db = self.mongo_client["nba_betting_xl"]
-            self.mongo_collection = self.mongo_db["nba_props_xl"]
-            # Test connection
-            self.mongo_client.admin.command("ping")
-            # TEMPORARY: Force MongoDB disabled until properly tested (Nov 10, 2025)
-            self.use_mongodb = False
-            logger.warning("MongoDB temporarily disabled - using PostgreSQL fallback")
-        except Exception as e:
-            self.use_mongodb = False
-            logger.warning(f"MongoDB unavailable, using PostgreSQL fallback: {e}")
+        # Skip MongoDB initialization entirely for now
+        # When re-enabling, use proper env var expansion:
+        # mongo_user = os.getenv("MONGO_USER", "sports_user")
+        # mongo_pass = os.getenv("MONGO_PASSWORD", "")
+        # mongo_uri = f"mongodb://{mongo_user}:{mongo_pass}@localhost:27017/"
+        logger.debug("MongoDB disabled - using PostgreSQL for all features")
 
     def extract_book_features_mongo(self, player_name, game_date, stat_type):
         """
@@ -145,7 +140,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
 
             return book_features
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"MongoDB book feature extraction failed: {e}")
             return None
 
@@ -321,7 +316,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
                 else:
                     # Not enough history - use 50th percentile (neutral)
                     line_spread_percentile = 0.5
-            except Exception as e:
+            except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
                 logger.debug(f"Error calculating historical spread percentile: {e}")
                 line_spread_percentile = 0.5
 
@@ -368,7 +363,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
 
             return book_features
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.warning(f"Error extracting book features: {e}")
             return self._get_default_book_features()
 
@@ -631,7 +626,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
                 else:
                     return self._get_default_h2h_features()
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.warning(
                 f"Error extracting H2H features for {player_name} vs {opponent_team}: {e}"
             )
@@ -737,7 +732,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
                 else:
                     return self._get_default_prop_features()
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.warning(
                 f"Error extracting prop history for {player_name} {stat_type} {line}: {e}"
             )
@@ -818,7 +813,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
                 else:
                     return self._get_default_vegas_features()
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error extracting vegas context for {player_name}: {e}")
             return self._get_default_vegas_features()
 
@@ -869,7 +864,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
                 self._team_betting_cache[season] = season_data
                 logger.debug(f"Loaded betting performance for {len(season_data)} teams in {season}")
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.warning(f"Failed to load team betting data for season {season}: {e}")
             self._team_betting_cache[season] = {}
 
@@ -911,7 +906,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
                 result = cur.fetchone()
                 if result:
                     return result[0]
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error getting team from game context: {e}")
 
         return None
@@ -985,7 +980,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
                 "team_betting_available": 1.0 if has_team_data else 0.0,
             }
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error extracting team betting features for {player_name}: {e}")
             return defaults
 
@@ -1064,7 +1059,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
                 else:
                     return defaults
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error extracting cheatsheet features for {player_name}: {e}")
             return defaults
 

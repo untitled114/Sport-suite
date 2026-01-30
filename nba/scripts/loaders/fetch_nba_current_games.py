@@ -57,7 +57,7 @@ class NBACurrentGameFetcher:
         try:
             self.conn = psycopg2.connect(**DB_CONFIG)
             logger.info("✅ Connected to nba_players database")
-        except Exception as e:
+        except (psycopg2.Error, KeyError, ValueError, TypeError) as e:
             logger.error(f"❌ Database connection failed: {e}")
             raise
 
@@ -97,7 +97,7 @@ class NBACurrentGameFetcher:
 
             return df
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, ValueError, TypeError) as e:
             logger.error(f"❌ Failed to fetch games: {e}")
             return pd.DataFrame()
 
@@ -124,7 +124,7 @@ class NBACurrentGameFetcher:
                 "team_stats": dfs[1] if len(dfs) > 1 else pd.DataFrame(),
             }
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, ValueError, TypeError) as e:
             logger.warning(f"  ⚠️  Failed to fetch box score: {e}")
             return {"player_stats": pd.DataFrame(), "team_stats": pd.DataFrame()}
 
@@ -199,7 +199,7 @@ class NBACurrentGameFetcher:
 
                 player_logs.append(player_log)
 
-            except Exception as e:
+            except (psycopg2.Error, KeyError, ValueError, TypeError) as e:
                 logger.warning(f"      ⚠️  Failed to parse player: {e}")
                 continue
 
@@ -350,7 +350,7 @@ class NBACurrentGameFetcher:
             elif not insert:
                 logger.info(f"\n✅ Fetch complete (use --insert to save to database)")
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, ValueError, TypeError) as e:
             logger.error(f"❌ Fetch failed: {e}")
             if self.conn:
                 self.conn.rollback()
@@ -374,7 +374,7 @@ def main():
         fetcher.connect()
         fetcher.run(season=args.season, insert=args.insert)
 
-    except Exception as e:
+    except (psycopg2.Error, KeyError, ValueError, TypeError) as e:
         logger.error(f"❌ Failed: {e}")
         raise
     finally:

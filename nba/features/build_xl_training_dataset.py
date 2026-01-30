@@ -628,7 +628,7 @@ class XLDatasetBuilder:
 
             return cleaned_features
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             if self.verbose:
                 print(
                     f"  ⚠️  Error extracting features for {prop['player_name']} on {prop['game_date']}: {e}"

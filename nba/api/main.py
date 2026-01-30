@@ -27,6 +27,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 
+import psycopg2
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -74,7 +75,7 @@ async def lifespan(app: FastAPI):
         try:
             manager.ensure_loaded()
             logger.info("Models preloaded successfully")
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"Failed to preload models: {e}")
 
     yield
@@ -87,7 +88,7 @@ async def lifespan(app: FastAPI):
         if manager.feature_extractor is not None:
             manager.feature_extractor.close()
             logger.info("Feature extractor connections closed")
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         logger.error(f"Error closing connections: {e}")
 
 

@@ -27,6 +27,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
+import requests
+
 from nba.betting_xl.fetchers.fetch_bettingpros import BettingProsFetcher
 from nba.betting_xl.fetchers.fetch_cheatsheet import CheatSheetFetcher
 from nba.betting_xl.utils.logging_config import add_logging_args, get_logger, setup_logging
@@ -71,7 +73,7 @@ class FetchOrchestrator:
 
             return props
 
-        except Exception as e:
+        except (requests.RequestException, KeyError, ValueError, TypeError) as e:
             logger.error(f"BettingPros fetch failed: {e}")
             self.errors.append(("bettingpros", str(e)))
             return []
@@ -105,7 +107,7 @@ class FetchOrchestrator:
             print(f"[OK] Underdog cheat sheet: {len(props)} props with analytics\n")
             return props
 
-        except Exception as e:
+        except (requests.RequestException, KeyError, ValueError, TypeError) as e:
             logger.error(f"Underdog cheat sheet fetch failed: {e}")
             self.errors.append(("underdog_sheet", str(e)))
             return []
@@ -343,7 +345,7 @@ def main():
     except KeyboardInterrupt:
         logger.warning("Interrupted by user")
         print("\n\n[WARN]  Interrupted by user\n")
-    except Exception as e:
+    except (requests.RequestException, KeyError, ValueError, TypeError) as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
         raise
 

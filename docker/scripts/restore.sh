@@ -23,8 +23,13 @@ BACKUP_DIR="${BACKUP_DIR:-$PROJECT_ROOT/docker/backups}"
 
 # Database configuration
 DB_USER="${DB_USER:-mlb_user}"
-DB_PASSWORD="${DB_PASSWORD:-${DB_PASSWORD}}"
 DB_HOST="${DB_HOST:-localhost}"
+
+# Require password from environment
+if [ -z "${DB_PASSWORD:-}" ]; then
+    echo "Error: DB_PASSWORD environment variable is required"
+    exit 1
+fi
 
 # PostgreSQL databases
 declare -A PG_DATABASES=(
@@ -118,8 +123,13 @@ restore_mongodb() {
         return 0
     fi
 
+    if [ -z "${MONGO_PASSWORD:-}" ]; then
+        log_error "MONGO_PASSWORD environment variable is required"
+        return 1
+    fi
+
     if mongorestore \
-        --uri="mongodb://${MONGO_USER:-nba_user}:${MONGO_PASSWORD:-${MONGO_PASSWORD}}@localhost:27017" \
+        --uri="mongodb://${MONGO_USER:-nba_user}:${MONGO_PASSWORD}@localhost:27017" \
         --archive="$backup_file" \
         --gzip \
         --drop 2>/dev/null; then

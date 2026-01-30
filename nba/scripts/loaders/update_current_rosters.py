@@ -56,7 +56,7 @@ class RosterUpdater:
         try:
             self.conn = psycopg2.connect(**DB_CONFIG)
             logger.info("✅ Connected to nba_players database")
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"❌ Database connection failed: {e}")
             raise
 
@@ -98,7 +98,7 @@ class RosterUpdater:
             logger.info(f"✅ Found {len(roster_df)} players on {team_abbrev}")
             return roster_df
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"❌ Failed to fetch roster for {team_abbrev}: {e}")
             return pd.DataFrame()
 
@@ -343,7 +343,7 @@ class RosterUpdater:
             # Store changes for reporting
             self.changes = changes
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"❌ Roster update failed: {e}")
             if self.conn:
                 self.conn.rollback()
@@ -407,7 +407,7 @@ def main():
 
         logger.info("\n🎉 Roster update complete!")
 
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         logger.error(f"❌ Update failed: {e}")
         raise
     finally:

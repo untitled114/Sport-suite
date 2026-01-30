@@ -7,6 +7,7 @@ Endpoints for monitoring API and system health.
 import logging
 from datetime import datetime
 
+import psycopg2
 from fastapi import APIRouter, Depends
 
 from nba.api import __version__
@@ -61,7 +62,7 @@ async def models_health_check() -> ModelsHealthResponse:
     # Get model status (may trigger lazy loading)
     try:
         manager.ensure_loaded()
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         logger.error(f"Error loading models: {e}")
 
     status_info = manager.get_model_status()
@@ -147,7 +148,7 @@ async def readiness_check() -> HealthResponse:
         manager.ensure_loaded()
         model_status = manager.get_model_status()
         models_ok = any(m.get("loaded", False) for m in model_status["models"].values())
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         logger.error(f"Readiness check - model error: {e}")
         models_ok = False
 
@@ -155,7 +156,7 @@ async def readiness_check() -> HealthResponse:
     try:
         db_result = check_all_databases()
         db_ok = db_result["total_connected"] >= 1
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         logger.error(f"Readiness check - database error: {e}")
         db_ok = False
 

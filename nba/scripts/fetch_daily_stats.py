@@ -99,7 +99,7 @@ class NBAStatsUpdater:
 
             return events
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"❌ Error fetching games: {e}")
             return []
 
@@ -112,7 +112,7 @@ class NBAStatsUpdater:
             response.raise_for_status()
             return response.json()
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"❌ Error fetching boxscore for game {game_id}: {e}")
             return None
 

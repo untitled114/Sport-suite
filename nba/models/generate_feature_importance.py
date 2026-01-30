@@ -171,7 +171,7 @@ def compute_shap_values(
 
         return shap_values
 
-    except Exception as e:
+    except (OSError, KeyError, ValueError, TypeError) as e:
         logger.error(f"SHAP computation failed: {e}")
         return None
 

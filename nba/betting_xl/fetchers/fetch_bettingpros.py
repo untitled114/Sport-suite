@@ -21,6 +21,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List
 
+import requests
+
 from nba.betting_xl.fetchers.base_fetcher import BaseFetcher
 
 # Configure logging
@@ -178,7 +180,7 @@ class BettingProsFetcher(BaseFetcher):
 
             try:
                 data = response.json()
-            except Exception as e:
+            except (requests.RequestException, KeyError, ValueError, TypeError) as e:
                 # Log error without binary garbage - check if response is printable
                 try:
                     preview = response.text[:100] if response.text else "(empty)"
@@ -352,7 +354,7 @@ class BettingProsFetcher(BaseFetcher):
 
             return prop
 
-        except Exception as e:
+        except (requests.RequestException, KeyError, ValueError, TypeError) as e:
             if self.verbose:
                 print(f"  Error parsing prop: {e}")
             return None
@@ -413,7 +415,7 @@ class BettingProsFetcher(BaseFetcher):
             logger.info(f"Fetched schedule: {len(team_schedule)} teams playing on {self.date}")
             return team_schedule
 
-        except Exception as e:
+        except (requests.RequestException, KeyError, ValueError, TypeError) as e:
             logger.error(f"Failed to fetch ESPN schedule: {e}")
             return {}
 

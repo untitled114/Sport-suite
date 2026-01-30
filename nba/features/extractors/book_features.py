@@ -225,7 +225,7 @@ class BookFeatureExtractor(BaseFeatureExtractor):
     def _compute_spread_percentile(
         self,
         spread: float,
-        stat_type: str = None,
+        stat_type: Optional[str] = None,
     ) -> float:
         """
         Compute percentile of this spread vs historical spreads.
