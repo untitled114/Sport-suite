@@ -1,6 +1,6 @@
 # NBA Player Props ML System
 
-End-to-end machine learning pipeline for NBA player prop betting. Ingests live odds from 7 sportsbooks, extracts 166 features per prop, and generates calibrated predictions using stacked LightGBM architectures.
+End-to-end machine learning pipeline for NBA player prop betting. Ingests live odds from 7 sportsbooks, extracts 102 features per prop, and generates calibrated predictions using stacked LightGBM architectures.
 
 ## What This Project Demonstrates
 
@@ -14,82 +14,75 @@ End-to-end machine learning pipeline for NBA player prop betting. Ingests live o
 
 | Metric | Value | Sample | Notes |
 |--------|-------|--------|-------|
-| **Win Rate** | 60.3% | 232 bets | Jan 1-28, 2026 (filtered picks) |
-| **ROI** | +15.2% | 232 bets | At standard -110 odds |
-| **Units Profit** | +35.26u | 28 days | ~8 picks/day average |
+| **Win Rate** | 63.0% | 46 bets | Jan 23-29, 2026 (7 days, filtered picks) |
+| **ROI** | +19.8% | 46 bets | At standard -110 odds |
+| **Units Profit** | +14.81u | 7 days | ~6.6 picks/day average |
 
 ### By Market
 
 | Market | Bets | Win Rate | ROI |
 |--------|------|----------|-----|
-| POINTS | 115 | 60.0% | +14.5% |
-| REBOUNDS | 89 | 59.6% | +13.7% |
-| ASSISTS | 28 | 64.3% | +22.7% |
+| POINTS | 23 | 65.2% | +24.3% |
+| REBOUNDS | 23 | 60.9% | +15.4% |
+
+**Active Markets**: POINTS & REBOUNDS only (ASSISTS/THREES disabled due to poor AUC)
 
 **Important caveats:**
-- Results from filtered picks only (edge thresholds, probability filters)
+- Results from filtered picks only (edge thresholds, spread filters)
 - Past performance does not guarantee future results
 - Markets adapt; edges can decay over time
 
 ### Methodology
 
 ```
-Training:   Oct 2023 - Jan 2025 (~24,000 props per market)
-Validation: Jan 1-28, 2026 (232 filtered bets)
-Split:      Temporal (no future data leakage)
+Training:   Oct 2023 - Apr 2025 (~24,000 props per market)
+Validation: Rolling 7-day window with temporal split (no future data leakage)
 ```
 
 ---
 
 ## Model Architecture
 
-### Production Models (Jan 11, 2026)
+### Production Models (Nov 6, 2025)
 
-| Market | Features | R² | AUC | Architecture |
-|--------|----------|-----|-----|--------------|
-| **POINTS** | 166 | 0.537 | 0.736 | Two-head stacked |
-| **REBOUNDS** | 166 | 0.531 | 0.748 | Two-head stacked |
-| **ASSISTS** | 102 | - | - | Legacy XL (disabled) |
-| **THREES** | 102 | - | - | Legacy XL (disabled) |
+| Market | Features | R² | AUC | Architecture | Status |
+|--------|----------|-----|-----|--------------|--------|
+| **POINTS** | 102 | 0.410 | 0.767 | Two-head stacked | ✅ DEPLOYED |
+| **REBOUNDS** | 102 | 0.403 | 0.749 | Two-head stacked | ✅ DEPLOYED |
+| **ASSISTS** | 102 | 0.058 | 0.587 | Two-head stacked | ⚠️ DISABLED |
+| **THREES** | 102 | 0.178 | 0.713 | Two-head stacked | ⚠️ DISABLED |
 
-### Feature Breakdown (166 features)
+### Feature Breakdown
 
+**XL Model (102 features) - CURRENT PRODUCTION:**
 ```
-Player Rolling Stats (42):
-├── EMA-weighted L3/L5/L10/L20 for 9 stats
-├── Plus/minus, FT rate, true shooting
-└── Points per minute, momentum, efficiency
+Player Features (78):
+├── Rolling stats with EMA: L3/L5/L10/L20 for 9 stats
+├── Points, rebounds, assists, threes, steals, blocks, turnovers, minutes, FG%
+├── Team context: pace, offensive/defensive ratings, projected possessions
+├── Advanced: rest days, B2B, travel distance, altitude, season phase
+├── Usage: starter flag, bench points ratio, position, avg teammate usage
+└── Recent performance: points per minute L5, days since last 30pt game
 
-Team & Game Context (28):
-├── Team/opponent pace, ratings
-├── Rest days, B2B, games in L7
-├── Travel distance, altitude, season phase
-└── Starter flag, position, teammate usage
+Book Disagreement (20):
+├── Line variance: spread, consensus, std dev, num books, coeff of variation
+├── Per-book deviations: DraftKings, FanDuel, BetMGM, Caesars, BetRivers, ESPNBet
+├── Softest/hardest book IDs, line spread percentile
+└── Softest vs consensus, hardest vs consensus, min/max line
 
-Head-to-Head History (36):
-├── H2H averages for points/rebounds/assists/threes
-├── L3/L5/L10/L20 windows per stat
-├── Home/away splits
-└── Recency weight, sample quality
+Computed (4):
+├── is_home: Player home/away status (from game logs)
+├── line: Sportsbook prop line
+├── opponent_team: Opponent team code
+└── expected_diff: Regressor prediction - line (added by classifier head)
+```
 
-Book Disagreement (22):
-├── Line spread, consensus, std dev
-├── Per-book deviations (8 books)
-├── Softest/hardest book IDs
-└── Books agree/disagree flags
-
-Prop History (12):
-├── Hit rates: L20, context, vs defense
-├── Line vs season avg, percentile
-└── Bayesian confidence, streaks
-
-Vegas & BettingPros (17):
-├── Vegas total, spread
-├── Team ATS/OU percentages
-└── BP projections, ratings, hit rates
-
-Computed (1):
-└── expected_diff (regressor prediction - line)
+**V3 Model (166 features) - Available but not deployed:**
+```
+All XL features (102) plus:
+├── Head-to-Head History (36): H2H averages per stat, L3/L5/L10/L20 windows
+├── Prop History (12): Hit rates, Bayesian confidence, streaks
+└── Vegas & BettingPros (16): Vegas total/spread, projections, ratings
 ```
 
 ### Two-Head Stacked Architecture
@@ -102,7 +95,7 @@ Computed (1):
 │    │  HEAD 1: Regressor │        │  HEAD 2: Classifier │                │
 │    │  (LightGBM)        │        │  (LightGBM)         │                │
 │    │                    │        │                     │                │
-│    │  Input: 166 feat   │───────▶│  Input: 166 feat    │                │
+│    │  Input: 102 feat   │───────▶│  Input: 102 feat    │                │
 │    │  Output: predicted │  diff  │  + expected_diff    │                │
 │    │          value     │        │  Output: P(OVER)    │                │
 │    └────────────────────┘        └─────────┬──────────┘                │
@@ -165,7 +158,7 @@ nba/
 │   └── model_cards/                 # Model documentation
 │
 ├── features/
-│   ├── extract_live_features_xl.py  # 166-feature extraction
+│   ├── extract_live_features_xl.py  # 102-feature extraction (XL production)
 │   ├── extractors/                  # Modular feature extractors
 │   │   ├── book_features.py         # Book disagreement features
 │   │   ├── h2h_features.py          # Head-to-head features
@@ -211,8 +204,11 @@ cd docker && docker-compose up -d
 # Install
 pip install -e ".[dev]"
 
-# Run predictions
-./nba/nba-predictions.sh evening
+# Run full pipeline (data collection + predictions)
+./nba/nba-predictions.sh full
+
+# Quick refresh (line movements + regenerate predictions)
+./nba/nba-predictions.sh refresh
 ```
 
 ### Validate Results
@@ -223,32 +219,31 @@ pip install -e ".[dev]"
 ./nba/nba-predictions.sh validate --7d      # Last 7 days
 ./nba/nba-predictions.sh validate --30d     # Last 30 days
 
-# Or directly with Python
-cd nba/betting_xl
-python3 validate_predictions.py --start-date 2026-01-01 --end-date 2026-01-28
+# Show current picks
+./nba/nba-predictions.sh picks
 ```
 
 ---
 
 ## Technical Details
 
-### Training Metrics (Jan 11, 2026)
+### Training Metrics (Nov 6, 2025)
 
-**POINTS Market:**
+**POINTS Market (XL - 102 features):**
 | Metric | Train | Test |
 |--------|-------|------|
-| RMSE | 4.78 | 6.13 |
-| MAE | - | 4.55 |
-| R² | - | 0.537 |
-| AUC | 0.80 | 0.736 |
+| RMSE | 6.13 | 6.84 |
+| MAE | - | 5.23 |
+| R² | - | 0.410 |
+| AUC | 0.96 | 0.767 |
 
-**REBOUNDS Market:**
+**REBOUNDS Market (XL - 102 features):**
 | Metric | Train | Test |
 |--------|-------|------|
-| RMSE | 1.80 | 2.42 |
-| MAE | - | 1.79 |
-| R² | - | 0.531 |
-| AUC | 0.83 | 0.748 |
+| RMSE | 2.34 | 2.71 |
+| MAE | - | 2.01 |
+| R² | - | 0.403 |
+| AUC | 0.95 | 0.749 |
 
 ### Data Sources
 

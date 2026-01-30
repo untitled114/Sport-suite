@@ -132,12 +132,14 @@ class PropHistoryLearner:
         try:
             conn = self._get_team_connection()
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT team_abbrev,
                            ROW_NUMBER() OVER (ORDER BY defensive_rating ASC) as rank
                     FROM team_season_stats
                     WHERE season = (SELECT MAX(season) FROM team_season_stats)
-                """)
+                """
+                )
                 for row in cur.fetchall():
                     rankings[row[0]] = row[1]
             logger.info(f"Loaded {len(rankings)} team defense rankings")
@@ -695,14 +697,16 @@ class PropHistoryLearner:
         try:
             conn = self._get_intelligence_connection()
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT
                         COUNT(*) as total_records,
                         COUNT(DISTINCT player_name) as unique_players,
                         MAX(last_updated) as last_updated,
                         AVG(total_props) as avg_props_per_record
                     FROM prop_performance_history
-                """)
+                """
+                )
                 row = cur.fetchone()
                 return {
                     "total_records": row[0],

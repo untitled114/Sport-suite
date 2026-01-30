@@ -144,12 +144,14 @@ class RosterUpdater:
             Dict mapping player_id -> team_abbrev
         """
         cursor = self.conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT player_id, team_abbrev, full_name
             FROM player_profile
             WHERE team_abbrev IS NOT NULL
             ORDER BY player_id
-        """)
+        """
+        )
 
         current_rosters = {}
         for player_id, team_abbrev, full_name in cursor.fetchall():

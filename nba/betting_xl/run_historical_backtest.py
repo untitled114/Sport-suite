@@ -13,12 +13,12 @@ Key Features:
 - SEED PERIOD: Generates predictions for ~35 days before backtest start to warm up calibrator
 
 Usage:
-    # Run full backtest with auto seed period (uses March-April 2025 data)
+    # Run full backtest with auto seed period (uses Oct 22-31, 2025 data)
     python3 run_historical_backtest.py --start 2025-11-01 --end 2025-12-28
 
     # Custom seed period
     python3 run_historical_backtest.py --start 2025-11-01 --end 2025-12-28 \
-        --seed-start 2025-03-10 --seed-end 2025-04-13
+        --seed-start 2025-10-22 --seed-end 2025-10-31
 
     # Skip seed period (not recommended)
     python3 run_historical_backtest.py --start 2025-11-01 --end 2025-12-28 --no-seed
@@ -30,7 +30,6 @@ Usage:
 import argparse
 import json
 import logging
-import os
 import sys
 from collections import defaultdict
 from datetime import date, datetime, timedelta
@@ -40,19 +39,11 @@ from typing import Dict, List, Optional, Tuple
 import psycopg2
 
 from nba.betting_xl.generate_xl_predictions import XLPredictionsGenerator
+from nba.config.database import get_intelligence_db_config
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-
-# Database config
-DB_INTELLIGENCE = {
-    "host": os.getenv("NBA_INT_DB_HOST", "localhost"),
-    "port": int(os.getenv("NBA_INT_DB_PORT", 5539)),
-    "user": os.getenv("NBA_INT_DB_USER", os.getenv("DB_USER", "nba_user")),
-    "password": os.getenv("NBA_INT_DB_PASSWORD", os.getenv("DB_PASSWORD")),
-    "database": os.getenv("NBA_INT_DB_NAME", "nba_intelligence"),
-}
 
 
 class BacktestResult:
@@ -111,14 +102,12 @@ class HistoricalBacktest:
         seed_start: Optional[date] = None,
         seed_end: Optional[date] = None,
         no_seed: bool = False,
-        pick6_file: Optional[str] = None,
     ):
         self.start_date = start_date
         self.end_date = end_date
         self.dry_run = dry_run
         self.skip_validation = skip_validation
         self.no_seed = no_seed
-        self.pick6_file = pick6_file
 
         # Seed period for calibrator warmup
         if no_seed:
@@ -144,7 +133,7 @@ class HistoricalBacktest:
     def _connect_db(self):
         """Connect to intelligence database."""
         if self.conn is None or self.conn.closed:
-            self.conn = psycopg2.connect(**DB_INTELLIGENCE)
+            self.conn = psycopg2.connect(**get_intelligence_db_config())
 
     def _close_db(self):
         """Close database connection."""
@@ -291,8 +280,7 @@ class HistoricalBacktest:
                 game_date=date_str,
                 as_of_date=as_of_date,
                 backtest_mode=True,
-                predictions_dir=str(self.output_dir),  # Calibrator reads from backtest output
-                # pick6_file not supported by XLPredictionsGenerator
+                predictions_dir=str(self.output_dir),
             )
 
             # Run the generator
@@ -315,7 +303,7 @@ class HistoricalBacktest:
                     f"  Validation: {result.wins}W / {result.losses}L ({result.win_rate:.1f}%)"
                 )
 
-        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
+        except (psycopg2.Error, json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
             result.error = str(e)
             logger.error(f"  Error: {e}")
 
@@ -366,7 +354,6 @@ class HistoricalBacktest:
                     as_of_date=as_of_date,
                     backtest_mode=True,
                     predictions_dir=str(self.output_dir),
-                    # pick6_file not supported by XLPredictionsGenerator
                 )
 
                 generator.run(output_file=str(output_file), dry_run=self.dry_run)
@@ -380,7 +367,7 @@ class HistoricalBacktest:
                     if picks > 0:
                         logger.info(f"  {date_str}: {picks} picks generated")
 
-            except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
+            except (psycopg2.Error, json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
                 logger.debug(f"  {date_str}: Error - {e}")
 
             processed += 1
@@ -583,21 +570,15 @@ def main():
         "--skip-validation", action="store_true", help="Skip validation against actuals"
     )
     parser.add_argument(
-        "--seed-start", type=str, default=None, help="Seed period start date (default: 2025-03-10)"
+        "--seed-start", type=str, default=None, help="Seed period start date (default: 2025-10-22)"
     )
     parser.add_argument(
-        "--seed-end", type=str, default=None, help="Seed period end date (default: 2025-04-13)"
+        "--seed-end", type=str, default=None, help="Seed period end date (default: 2025-10-31)"
     )
     parser.add_argument(
         "--no-seed",
         action="store_true",
         help="Skip seed period (not recommended - calibrator needs warmup data)",
-    )
-    parser.add_argument(
-        "--pick6-file",
-        type=str,
-        default=None,
-        help="Historical Pick6 JSON file for Odds API backtest (enables Odds API filter path)",
     )
 
     args = parser.parse_args()
@@ -624,7 +605,6 @@ def main():
         seed_start=seed_start,
         seed_end=seed_end,
         no_seed=args.no_seed,
-        pick6_file=args.pick6_file,
     )
 
     backtest.run()

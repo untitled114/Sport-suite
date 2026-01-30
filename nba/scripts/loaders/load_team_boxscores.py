@@ -35,13 +35,15 @@ def main():
     cur = conn.cursor()
 
     # Get all team game logs that need box score data
-    cur.execute("""
+    cur.execute(
+        """
         SELECT game_log_id, team_abbrev, game_id, game_date, opponent, is_home
         FROM team_game_logs
         WHERE fg_made IS NULL
         ORDER BY game_date, game_id
         LIMIT 100;
-    """)
+    """
+    )
 
     logs = cur.fetchall()
     print(f"Found {len(logs)} team game logs needing box score data")

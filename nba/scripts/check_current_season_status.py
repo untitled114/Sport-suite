@@ -51,17 +51,20 @@ conn = psycopg2.connect(**DB_PLAYERS)
 cursor = conn.cursor()
 
 # Latest games
-cursor.execute("""
+cursor.execute(
+    """
     SELECT MAX(game_date) as latest_game, COUNT(*) as total_games
     FROM player_game_logs
-""")
+"""
+)
 result = cursor.fetchone()
 print(f"Latest game in database: {result[0]}")
 print(f"Total game logs: {result[1]:,}")
 print()
 
 # Games by recent months
-cursor.execute("""
+cursor.execute(
+    """
     SELECT
         DATE_TRUNC('month', game_date) as month,
         COUNT(*) as games
@@ -70,20 +73,23 @@ cursor.execute("""
     GROUP BY DATE_TRUNC('month', game_date)
     ORDER BY month DESC
     LIMIT 12
-""")
+"""
+)
 print("Games by month (2025):")
 for row in cursor.fetchall():
     print(f"  {row[0].strftime('%Y-%m')}: {row[1]:,} game logs")
 print()
 
 # Current rosters
-cursor.execute("""
+cursor.execute(
+    """
     SELECT team_abbrev, COUNT(*) as players
     FROM player_profile
     WHERE team_abbrev IS NOT NULL
     GROUP BY team_abbrev
     ORDER BY team_abbrev
-""")
+"""
+)
 rosters = cursor.fetchall()
 print(f"Roster data: {len(rosters)} teams")
 print("Players per team:")
@@ -93,12 +99,14 @@ print(f"  ... ({len(rosters)-5} more teams)")
 print()
 
 # Check for season stats
-cursor.execute("""
+cursor.execute(
+    """
     SELECT season, COUNT(DISTINCT player_id) as players
     FROM player_season_stats
     GROUP BY season
     ORDER BY season DESC
-""")
+"""
+)
 print("Season stats by year:")
 for row in cursor.fetchall():
     print(f"  {row[0]}: {row[1]:,} players")
@@ -115,12 +123,14 @@ print()
 conn = psycopg2.connect(**DB_TEAM)
 cursor = conn.cursor()
 
-cursor.execute("""
+cursor.execute(
+    """
     SELECT season, COUNT(*) as teams
     FROM team_season_stats
     GROUP BY season
     ORDER BY season DESC
-""")
+"""
+)
 print("Team season stats:")
 for row in cursor.fetchall():
     print(f"  {row[0]}: {row[1]} teams")
@@ -137,20 +147,24 @@ print()
 conn = psycopg2.connect(**DB_GAMES)
 cursor = conn.cursor()
 
-cursor.execute("""
+cursor.execute(
+    """
     SELECT MAX(game_date) as latest_game
     FROM games
-""")
+"""
+)
 result = cursor.fetchone()
 print(f"Latest game: {result[0]}")
 print()
 
-cursor.execute("""
+cursor.execute(
+    """
     SELECT season, COUNT(*) as games
     FROM games
     GROUP BY season
     ORDER BY season DESC
-""")
+"""
+)
 print("Games by season:")
 for row in cursor.fetchall():
     print(f"  {row[0]}: {row[1]:,} games")

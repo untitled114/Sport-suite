@@ -16,7 +16,7 @@
 
 ### Performance by Date
 ```
-Date         Bets   Wins   Losses   Win Rate   ROI       
+Date         Bets   Wins   Losses   Win Rate   ROI
 ----------------------------------------------------------------------
 2026-01-19  124    50     74         40.3%       -23.0%
 2026-01-20  96     55     41         57.3%        +9.4%
@@ -32,7 +32,7 @@ Date         Bets   Wins   Losses   Win Rate   ROI
 
 ### Performance by Edge Tier
 ```
-Edge Tier    Bets   Wins   Win Rate   ROI        Avg Edge   Recommend   
+Edge Tier    Bets   Wins   Win Rate   ROI        Avg Edge   Recommend
 --------------------------------------------------------------------------------
 7.0+         33     18       54.5%        +4.2%     7.81       [ERROR] DISABLE
 5.0-6.9      71     38       53.5%        +2.2%     5.89       [ERROR] DISABLE
@@ -45,7 +45,7 @@ Edge Tier    Bets   Wins   Win Rate   ROI        Avg Edge   Recommend
 
 ### Performance by Direction
 ```
-Direction    Bets   Wins   Win Rate   ROI       
+Direction    Bets   Wins   Win Rate   ROI
 ------------------------------------------------------------
 OVER         439    208      47.4%        -9.5%
 UNDER        639    337      52.7%        +0.7%
@@ -61,7 +61,7 @@ UNDER        639    337      52.7%        +0.7%
 
 ### Performance by Date
 ```
-Date         Bets   Wins   Losses   Win Rate   ROI       
+Date         Bets   Wins   Losses   Win Rate   ROI
 ----------------------------------------------------------------------
 2026-01-19  126    69     57         54.8%        +4.6%
 2026-01-20  98     47     51         48.0%        -8.4%
@@ -77,7 +77,7 @@ Date         Bets   Wins   Losses   Win Rate   ROI
 
 ### Performance by Edge Tier
 ```
-Edge Tier    Bets   Wins   Win Rate   ROI        Avg Edge   Recommend   
+Edge Tier    Bets   Wins   Win Rate   ROI        Avg Edge   Recommend
 --------------------------------------------------------------------------------
 3.0-4.9      13     5        38.5%       -26.5%     3.93       [ERROR] DISABLE
 2.0-2.9      70     38       54.3%        +3.7%     2.40       [ERROR] DISABLE
@@ -88,7 +88,7 @@ Edge Tier    Bets   Wins   Win Rate   ROI        Avg Edge   Recommend
 
 ### Performance by Direction
 ```
-Direction    Bets   Wins   Win Rate   ROI       
+Direction    Bets   Wins   Win Rate   ROI
 ------------------------------------------------------------
 OVER         785    394      50.2%        -4.1%
 UNDER        293    154      52.6%        +0.4%
@@ -104,7 +104,7 @@ UNDER        293    154      52.6%        +0.4%
 
 ### Performance by Date
 ```
-Date         Bets   Wins   Losses   Win Rate   ROI       
+Date         Bets   Wins   Losses   Win Rate   ROI
 ----------------------------------------------------------------------
 2026-01-19  123    56     67         45.5%       -13.0%
 2026-01-20  94     32     62         34.0%       -35.0%
@@ -120,7 +120,7 @@ Date         Bets   Wins   Losses   Win Rate   ROI
 
 ### Performance by Edge Tier
 ```
-Edge Tier    Bets   Wins   Win Rate   ROI        Avg Edge   Recommend   
+Edge Tier    Bets   Wins   Win Rate   ROI        Avg Edge   Recommend
 --------------------------------------------------------------------------------
 7.0+         7      3        42.9%       -18.1%     7.36       [ERROR] DISABLE
 5.0-6.9      33     16       48.5%        -7.4%     5.70       [ERROR] DISABLE
@@ -133,7 +133,7 @@ Edge Tier    Bets   Wins   Win Rate   ROI        Avg Edge   Recommend
 
 ### Performance by Direction
 ```
-Direction    Bets   Wins   Win Rate   ROI       
+Direction    Bets   Wins   Win Rate   ROI
 ------------------------------------------------------------
 OVER         354    180      50.8%        -2.9%
 UNDER        651    326      50.1%        -4.4%
@@ -149,7 +149,7 @@ UNDER        651    326      50.1%        -4.4%
 
 ### Performance by Date
 ```
-Date         Bets   Wins   Losses   Win Rate   ROI       
+Date         Bets   Wins   Losses   Win Rate   ROI
 ----------------------------------------------------------------------
 2026-01-19  101    7      94          6.9%       -86.8%
 2026-01-20  75     8      67         10.7%       -79.6%
@@ -165,7 +165,7 @@ Date         Bets   Wins   Losses   Win Rate   ROI
 
 ### Performance by Edge Tier
 ```
-Edge Tier    Bets   Wins   Win Rate   ROI        Avg Edge   Recommend   
+Edge Tier    Bets   Wins   Win Rate   ROI        Avg Edge   Recommend
 --------------------------------------------------------------------------------
 3.0-4.9      12     0         0.0%      -100.0%     3.08       [ERROR] DISABLE
 2.0-2.9      226    0         0.0%      -100.0%     2.49       [ERROR] DISABLE
@@ -176,7 +176,7 @@ Edge Tier    Bets   Wins   Win Rate   ROI        Avg Edge   Recommend
 
 ### Performance by Direction
 ```
-Direction    Bets   Wins   Win Rate   ROI       
+Direction    Bets   Wins   Win Rate   ROI
 ------------------------------------------------------------
 OVER         830    0         0.0%      -100.0%
 UNDER        48     48      100.0%       +91.0%

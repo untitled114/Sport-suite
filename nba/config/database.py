@@ -5,7 +5,7 @@ All database connection configs should be imported from this module.
 Credentials are read from environment variables with sensible fallbacks.
 
 Environment Variables:
-    DB_USER: Default database username (fallback: 'nba_user')
+    DB_USER: Default database username (fallback: 'mlb_user')
     DB_PASSWORD: Default database password (REQUIRED - no hardcoded default)
     NBA_*_DB_*: Per-database overrides (host, port, user, password, name)
     MONGO_URI: MongoDB connection string

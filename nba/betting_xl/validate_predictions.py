@@ -25,21 +25,14 @@ Usage:
 
 import argparse
 import json
-import os
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import psycopg2
 
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5536,
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-    "database": "nba_players",
-}
+from nba.config.database import get_players_db_config
 
 # Stat type -> game log column mapping
 STAT_COLUMN_MAP = {
@@ -156,7 +149,7 @@ def normalize_name(name: str) -> str:
 
 def get_actual_results(date: str) -> Dict[str, Dict]:
     """Get actual game results from database, keyed by normalized player name."""
-    conn = psycopg2.connect(**DB_CONFIG)
+    conn = psycopg2.connect(**get_players_db_config())
     cursor = conn.cursor()
 
     query = """
