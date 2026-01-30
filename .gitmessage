@@ -1,0 +1,82 @@
+# <type>(<scope>): <subject>
+#
+# <body>
+#
+# <footer>
+
+# ============================================================================
+# CONVENTIONAL COMMITS FORMAT
+# ============================================================================
+# type(scope): subject
+#
+# Types:
+#   feat     - A new feature
+#   fix      - A bug fix
+#   refactor - Code change that neither fixes bug nor adds feature
+#   test     - Adding missing tests or correcting existing tests
+#   docs     - Documentation only changes
+#   chore    - Changes to build process, auxiliary tools, libraries
+#   style    - Formatting, missing semi colons, etc (no code change)
+#   perf     - Performance improvements
+#   ci       - CI configuration changes
+#
+# Scopes (examples):
+#   models   - Model training or inference changes
+#   features - Feature extraction changes
+#   betting  - Betting pipeline (line optimizer, predictions)
+#   api      - FastAPI endpoints
+#   config   - Configuration changes
+#   tests    - Test-related changes
+#   docs     - Documentation changes
+#   deps     - Dependency updates
+#
+# Subject:
+#   - Use imperative mood ("add" not "added" or "adds")
+#   - Don't capitalize first letter
+#   - No period at the end
+#   - Max 50 characters
+#
+# Body:
+#   - Wrap at 72 characters
+#   - Explain WHAT and WHY, not HOW
+#   - Include issue references
+#
+# Footer:
+#   - Breaking changes: BREAKING CHANGE: <description>
+#   - Issue references: Closes #123, Fixes #456
+#
+# ============================================================================
+# EXAMPLES
+# ============================================================================
+# feat(models): add SHAP feature importance analysis
+#
+# Adds generate_feature_importance.py script that:
+# - Computes SHAP values for regressor and classifier
+# - Generates summary plots (beeswarm and bar charts)
+# - Updates model cards with feature importance tables
+#
+# Closes #42
+#
+# ============================================================================
+# fix(betting): handle BetRivers blacklist in V3 optimizer
+#
+# BetRivers showed 0% WR in January 2026 for OVER picks.
+# Added to avoid_books_over in V3_TIER_CONFIG.
+#
+# Fixes #67
+#
+# ============================================================================
+# refactor(features): split extractors into focused classes
+#
+# Extracts feature extraction logic from monolithic file:
+# - BookFeatureExtractor (23 features)
+# - H2HFeatureExtractor (36 features)
+# - PropHistoryExtractor (12 features)
+# - VegasContextExtractor (2 features)
+# - TeamBettingExtractor (5 features)
+# - CheatsheetExtractor (8 features)
+#
+# BREAKING CHANGE: LiveFeatureExtractorXL interface unchanged,
+# but internal implementation now uses composition.
+#
+# ============================================================================

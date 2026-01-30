@@ -277,3 +277,149 @@ class InvalidConfigError(ConfigurationError):
         if reason:
             message = f"{message} ({reason})"
         super().__init__(message)
+
+
+# =============================================================================
+# Serialization Errors
+# =============================================================================
+
+
+class SerializationError(NBAPropsError):
+    """Base exception for serialization-related errors."""
+
+    pass
+
+
+class PickleLoadError(SerializationError):
+    """Raised when pickle deserialization fails."""
+
+    def __init__(self, file_path: str, reason: str = None):
+        self.file_path = file_path
+        self.reason = reason
+        message = f"Failed to load pickle file: {file_path}"
+        if reason:
+            message = f"{message} - {reason}"
+        super().__init__(message)
+
+
+class JSONLoadError(SerializationError):
+    """Raised when JSON deserialization fails."""
+
+    def __init__(self, file_path: str, reason: str = None):
+        self.file_path = file_path
+        self.reason = reason
+        message = f"Failed to load JSON file: {file_path}"
+        if reason:
+            message = f"{message} - {reason}"
+        super().__init__(message)
+
+
+# =============================================================================
+# Calibration Errors
+# =============================================================================
+
+
+class CalibrationError(NBAPropsError):
+    """Base exception for calibration-related errors."""
+
+    pass
+
+
+class CalibrationDataError(CalibrationError):
+    """Raised when calibration data is insufficient or invalid."""
+
+    def __init__(self, market: str, reason: str, samples: int = None):
+        self.market = market
+        self.reason = reason
+        self.samples = samples
+        message = f"Calibration data error for {market}: {reason}"
+        if samples is not None:
+            message = f"{message} (samples={samples})"
+        super().__init__(message)
+
+
+class CalibrationFitError(CalibrationError):
+    """Raised when calibrator fitting fails."""
+
+    def __init__(self, market: str, reason: str = None):
+        self.market = market
+        self.reason = reason
+        message = f"Failed to fit calibrator for {market}"
+        if reason:
+            message = f"{message} - {reason}"
+        super().__init__(message)
+
+
+# =============================================================================
+# MongoDB Errors
+# =============================================================================
+
+
+class MongoDBError(DatabaseError):
+    """Base exception for MongoDB-specific errors."""
+
+    pass
+
+
+class MongoDBConnectionError(MongoDBError):
+    """Raised when MongoDB connection fails."""
+
+    def __init__(self, host: str = None, port: int = None, reason: str = None):
+        self.host = host
+        self.port = port
+        self.reason = reason
+        message = "Failed to connect to MongoDB"
+        if host and port:
+            message = f"{message} ({host}:{port})"
+        if reason:
+            message = f"{message} - {reason}"
+        super().__init__(message)
+
+
+class MongoDBQueryError(MongoDBError):
+    """Raised when MongoDB query fails."""
+
+    def __init__(self, collection: str, message: str, operation: str = None):
+        self.collection = collection
+        self.operation = operation
+        full_message = f"MongoDB query error on {collection}: {message}"
+        if operation:
+            full_message = f"{full_message} (operation={operation})"
+        super().__init__(full_message)
+
+
+# =============================================================================
+# Line Shopping Errors
+# =============================================================================
+
+
+class LineShoppingError(NBAPropsError):
+    """Base exception for line shopping errors."""
+
+    pass
+
+
+class NoLinesFoundError(LineShoppingError):
+    """Raised when no book lines are available for a prop."""
+
+    def __init__(self, player_name: str, stat_type: str, game_date: str = None):
+        self.player_name = player_name
+        self.stat_type = stat_type
+        self.game_date = game_date
+        message = f"No book lines found for {player_name} {stat_type}"
+        if game_date:
+            message = f"{message} on {game_date}"
+        super().__init__(message)
+
+
+class AllBooksBlacklistedError(LineShoppingError):
+    """Raised when all available books are blacklisted for a prop."""
+
+    def __init__(self, player_name: str, stat_type: str, books: list = None):
+        self.player_name = player_name
+        self.stat_type = stat_type
+        self.books = books
+        message = f"All available books are blacklisted for {player_name} {stat_type}"
+        if books:
+            message = f"{message} (books={books})"
+        super().__init__(message)
