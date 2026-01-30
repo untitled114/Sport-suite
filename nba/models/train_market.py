@@ -29,7 +29,6 @@ Usage:
 
 import argparse
 import json
-import logging
 import pickle
 from datetime import datetime
 from pathlib import Path
@@ -56,6 +55,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.class_weight import compute_class_weight
 
+from nba.core.logging_config import get_logger, setup_logging
+
 # MLflow integration
 try:
     from nba.core.experiment_tracking import ExperimentTracker
@@ -64,8 +65,8 @@ try:
 except ImportError:
     MLFLOW_AVAILABLE = False
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
+# Logger will be configured in main()
+logger = get_logger(__name__)
 
 
 # Null context manager for when MLflow is disabled
@@ -117,10 +118,10 @@ class StackedMarketModel:
 
     def load_data(self, data_path: str) -> pd.DataFrame:
         """Load market-aware training dataset"""
-        logger.info(f"\n📂 Loading data from {data_path}...")
+        logger.info("Loading training data", extra={"path": data_path})
 
         df = pd.read_csv(data_path)
-        logger.info(f"✅ Loaded {len(df):,} samples, {len(df.columns)} columns")
+        logger.info("Loaded training data", extra={"samples": len(df), "columns": len(df.columns)})
 
         # Convert game_date
         if "game_date" in df.columns:
@@ -133,9 +134,9 @@ class StackedMarketModel:
                 df = df[df["stat_type"].isin(stat_types)].copy()
             else:
                 df = df[df["stat_type"] == stat_types].copy()
-            logger.info(f"   Filtered to {len(df):,} {self.market} props")
+            logger.info("Filtered by stat_type", extra={"market": self.market, "count": len(df)})
         else:
-            logger.info(f"   Data already filtered: {len(df):,} {self.market} props")
+            logger.info("Data already filtered", extra={"market": self.market, "count": len(df)})
 
         # Drop duplicates (keep first occurrence per player/game)
         before_dedup = len(df)
@@ -143,7 +144,8 @@ class StackedMarketModel:
         after_dedup = len(df)
         if before_dedup != after_dedup:
             logger.info(
-                f"   ✅ Dropped {before_dedup - after_dedup:,} duplicates → {after_dedup:,} unique props"
+                "Dropped duplicate props",
+                extra={"dropped": before_dedup - after_dedup, "remaining": after_dedup},
             )
 
         # Handle column compatibility (support both old and new extractor formats)
@@ -151,12 +153,14 @@ class StackedMarketModel:
 
         # If stat-specific column missing, create from actual_result
         if target_col not in df.columns and "actual_result" in df.columns:
-            logger.info(f"   Creating {target_col} from actual_result column")
+            logger.debug(
+                "Creating target column from actual_result", extra={"target_col": target_col}
+            )
             df[target_col] = df["actual_result"]
 
         # If source missing, add default
         if "source" not in df.columns:
-            logger.info(f"   Adding default source='bettingpros'")
+            logger.debug("Adding default source", extra={"source": "bettingpros"})
             df["source"] = "bettingpros"
 
         # Verify required columns
@@ -167,11 +171,17 @@ class StackedMarketModel:
 
         # Log date range if available (optional for historical datasets)
         if "game_date" in df.columns:
-            logger.info(f"   Date range: {df['game_date'].min()} to {df['game_date'].max()}")
+            logger.info(
+                "Data date range",
+                extra={
+                    "min_date": str(df["game_date"].min()),
+                    "max_date": str(df["game_date"].max()),
+                },
+            )
         elif "season" in df.columns:
-            logger.info(f"   Seasons: {sorted(df['season'].unique())}")
+            logger.info("Data seasons", extra={"seasons": sorted(df["season"].unique())})
 
-        logger.info(f"   Sources: {df['source'].value_counts().to_dict()}")
+        logger.info("Data sources", extra={"sources": df["source"].value_counts().to_dict()})
 
         return df
 
@@ -185,7 +195,7 @@ class StackedMarketModel:
             y_binary: Binary label (1 if actual > line, 0 otherwise, for classifier)
             metadata: player_name, game_date, line, actual
         """
-        logger.info(f"\n🔧 Preparing features for {self.market}...")
+        logger.info("Preparing features", extra={"market": self.market})
 
         # Exclude metadata and targets
         exclude_cols = [
@@ -224,11 +234,13 @@ class StackedMarketModel:
         book_features = [col for col in feature_cols if col.startswith("book_")]
         if len(book_features) == 0:
             logger.warning(
-                "   ⚠️  No book encoding features found - training without market-aware features"
+                "No book encoding features found - training without market-aware features"
             )
 
-        logger.info(f"   Total features: {len(feature_cols)}")
-        logger.info(f"   Book features: {book_features}")
+        logger.info(
+            "Feature summary",
+            extra={"total_features": len(feature_cols), "book_features": book_features},
+        )
 
         X = df[feature_cols].copy()
         self.feature_names = feature_cols
@@ -244,12 +256,17 @@ class StackedMarketModel:
         # Binary label (for classifier) - RESIDUAL-BASED
         y_binary = (df["residual"] > 0).astype(int)
 
-        logger.info(f"   Features shape: {X.shape}")
-        logger.info(f"   Target (value) stats: mean={y_value.mean():.2f}, std={y_value.std():.2f}")
         logger.info(
-            f"   Target (residual) stats: mean={y_residual.mean():.2f}, std={y_residual.std():.2f}"
+            "Feature and target stats",
+            extra={
+                "feature_shape": list(X.shape),
+                "target_value_mean": round(y_value.mean(), 2),
+                "target_value_std": round(y_value.std(), 2),
+                "target_residual_mean": round(y_residual.mean(), 2),
+                "target_residual_std": round(y_residual.std(), 2),
+                "over_rate": round(y_binary.mean(), 4),
+            },
         )
-        logger.info(f"   Target (binary) OVER rate: {y_binary.mean():.2%}")
 
         # Metadata for evaluation (only include columns that exist)
         metadata_cols = []
@@ -290,12 +307,12 @@ class StackedMarketModel:
         Step 3: Augment X_train with expected_diff
         Step 4: Train classifier on augmented features → predict P(actual > line)
         """
-        logger.info(f"\n🏋️  Training stacked two-head model for {self.market}...")
+        logger.info("Training stacked two-head model", extra={"market": self.market})
 
         # ==========================
         # STEP 1: Train Regressor
         # ==========================
-        logger.info("\n📊 HEAD 1: Training Regressor (absolute value prediction)...")
+        logger.info("HEAD 1: Training Regressor (absolute value prediction)")
 
         # Impute missing values
         self.imputer = SimpleImputer(strategy="median")
@@ -376,14 +393,20 @@ class StackedMarketModel:
         mae_test = mean_absolute_error(y_value_test, y_pred_test)
         r2_test = r2_score(y_value_test, y_pred_test)
 
-        logger.info(f"   Regressor RMSE: train={rmse_train:.3f}, test={rmse_test:.3f}")
-        logger.info(f"   Regressor MAE: test={mae_test:.3f}")
-        logger.info(f"   Regressor R²: test={r2_test:.3f}")
+        logger.info(
+            "Regressor metrics",
+            extra={
+                "rmse_train": round(rmse_train, 3),
+                "rmse_test": round(rmse_test, 3),
+                "mae_test": round(mae_test, 3),
+                "r2_test": round(r2_test, 3),
+            },
+        )
 
         # ==========================
         # STEP 2: Augment with Expected Diff
         # ==========================
-        logger.info("\n🔧 Augmenting features with expected_diff...")
+        logger.info("Augmenting features with expected_diff")
 
         # Calculate expected_diff = prediction - line
         line_train = X_train["line"].values
@@ -392,11 +415,14 @@ class StackedMarketModel:
         expected_diff_train = y_pred_train - line_train
         expected_diff_test = y_pred_test - line_test
 
-        logger.info(
-            f"   Expected diff train: mean={expected_diff_train.mean():.2f}, std={expected_diff_train.std():.2f}"
-        )
-        logger.info(
-            f"   Expected diff test: mean={expected_diff_test.mean():.2f}, std={expected_diff_test.std():.2f}"
+        logger.debug(
+            "Expected diff stats",
+            extra={
+                "train_mean": round(expected_diff_train.mean(), 2),
+                "train_std": round(expected_diff_train.std(), 2),
+                "test_mean": round(expected_diff_test.mean(), 2),
+                "test_std": round(expected_diff_test.std(), 2),
+            },
         )
 
         # Augment features
@@ -415,15 +441,20 @@ class StackedMarketModel:
         # Create sample weights for LightGBM
         sample_weights = np.array([weight_dict[int(y)] for y in y_binary_train])
 
-        logger.info(f"   Class weights: UNDER={weight_dict[0]:.3f}, OVER={weight_dict[1]:.3f}")
         logger.info(
-            f"   Class distribution: UNDER={sum(y_binary_train==0)}, OVER={sum(y_binary_train==1)}"
+            "Class balancing",
+            extra={
+                "under_weight": round(weight_dict[0], 3),
+                "over_weight": round(weight_dict[1], 3),
+                "under_count": int(sum(y_binary_train == 0)),
+                "over_count": int(sum(y_binary_train == 1)),
+            },
         )
 
         # ==========================
         # STEP 3: Train Classifier
         # ==========================
-        logger.info("\n🎯 HEAD 2: Training Classifier (P(actual > line) prediction)...")
+        logger.info("HEAD 2: Training Classifier (P(actual > line) prediction)")
 
         # Train classifier using sklearn API
         self.classifier = LGBMClassifier(
@@ -460,21 +491,28 @@ class StackedMarketModel:
         auc_test = roc_auc_score(y_binary_test, y_prob_test)
         logloss_test = log_loss(y_binary_test, y_prob_test)
 
-        logger.info(f"   Classifier Accuracy: train={acc_train:.3f}, test={acc_test:.3f}")
-        logger.info(f"   Classifier AUC: test={auc_test:.3f}")
-        logger.info(f"   Classifier Log Loss: test={logloss_test:.3f}")
-
-        logger.info("\n📋 Classification Report (Test Set):")
-        print(
-            classification_report(y_binary_test, y_pred_binary_test, target_names=["UNDER", "OVER"])
+        logger.info(
+            "Classifier metrics",
+            extra={
+                "accuracy_train": round(acc_train, 3),
+                "accuracy_test": round(acc_test, 3),
+                "auc_test": round(auc_test, 3),
+                "logloss_test": round(logloss_test, 3),
+            },
         )
+
+        # Log classification report as debug
+        report = classification_report(
+            y_binary_test, y_pred_binary_test, target_names=["UNDER", "OVER"], output_dict=True
+        )
+        logger.debug("Classification report", extra={"report": report})
 
         # ==========================
         # STEP 4: Isotonic Calibration (attempt1.md Step 5)
         # FIX: Train calibrator on held-out portion of TRAINING data, not test data
         # This prevents data leakage - calibrator never sees test data during fitting
         # ==========================
-        logger.info("\n📊 Calibrating classifier probabilities...")
+        logger.info("Calibrating classifier probabilities")
 
         # Split training predictions into calibration train/val (80/20)
         # Using shuffled split since we already have temporal split for train/test
@@ -502,7 +540,8 @@ class StackedMarketModel:
         self.calibrator.fit(y_prob_cal_val, y_binary_cal_val)
 
         logger.info(
-            f"   Calibrator fitted on {len(y_prob_cal_val)} samples from training data (no test data leakage)"
+            "Calibrator fitted (no test data leakage)",
+            extra={"calibration_samples": len(y_prob_cal_val)},
         )
 
         # Generate calibrated probabilities
@@ -514,14 +553,20 @@ class StackedMarketModel:
         brier_after = brier_score_loss(y_binary_test, y_prob_test_cal)
         auc_cal = roc_auc_score(y_binary_test, y_prob_test_cal)
 
-        logger.info(f"   Brier score: before={brier_before:.4f}, after={brier_after:.4f}")
-        logger.info(f"   Calibration improvement: {(brier_before - brier_after):.4f}")
-        logger.info(f"   AUC (calibrated): {auc_cal:.4f}")
+        logger.info(
+            "Calibration results",
+            extra={
+                "brier_before": round(brier_before, 4),
+                "brier_after": round(brier_after, 4),
+                "calibration_improvement": round(brier_before - brier_after, 4),
+                "auc_calibrated": round(auc_cal, 4),
+            },
+        )
 
         # ==========================
         # STEP 5: Ensemble Blending (attempt1.md Step 6)
         # ==========================
-        logger.info("\n🔀 Blending regressor and classifier predictions...")
+        logger.info("Blending regressor and classifier predictions")
 
         # Convert regressor residuals to probabilities using sigmoid
         residual_train = y_pred_train - line_train
@@ -548,10 +593,15 @@ class StackedMarketModel:
         auc_blend = roc_auc_score(y_binary_test, y_prob_blend_test)
         brier_blend = brier_score_loss(y_binary_test, y_prob_blend_test)
 
-        logger.info(f"   AUC (classifier only): {auc_cal:.4f}")
-        logger.info(f"   AUC (blended): {auc_blend:.4f}")
-        logger.info(f"   Blend improvement: {(auc_blend - auc_cal):.4f}")
-        logger.info(f"   Brier (blended): {brier_blend:.4f}")
+        logger.info(
+            "Blending results",
+            extra={
+                "auc_classifier_only": round(auc_cal, 4),
+                "auc_blended": round(auc_blend, 4),
+                "blend_improvement": round(auc_blend - auc_cal, 4),
+                "brier_blended": round(brier_blend, 4),
+            },
+        )
 
         # Store blend config
         self.blend_config = {
@@ -563,7 +613,6 @@ class StackedMarketModel:
         # ==========================
         # Feature Importance
         # ==========================
-        logger.info("\n📊 Top 20 Features (Regressor):")
         feature_importance_reg = (
             pd.DataFrame(
                 {
@@ -574,9 +623,9 @@ class StackedMarketModel:
             .sort_values("importance", ascending=False)
             .head(20)
         )
-        print(feature_importance_reg.to_string(index=False))
+        top_features_reg = feature_importance_reg.to_dict("records")
+        logger.info("Top 20 features (Regressor)", extra={"features": top_features_reg})
 
-        logger.info("\n📊 Top 20 Features (Classifier):")
         feature_importance_cls = (
             pd.DataFrame(
                 {
@@ -587,7 +636,8 @@ class StackedMarketModel:
             .sort_values("importance", ascending=False)
             .head(20)
         )
-        print(feature_importance_cls.to_string(index=False))
+        top_features_cls = feature_importance_cls.to_dict("records")
+        logger.info("Top 20 features (Classifier)", extra={"features": top_features_cls})
 
         return {
             "regressor": {
@@ -661,14 +711,21 @@ class StackedMarketModel:
         with open(output_path / f"{prefix}_metadata.json", "w") as f:
             json.dump(metadata, f, indent=2)
 
-        logger.info(f"\n✅ Models saved to: {output_path}")
-        logger.info(f"   - {prefix}_regressor.pkl")
-        logger.info(f"   - {prefix}_classifier.pkl")
-        logger.info(f"   - {prefix}_imputer.pkl")
-        logger.info(f"   - {prefix}_scaler.pkl")
-        logger.info(f"   - {prefix}_calibrator.pkl")
-        logger.info(f"   - {prefix}_features.pkl")
-        logger.info(f"   - {prefix}_metadata.json")
+        logger.info(
+            "Models saved successfully",
+            extra={
+                "output_dir": str(output_path),
+                "files": [
+                    f"{prefix}_regressor.pkl",
+                    f"{prefix}_classifier.pkl",
+                    f"{prefix}_imputer.pkl",
+                    f"{prefix}_scaler.pkl",
+                    f"{prefix}_calibrator.pkl",
+                    f"{prefix}_features.pkl",
+                    f"{prefix}_metadata.json",
+                ],
+            },
+        )
 
 
 def main():
@@ -712,6 +769,12 @@ def main():
         help="MLflow experiment name",
     )
 
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging",
+    )
+
     args = parser.parse_args()
 
     # Resolve paths
@@ -719,18 +782,26 @@ def main():
     data_path = project_root / args.data
     output_dir = project_root / args.output
 
+    # Setup logging
+    import logging
+
+    setup_logging(
+        "train_market",
+        level=logging.DEBUG if getattr(args, "debug", False) else logging.INFO,
+    )
+
     if not data_path.exists():
-        logger.error(f"❌ Dataset not found: {data_path}")
+        logger.error("Dataset not found", extra={"path": str(data_path)})
         return 1
 
     # Initialize MLflow tracker if enabled
     tracker: Optional[ExperimentTracker] = None
     if args.track and MLFLOW_AVAILABLE:
         tracker = ExperimentTracker(experiment_name=args.experiment_name)
-        logger.info(f"📊 MLflow tracking enabled: experiment='{args.experiment_name}'")
+        logger.info("MLflow tracking enabled", extra={"experiment": args.experiment_name})
     elif args.track and not MLFLOW_AVAILABLE:
         logger.warning(
-            "⚠️ MLflow tracking requested but not available. Install with: pip install mlflow"
+            "MLflow tracking requested but not available. Install with: pip install mlflow"
         )
 
     try:
@@ -763,9 +834,10 @@ def main():
             shuffle=False,  # Temporal split (no shuffle)
         )
 
-        logger.info(f"\n📊 Train/Test Split:")
-        logger.info(f"   Train: {len(X_train):,} samples")
-        logger.info(f"   Test: {len(X_test):,} samples")
+        logger.info(
+            "Train/Test split",
+            extra={"train_samples": len(X_train), "test_samples": len(X_test)},
+        )
 
         # Start MLflow run if tracking enabled
         mlflow_context = (
@@ -841,19 +913,18 @@ def main():
         # Save
         model.save(str(output_dir), metrics)
 
-        logger.info("\n" + "=" * 80)
-        logger.info(f"✅ SUCCESS - {args.market} stacked model trained and saved")
-        if tracker:
-            logger.info(f"📊 MLflow run logged to experiment: {args.experiment_name}")
-        logger.info("=" * 80)
+        logger.info(
+            "Training completed successfully",
+            extra={
+                "market": args.market,
+                "mlflow_experiment": args.experiment_name if tracker else None,
+            },
+        )
 
         return 0
 
     except Exception as e:
-        logger.error(f"\n❌ ERROR: {str(e)}")
-        import traceback
-
-        traceback.print_exc()
+        logger.error("Training failed", extra={"error": str(e)}, exc_info=True)
         return 1
 
 

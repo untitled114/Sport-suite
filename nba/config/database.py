@@ -23,7 +23,8 @@ import os
 from typing import Any, Dict
 
 # Default credentials from environment (REQUIRED - no hardcoded passwords)
-DB_DEFAULT_USER = os.getenv("NBA_DB_USER", os.getenv("DB_USER", "nba_user"))
+# Note: Production uses mlb_user for all databases (legacy naming)
+DB_DEFAULT_USER = os.getenv("NBA_DB_USER", os.getenv("DB_USER", "mlb_user"))
 DB_DEFAULT_PASSWORD = os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
 
 if DB_DEFAULT_PASSWORD is None:

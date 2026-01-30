@@ -51,8 +51,8 @@ DATA_FRESHNESS_POLICY = {
     # Game results freshness (for rolling stats updates)
     "max_game_result_age_hours": 48,  # Game results within 48 hours (tightened threshold)
     # Player stats freshness
-    "rolling_stats_required": True,  # Must have rolling stats (L3/L5/L10/L20)
-    "max_rolling_stats_age_days": 7,  # Rolling stats updated within 7 days
+    # NOTE: rolling_stats table removed - EMA calculated on-the-fly from player_game_logs
+    "rolling_stats_required": False,
     # Injury reports freshness
     "injuries_required": True,  # Must have injury data
     "max_injury_report_age_hours": 48,  # Injury reports updated within 48 hours (MAX per user request)

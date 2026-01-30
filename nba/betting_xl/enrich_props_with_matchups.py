@@ -548,9 +548,9 @@ class PropsMatchupEnricher:
         """
         logger.info(f"\nEnriching props for {self.game_date}...")
 
-        # Query props needing enrichment
+        # Query props needing enrichment - also get player_team from props table
         query = """
-        SELECT DISTINCT player_name
+        SELECT DISTINCT player_name, player_team
         FROM nba_props_xl
         WHERE game_date = %s
           AND (opponent_team IS NULL OR opponent_team = '' OR is_home IS NULL)
@@ -558,7 +558,7 @@ class PropsMatchupEnricher:
 
         cur = self.conn_intelligence.cursor()
         cur.execute(query, (self.game_date,))
-        players_needing_enrichment = [row[0] for row in cur.fetchall()]
+        players_needing_enrichment = [(row[0], row[1]) for row in cur.fetchall()]
 
         logger.info(f"Found {len(players_needing_enrichment)} players needing enrichment")
 
@@ -567,17 +567,21 @@ class PropsMatchupEnricher:
         missing_team_count = 0
         missing_game_count = 0
 
-        for player_name in players_needing_enrichment:
-            # Get player's team (try multiple variations)
-            # 1. Try original name
-            player_team = self.player_teams.get(player_name)
+        for player_name, prop_team in players_needing_enrichment:
+            # Get player's team (try multiple sources)
+            # 1. Use player_team from props table (from API) - normalize it
+            player_team = normalize_team_abbrev(prop_team) if prop_team else None
 
-            # 2. Try normalized name (remove periods, accents)
+            # 2. Try player_profile lookup (original name)
+            if not player_team:
+                player_team = self.player_teams.get(player_name)
+
+            # 3. Try normalized name (remove periods, accents)
             if not player_team:
                 normalized_name = self.normalize_name(player_name)
                 player_team = self.player_teams.get(normalized_name)
 
-            # 3. Try base name without suffix (for "Russell Westbrook III" → "Russell Westbrook")
+            # 4. Try base name without suffix (for "Russell Westbrook III" → "Russell Westbrook")
             if not player_team:
                 base_name = self.get_base_name(self.normalize_name(player_name))
                 player_team = self.player_teams.get(base_name)
