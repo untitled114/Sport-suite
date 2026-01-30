@@ -52,11 +52,13 @@ def aggregate_team_shooting_stats():
         games_cur = games_conn.cursor()
 
         # Get count of team game logs needing shooting stats
-        games_cur.execute("""
+        games_cur.execute(
+            """
             SELECT COUNT(*)
             FROM team_game_logs
             WHERE fg_made IS NULL
-        """)
+        """
+        )
         total_to_fix = games_cur.fetchone()[0]
 
         logger.info(f"Found {total_to_fix} team game logs needing shooting stats")
@@ -66,12 +68,14 @@ def aggregate_team_shooting_stats():
             return
 
         # Get team game logs that need shooting stats
-        games_cur.execute("""
+        games_cur.execute(
+            """
             SELECT game_log_id, team_abbrev, game_id, game_date
             FROM team_game_logs
             WHERE fg_made IS NULL
             ORDER BY game_date, game_id
-        """)
+        """
+        )
 
         team_logs = games_cur.fetchall()
         logger.info(f"Processing {len(team_logs)} team game logs...")

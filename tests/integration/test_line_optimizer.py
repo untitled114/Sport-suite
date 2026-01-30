@@ -87,10 +87,10 @@ class TestLineOptimizerFiltering:
         # Should have tiers defined
         assert "tiers" in TIER_CONFIG["POINTS"]
 
-        # Check REBOUNDS META tier
+        # Check REBOUNDS tiers (Goldmine, Standard)
         assert "REBOUNDS" in TIER_CONFIG
         rebounds_tiers = TIER_CONFIG["REBOUNDS"]["tiers"]
-        assert "META" in rebounds_tiers
+        assert "Goldmine" in rebounds_tiers
 
     def test_v3_tier_config_structure(self):
         """Test V3 tier config structure."""

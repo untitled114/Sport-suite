@@ -28,7 +28,6 @@ Usage:
 import argparse
 import json
 import logging
-import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -36,34 +35,11 @@ from typing import Any, Dict, List, Optional
 
 import psycopg2
 
+from nba.config.database import get_intelligence_db_config, get_players_db_config
+
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
-
-# Database configs
-DB_INTELLIGENCE = {
-    "host": os.getenv("NBA_INT_DB_HOST", "localhost"),
-    "port": int(os.getenv("NBA_INT_DB_PORT", 5539)),
-    "user": os.getenv(
-        "NBA_INT_DB_USER", os.getenv("NBA_DB_USER", os.getenv("DB_USER", "nba_user"))
-    ),
-    "password": os.getenv(
-        "NBA_INT_DB_PASSWORD", os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
-    ),
-    "database": os.getenv("NBA_INT_DB_NAME", "nba_intelligence"),
-}
-
-DB_PLAYERS = {
-    "host": os.getenv("NBA_PLAYERS_DB_HOST", "localhost"),
-    "port": int(os.getenv("NBA_PLAYERS_DB_PORT", 5536)),
-    "user": os.getenv(
-        "NBA_PLAYERS_DB_USER", os.getenv("NBA_DB_USER", os.getenv("DB_USER", "nba_user"))
-    ),
-    "password": os.getenv(
-        "NBA_PLAYERS_DB_PASSWORD", os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
-    ),
-    "database": os.getenv("NBA_PLAYERS_DB_NAME", "nba_players"),
-}
 
 
 # =============================================================================
@@ -361,8 +337,8 @@ class CheatsheetPicksGenerator:
 
     def connect(self):
         """Connect to databases."""
-        self.conn_intel = psycopg2.connect(**DB_INTELLIGENCE)
-        self.conn_players = psycopg2.connect(**DB_PLAYERS)
+        self.conn_intel = psycopg2.connect(**get_intelligence_db_config())
+        self.conn_players = psycopg2.connect(**get_players_db_config())
         logger.info("[OK] Connected to databases")
 
     def get_days_since_last_game(self, player_name: str) -> Optional[int]:

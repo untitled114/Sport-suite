@@ -184,10 +184,6 @@ system_banner() {
     divider
 }
 
-intro_sequence() {
-    # Clean, minimal intro
-    :
-}
 
 render_pick_section() {
     local label="$1"
@@ -415,16 +411,14 @@ get_props_count() {
 }
 
 ################################################################################
-# MORNING PROTOCOL
+# SHARED HELPERS
 ################################################################################
 
-morning_workflow() {
-    header "Morning Workflow" "Data collection & enrichment"
-
+fetch_and_load_props() {
     section "Fetching Props" "Multi-source collection from 7 sportsbooks"
     if verbose_run python3 "$SCRIPT_DIR/betting_xl/fetchers/fetch_all.py"; then
         echo ""
-        success "Props fetched successfully"
+        success "Props fetched"
     else
         error "Failed to fetch props"
         return 1
@@ -436,7 +430,7 @@ morning_workflow() {
         if verbose_run python3 "$SCRIPT_DIR/betting_xl/loaders/load_props_to_db.py" --file "$latest_props" --skip-mongodb; then
             echo ""
             local count=$(get_props_count)
-            success "Loaded ${count} props to database"
+            success "Loaded ${count} props"
         else
             error "Database load failed"
             return 1
@@ -445,16 +439,17 @@ morning_workflow() {
         error "No props file found"
         return 1
     fi
+}
 
-    section "Fetching Cheatsheet Data" "BettingPros recommendations"
+fetch_and_load_cheatsheet() {
+    section "Fetching Cheatsheet" "BettingPros projections & hit rates"
     if [ -f "$SCRIPT_DIR/betting_xl/fetchers/fetch_cheatsheet.py" ]; then
         if verbose_run python3 "$SCRIPT_DIR/betting_xl/fetchers/fetch_cheatsheet.py" --platform underdog; then
             echo ""
-            # Load to database
             latest_cheatsheet=$(ls -t "$SCRIPT_DIR/betting_xl/lines/cheatsheet_underdog_"*.json 2>/dev/null | head -1)
             if [ -f "$latest_cheatsheet" ]; then
                 if verbose_run python3 "$SCRIPT_DIR/betting_xl/loaders/load_cheatsheet_to_db.py" --file "$latest_cheatsheet"; then
-                    success "Cheatsheet data loaded"
+                    success "Cheatsheet loaded"
                 else
                     warning "Cheatsheet load failed"
                 fi
@@ -462,292 +457,64 @@ morning_workflow() {
         else
             warning "Cheatsheet fetch failed"
         fi
-    else
-        info "Cheatsheet fetcher not configured"
     fi
+}
 
-    section "Enriching Matchup Data" "Adding opponent & home/away context"
+fetch_vegas_lines() {
+    section "Fetching Vegas Lines" "Spreads & totals"
+    if [ -f "$SCRIPT_DIR/betting_xl/fetchers/fetch_vegas_lines.py" ]; then
+        if verbose_run python3 "$SCRIPT_DIR/betting_xl/fetchers/fetch_vegas_lines.py" --date "$DATE_STR" --save-to-db; then
+            success "Vegas lines loaded"
+        else
+            warning "Vegas lines fetch failed"
+        fi
+    fi
+}
 
+update_injuries() {
+    section "Updating Injuries" "Game-time decisions"
+    if [ -f "$SCRIPT_DIR/scripts/update_injuries_NOW.py" ]; then
+        if verbose_run python3 "$SCRIPT_DIR/scripts/update_injuries_NOW.py"; then
+            success "Injuries updated"
+        else
+            info "Injury update skipped"
+        fi
+    fi
+}
+
+enrich_matchups() {
+    section "Enriching Matchups" "Opponent & home/away context"
     if verbose_run python3 "$SCRIPT_DIR/betting_xl/enrich_props_with_matchups.py" --date "$DATE_STR"; then
-        success "Enriched $DATE_STR"
+        success "Matchups enriched"
     else
-        warning "Enrichment incomplete for $DATE_STR"
+        warning "Enrichment incomplete"
     fi
 
-    # Verify coverage for today
-    echo ""
     local coverage
     coverage=$(get_coverage)
-    coverage="${coverage:-0}"  # Default to 0 if empty
+    coverage="${coverage:-0}"
     if [ "${coverage%.*}" -ge 95 ]; then
-        success "Enrichment complete (${coverage}% coverage for today)"
+        success "Coverage: ${coverage}%"
     else
         warning "Coverage below target: ${coverage}%"
         return 1
     fi
-
-    section "Fetching Game Results" "Daily stats for completed games"
-    if [ -f "$SCRIPT_DIR/scripts/fetch_daily_stats.py" ]; then
-        # Fetch yesterday's games only (run daily = fresh data only)
-        if verbose_run python3 "$SCRIPT_DIR/scripts/fetch_daily_stats.py" --days 1; then
-            success "Game results updated"
-        else
-            info "No new games to process"
-        fi
-    else
-        info "Game fetch script not found"
-    fi
-
-    section "Populating Actual Values" "Update props with game results"
-    if [ -f "$SCRIPT_DIR/betting_xl/populate_actual_values.py" ]; then
-        # Populate last 7 days to catch any gaps (season filter in script)
-        if verbose_run python3 "$SCRIPT_DIR/betting_xl/populate_actual_values.py" --days 7; then
-            success "Actual values populated"
-        else
-            info "Actual values update skipped"
-        fi
-    else
-        info "Populate script not found"
-    fi
-
-    section "JSONCalibrator Status" "Checking probability calibration from recent results"
-    if [ -f "$SCRIPT_DIR/models/json_calibrator.py" ]; then
-        if python3 "$SCRIPT_DIR/models/json_calibrator.py" status --lookback 21 >> "$LOG_FILE" 2>&1; then
-            success "Calibrator status checked (21-day lookback)"
-        else
-            warning "Calibrator status check failed"
-        fi
-    else
-        info "JSONCalibrator not configured"
-    fi
-
-    section "Updating Injury Reports"
-    if [ -f "$SCRIPT_DIR/scripts/update_injuries_NOW.py" ]; then
-        if verbose_run python3 "$SCRIPT_DIR/scripts/update_injuries_NOW.py"; then
-            success "Injury data synchronized"
-        else
-            info "Injury update skipped"
-        fi
-    else
-        info "Injury tracker not configured"
-    fi
-
-    section "Loading Team Games" "Incremental from NBA API (1 API call)"
-    if [ -f "$SCRIPT_DIR/scripts/loaders/load_nba_games_incremental.py" ]; then
-        if verbose_run python3 "$SCRIPT_DIR/scripts/loaders/load_nba_games_incremental.py"; then
-            success "Team games loaded"
-        else
-            info "Team games load skipped"
-        fi
-    else
-        info "Team games loader not found"
-    fi
-
-    section "Updating Team Season Stats" "Pace/ratings for current season"
-    if [ -f "$SCRIPT_DIR/scripts/loaders/calculate_team_stats.py" ]; then
-        if verbose_run python3 "$SCRIPT_DIR/scripts/loaders/calculate_team_stats.py" --season "$CURRENT_SEASON"; then
-            success "Team season stats updated"
-        else
-            warning "Team season stats update skipped"
-        fi
-    else
-        info "Team season stats script not found"
-    fi
-
-    section "Loading Team Advanced Stats" "Real PACE from NBA API (1 API call)"
-    if [ -f "$SCRIPT_DIR/scripts/loaders/load_team_advanced_stats.py" ]; then
-        if verbose_run python3 "$SCRIPT_DIR/scripts/loaders/load_team_advanced_stats.py"; then
-            success "Team pace/ratings loaded from NBA API"
-        else
-            info "Team advanced stats load skipped"
-        fi
-    else
-        info "Team advanced stats loader not found"
-    fi
-
-    section "Fetching Vegas Lines" "Game spreads & totals for feature extraction"
-    if [ -f "$SCRIPT_DIR/betting_xl/fetchers/fetch_vegas_lines.py" ]; then
-        if verbose_run python3 "$SCRIPT_DIR/betting_xl/fetchers/fetch_vegas_lines.py" --date "$DATE_STR" --save-to-db; then
-            success "Vegas lines fetched and saved"
-        else
-            warning "Vegas lines fetch failed"
-        fi
-    else
-        info "Vegas lines fetcher not configured"
-    fi
-
-    # Rolling stats are now calculated on-the-fly by the feature extractor
-    # No separate update script needed
-
-    section "Updating Minutes Projections"
-    if [ -f "$SCRIPT_DIR/scripts/loaders/calculate_minutes_projections.py" ]; then
-        if verbose_run python3 "$SCRIPT_DIR/scripts/loaders/calculate_minutes_projections.py" --update; then
-            success "Minutes projections refreshed"
-        else
-            warning "Minutes projections update skipped"
-        fi
-    else
-        info "Minutes projections script not found"
-    fi
-
-    section "Updating Prop Performance History" "Bayesian hit rate calculations"
-    if [ -f "$SCRIPT_DIR/scripts/compute_prop_history.py" ]; then
-        # Incremental update for the current season - only process last 7 days of props
-        if verbose_run python3 "$SCRIPT_DIR/scripts/compute_prop_history.py" --season "$CURRENT_SEASON" --incremental --days 7; then
-            success "Prop performance history updated"
-        else
-            warning "Prop history update skipped"
-        fi
-    else
-        info "Prop history script not found"
-    fi
-
-    complete "Morning Workflow Complete" "Ready for evening predictions"
 }
 
-################################################################################
-# EVENING PROTOCOL
-################################################################################
-
-evening_workflow() {
-    header "Evening Workflow" "Generate predictions with hybrid dual-filter"
-
-    section "Quick Health Check" "Verifying system readiness"
-    if [ -f "$SCRIPT_DIR/betting_xl/health_check.py" ]; then
-        if python3 "$SCRIPT_DIR/betting_xl/health_check.py" --quick >> "$LOG_FILE" 2>&1; then
-            success "Health check passed"
-        else
-            warning "Health check failed - proceeding with caution"
-        fi
-    fi
-
-    section "Pre-Flight Checks" "Validating data quality"
-
-    if [ -f "$SCRIPT_DIR/betting_xl/config/data_freshness_validator.py" ]; then
-        if verbose_run python3 "$SCRIPT_DIR/betting_xl/config/data_freshness_validator.py"; then
-            success "Data freshness validated"
-        else
-            error "Stale data detected"
-            return 1
-        fi
-    fi
-
-    if [ -f "$SCRIPT_DIR/betting_xl/monitor.py" ]; then
-        if verbose_run python3 "$SCRIPT_DIR/betting_xl/monitor.py"; then
-            success "Performance thresholds OK"
-        else
-            error "Stop-loss triggered - system paused"
-            return 1
-        fi
-    fi
-
-    section "Refreshing Lines" "Capturing line movements"
-    if verbose_run python3 "$SCRIPT_DIR/betting_xl/fetchers/fetch_all.py"; then
-        echo ""
-        success "Player prop lines refreshed"
-    else
-        error "Props refresh failed"
-        return 1
-    fi
-
-    # Load refreshed props to database
-    latest_props=$(ls -t "$SCRIPT_DIR/betting_xl/lines/all_sources_"*.json 2>/dev/null | head -1)
-    if [ -f "$latest_props" ]; then
-        if verbose_run python3 "$SCRIPT_DIR/betting_xl/loaders/load_props_to_db.py" --file "$latest_props" --skip-mongodb; then
-            success "Refreshed props loaded to database"
-        fi
-    fi
-
-    # Refresh vegas lines (capture spread/total movements)
-    if [ -f "$SCRIPT_DIR/betting_xl/fetchers/fetch_vegas_lines.py" ]; then
-        if verbose_run python3 "$SCRIPT_DIR/betting_xl/fetchers/fetch_vegas_lines.py" --date "$DATE_STR" --save-to-db; then
-            success "Vegas lines refreshed"
-        else
-            warning "Vegas refresh failed"
-        fi
-    fi
-
-    # Refresh cheatsheet data (latest projections & hit rates)
-    if [ -f "$SCRIPT_DIR/betting_xl/fetchers/fetch_cheatsheet.py" ]; then
-        if verbose_run python3 "$SCRIPT_DIR/betting_xl/fetchers/fetch_cheatsheet.py" --platform underdog; then
-            latest_cheatsheet=$(ls -t "$SCRIPT_DIR/betting_xl/lines/cheatsheet_underdog_"*.json 2>/dev/null | head -1)
-            if [ -f "$latest_cheatsheet" ] && [ -f "$SCRIPT_DIR/betting_xl/loaders/load_cheatsheet_to_db.py" ]; then
-                if verbose_run python3 "$SCRIPT_DIR/betting_xl/loaders/load_cheatsheet_to_db.py" --file "$latest_cheatsheet"; then
-                    success "Cheatsheet data refreshed"
-                fi
-            fi
-        fi
-    fi
-
-    section "Enriching Matchup Data" "Adding opponent & home/away context"
-    if verbose_run python3 "$SCRIPT_DIR/betting_xl/enrich_props_with_matchups.py" --date "$DATE_STR"; then
-        echo ""
-        success "Matchup data updated"
-    fi
-
-    # Verify coverage AFTER enrichment
-    local coverage
-    coverage=$(get_coverage)
-    coverage="${coverage:-0}"  # Default to 0 if empty
-    if [ "${coverage%.*}" -ge 95 ]; then
-        success "Coverage ${coverage}% (target: 95%)"
-    else
-        error "Coverage ${coverage}% insufficient after enrichment"
-        return 1
-    fi
-
-    section "Generating Predictions" "Star + Goldmine + Standard (83% WR)"
+generate_all_predictions() {
+    section "Generating XL Predictions" "POINTS + REBOUNDS"
 
     if [ -f "$SCRIPT_DIR/betting_xl/generate_xl_predictions.py" ]; then
-        # Odds API tiers (replaces V3 model - Jan 25, 2026):
-        # TIER_1: mult<1.1 + R>=3 + opp>=11 + L5=100% → 100% WR
-        # TIER_2: mult<1.2 + R>=4 + opp>=16 + L5>=80% + L15>=60% → 100% WR
-        # XL model: Tier X (POINTS) + Tier A (REBOUNDS)
-        # REBOUNDS: Tier A with spread>=2.0 → 69% WR
         if python3 "$SCRIPT_DIR/betting_xl/generate_xl_predictions.py" --output "$PREDICTIONS_DIR/xl_picks_${DATE_STR}.json" --underdog-only >> "$LOG_FILE" 2>&1; then
             local pick_file="$PREDICTIONS_DIR/xl_picks_${DATE_STR}.json"
             if [ -f "$pick_file" ] && command -v jq >/dev/null 2>&1; then
                 local picks_count=$(jq '.total_picks // 0' "$pick_file")
-
-                echo ""
-                divider
-                echo ""
-                echo -e "  ${BOLD}${PRIMARY}Today's Picks${NC} | ${SOFT_WHITE}${DATE_STR}${NC}"
-                echo -e "  ${MUTED}Spread-based line shopping | Validated 83% WR${NC}"
-                echo ""
-                divider
-
-                render_pick_section "POINTS" "$POINTS_COLOR" '.picks[] | select(.stat_type == "POINTS")' "$pick_file"
-                render_pick_section "REBOUNDS" "$REBOUNDS_COLOR" '.picks[] | select(.stat_type == "REBOUNDS")' "$pick_file"
-                render_pick_section "OTHER MARKETS" "$ORANGE" '.picks[] | select(.stat_type != "POINTS" and .stat_type != "REBOUNDS")' "$pick_file"
-
-                divider
-                echo ""
-                echo -e "  ${BOLD}Summary${NC}"
-                echo -e "  ${MUTED}|${NC} Total Picks: ${BOLD}${picks_count}${NC}"
-
-                # Tier breakdown (spread-based tiers)
-                local star_tier=$(jq '.summary.by_tier.star_tier // 0' "$pick_file")
-                local goldmine=$(jq '.summary.by_tier.Goldmine // 0' "$pick_file")
-                local standard=$(jq '.summary.by_tier.Standard // 0' "$pick_file")
-
-                echo -e "  ${MUTED}|${NC} Star: ${BOLD}${SUCCESS}${star_tier}${NC}  ${MUTED}|${NC}  Goldmine: ${BOLD}${SUCCESS}${goldmine}${NC}  ${MUTED}|${NC}  Standard: ${BOLD}${SUCCESS}${standard}${NC}"
-                echo -e "  ${MUTED}|${NC} Strategy: Spread-based line shopping"
-                echo -e "  ${MUTED}+${NC} Validated: Star 83% | Goldmine 80% | Overall 83%"
-                echo ""
-                divider
-                echo ""
-
-                if [ "$picks_count" -lt 2 ]; then
-                    warning "Low volume - filtering may be too strict"
-                elif [ "$picks_count" -gt 10 ]; then
-                    warning "High volume - review filter settings"
-                fi
+                display_xl_picks "$pick_file" "$picks_count"
             else
-                success "Predictions generated"
+                success "XL predictions generated"
             fi
         else
-            error "Prediction generation failed"
+            error "XL prediction failed"
             return 1
         fi
     else
@@ -755,236 +522,322 @@ evening_workflow() {
         return 1
     fi
 
-    section "Generating Pro Picks" "TIGHTENED Jan 16 + Injury Filter (75-88% WR, ~8 picks/day)"
-
+    section "Generating Pro Picks" "Cheatsheet filters"
     if [ -f "$SCRIPT_DIR/betting_xl/generate_cheatsheet_picks.py" ]; then
         local pro_file="$PREDICTIONS_DIR/pro_picks_${DATE_STR}.json"
         if python3 "$SCRIPT_DIR/betting_xl/generate_cheatsheet_picks.py" --output "$pro_file" >> "$LOG_FILE" 2>&1; then
             if [ -f "$pro_file" ] && command -v jq >/dev/null 2>&1; then
-                local pro_picks_count=$(jq '.total_picks // 0' "$pro_file")
-
-                if [ "$pro_picks_count" -gt 0 ]; then
-                    # Get counts by stat type
-                    local points_count=$(jq '[.picks[] | select(.stat_type == "POINTS")] | length' "$pro_file")
-                    local assists_count=$(jq '[.picks[] | select(.stat_type == "ASSISTS")] | length' "$pro_file")
-
-                    # Display POINTS Pro picks
-                    if [ "$points_count" -gt 0 ]; then
-                        echo ""
-                        divider
-                        echo ""
-                        echo -e "  ${BOLD}${ORANGE}Pro Tier${NC} | ${MUTED}POINTS${NC}  ${MUTED}(${points_count} picks)${NC}"
-                        echo -e "  ${MUTED}Filter: Season 70%+ | EV 20%+ | No injury returns | Expected 88% WR${NC}"
-                        echo ""
-                        divider
-
-                        local points_picks
-                        points_picks=$(jq -c '.picks[] | select(.stat_type == "POINTS")' "$pro_file" 2>/dev/null)
-                        while IFS= read -r pick_json; do
-                            [ -z "$pick_json" ] && continue
-                            player=$(echo "$pick_json" | jq -r '.player_name')
-                            line=$(echo "$pick_json" | jq -r '.line')
-                            projection=$(echo "$pick_json" | jq -r '.projection | tonumber | . * 10 | round / 10')
-                            edge=$(echo "$pick_json" | jq -r '.projection_diff | tonumber | . * 10 | round / 10')
-                            l5_rate=$(echo "$pick_json" | jq -r '.hit_rate_l5 | tonumber | . * 100 | round')
-                            opp_rank=$(echo "$pick_json" | jq -r '.opp_rank')
-                            season_rate=$(echo "$pick_json" | jq -r '.hit_rate_season | tonumber | . * 100 | round')
-                            expected_wr=$(echo "$pick_json" | jq -r '.expected_wr')
-
-                            print_pro_pick "$player" "POINTS" "$line" "Underdog" "$projection" "$edge" "$l5_rate" "$opp_rank" "$season_rate" "$expected_wr"
-                        done <<< "$points_picks"
-                    fi
-
-                    # Display ASSISTS Pro picks
-                    if [ "$assists_count" -gt 0 ]; then
-                        echo ""
-                        divider
-                        echo ""
-                        echo -e "  ${BOLD}${ORANGE}Pro Tier${NC} | ${MUTED}ASSISTS${NC}  ${MUTED}(${assists_count} picks)${NC}"
-                        echo -e "  ${MUTED}Filter: L5/L15 60%+ | Opp 21+ | Rating 3+ | Expected 73% WR${NC}"
-                        echo ""
-                        divider
-
-                        local assists_picks
-                        assists_picks=$(jq -c '.picks[] | select(.stat_type == "ASSISTS")' "$pro_file" 2>/dev/null)
-                        while IFS= read -r pick_json; do
-                            [ -z "$pick_json" ] && continue
-                            player=$(echo "$pick_json" | jq -r '.player_name')
-                            line=$(echo "$pick_json" | jq -r '.line')
-                            projection=$(echo "$pick_json" | jq -r '.projection | tonumber | . * 10 | round / 10')
-                            edge=$(echo "$pick_json" | jq -r '.projection_diff | tonumber | . * 10 | round / 10')
-                            l5_rate=$(echo "$pick_json" | jq -r '.hit_rate_l5 | tonumber | . * 100 | round')
-                            opp_rank=$(echo "$pick_json" | jq -r '.opp_rank')
-                            season_rate=$(echo "$pick_json" | jq -r '.hit_rate_season | tonumber | . * 100 | round')
-                            expected_wr=$(echo "$pick_json" | jq -r '.expected_wr')
-
-                            print_pro_pick "$player" "ASSISTS" "$line" "Underdog" "$projection" "$edge" "$l5_rate" "$opp_rank" "$season_rate" "$expected_wr"
-                        done <<< "$assists_picks"
-                    fi
-
-                    # Display REBOUNDS Pro picks
-                    local rebounds_count=$(jq '[.picks[] | select(.stat_type == "REBOUNDS")] | length' "$pro_file")
-                    if [ "$rebounds_count" -gt 0 ]; then
-                        echo ""
-                        divider
-                        echo ""
-                        echo -e "  ${BOLD}${ORANGE}Pro Tier${NC} | ${MUTED}REBOUNDS${NC}  ${MUTED}(${rebounds_count} picks)${NC}"
-                        echo -e "  ${MUTED}Filter: L5/L15/Season 60%+ | Opp 11+ | Rating 3+ | Expected 80% WR${NC}"
-                        echo ""
-                        divider
-
-                        local rebounds_picks
-                        rebounds_picks=$(jq -c '.picks[] | select(.stat_type == "REBOUNDS")' "$pro_file" 2>/dev/null)
-                        while IFS= read -r pick_json; do
-                            [ -z "$pick_json" ] && continue
-                            player=$(echo "$pick_json" | jq -r '.player_name')
-                            line=$(echo "$pick_json" | jq -r '.line')
-                            projection=$(echo "$pick_json" | jq -r '.projection | tonumber | . * 10 | round / 10')
-                            edge=$(echo "$pick_json" | jq -r '.projection_diff | tonumber | . * 10 | round / 10')
-                            l5_rate=$(echo "$pick_json" | jq -r '.hit_rate_l5 | tonumber | . * 100 | round')
-                            opp_rank=$(echo "$pick_json" | jq -r '.opp_rank')
-                            season_rate=$(echo "$pick_json" | jq -r '.hit_rate_season | tonumber | . * 100 | round')
-                            expected_wr=$(echo "$pick_json" | jq -r '.expected_wr')
-
-                            print_pro_pick "$player" "REBOUNDS" "$line" "Underdog" "$projection" "$edge" "$l5_rate" "$opp_rank" "$season_rate" "$expected_wr"
-                        done <<< "$rebounds_picks"
-                    fi
-
-                    # Display COMBO STATS (PA, PR, RA) Pro picks
-                    local combo_count=$(jq '[.picks[] | select(.stat_type == "PA" or .stat_type == "PR" or .stat_type == "RA")] | length' "$pro_file")
-                    if [ "$combo_count" -gt 0 ]; then
-                        echo ""
-                        divider
-                        echo ""
-                        echo -e "  ${BOLD}${ORANGE}Pro Tier${NC} | ${MUTED}COMBO STATS${NC}  ${MUTED}(${combo_count} picks)${NC}"
-                        echo -e "  ${MUTED}Filter: L15 70%+ Opp 11+ (PA/PR) | Opp 16+ Diff 2+ (RA) | Expected 71-86% WR${NC}"
-                        echo ""
-                        divider
-
-                        local combo_picks
-                        combo_picks=$(jq -c '.picks[] | select(.stat_type == "PA" or .stat_type == "PR" or .stat_type == "RA")' "$pro_file" 2>/dev/null)
-                        while IFS= read -r pick_json; do
-                            [ -z "$pick_json" ] && continue
-                            player=$(echo "$pick_json" | jq -r '.player_name')
-                            stat_type=$(echo "$pick_json" | jq -r '.stat_type')
-                            line=$(echo "$pick_json" | jq -r '.line')
-                            projection=$(echo "$pick_json" | jq -r '.projection | tonumber | . * 10 | round / 10')
-                            edge=$(echo "$pick_json" | jq -r '.projection_diff | tonumber | . * 10 | round / 10')
-                            l5_rate=$(echo "$pick_json" | jq -r '.hit_rate_l5 | tonumber | . * 100 | round')
-                            opp_rank=$(echo "$pick_json" | jq -r '.opp_rank')
-                            season_rate=$(echo "$pick_json" | jq -r '.hit_rate_season | tonumber | . * 100 | round')
-                            expected_wr=$(echo "$pick_json" | jq -r '.expected_wr')
-
-                            # Expand stat type names
-                            case "$stat_type" in
-                                PA) stat_label="PTS+AST" ;;
-                                PR) stat_label="PTS+REB" ;;
-                                RA) stat_label="REB+AST" ;;
-                                *) stat_label="$stat_type" ;;
-                            esac
-
-                            print_pro_pick "$player" "$stat_label" "$line" "Underdog" "$projection" "$edge" "$l5_rate" "$opp_rank" "$season_rate" "$expected_wr"
-                        done <<< "$combo_picks"
-                    fi
-
-                    divider
-                    echo ""
-                    echo -e "  ${BOLD}Pro Summary${NC}"
-                    echo -e "  ${MUTED}|${NC} POINTS: ${BOLD}${points_count}${NC} picks (88% WR)"
-                    echo -e "  ${MUTED}|${NC} ASSISTS: ${BOLD}${assists_count}${NC} picks (73% WR)"
-                    echo -e "  ${MUTED}|${NC} REBOUNDS: ${BOLD}${rebounds_count}${NC} picks (80% WR)"
-                    echo -e "  ${MUTED}|${NC} COMBO: ${BOLD}${combo_count}${NC} picks (71-86% WR)"
-                    echo -e "  ${MUTED}|${NC} Total: ${BOLD}${pro_picks_count}${NC} picks"
-                    echo -e "  ${MUTED}+${NC} Tier: ${BOLD}${ORANGE}PRO${NC} (TIGHTENED Jan 16 + Injury Filter)"
-                    echo ""
-                    divider
-                    echo ""
-
-                    success "Pro picks generated"
+                local pro_count=$(jq '.total_picks // 0' "$pro_file")
+                if [ "$pro_count" -gt 0 ]; then
+                    display_pro_picks "$pro_file"
+                    success "Pro picks: ${pro_count}"
                 else
-                    info "No Pro picks today (filters not met)"
+                    info "No Pro picks (filters not met)"
                 fi
-            else
-                success "Pro picks generated"
             fi
         else
-            warning "Pro picks generation skipped"
+            warning "Pro picks skipped"
         fi
-    else
-        info "Pro generator not configured"
     fi
 
-    section "Generating Odds API Picks" "Pick6 multipliers + BettingPros features"
-
+    section "Generating Odds API Picks" "Pick6 multipliers"
     if [ -f "$SCRIPT_DIR/betting_xl/generate_odds_api_picks.py" ]; then
         local odds_file="$PREDICTIONS_DIR/odds_api_picks_${DATE_STR//-/}.json"
-        if python3 "$SCRIPT_DIR/betting_xl/generate_odds_api_picks.py" \
-            --date "$DATE_STR" \
-            --output "$odds_file" >> "$LOG_FILE" 2>&1; then
-
+        if python3 "$SCRIPT_DIR/betting_xl/generate_odds_api_picks.py" --date "$DATE_STR" --output "$odds_file" >> "$LOG_FILE" 2>&1; then
             if [ -f "$odds_file" ] && command -v jq >/dev/null 2>&1; then
-                local odds_picks_count=$(jq '.total_picks // 0' "$odds_file")
-
-                if [ "$odds_picks_count" -gt 0 ]; then
-                    echo ""
-                    divider
-                    echo ""
-                    echo -e "  ${BOLD}${ORANGE}Odds API Picks${NC}  ${MUTED}(${odds_picks_count} picks)${NC}"
-                    echo -e "  ${MUTED}Pick6 multipliers + BettingPros cheatsheet features${NC}"
-                    echo ""
-                    divider
-
-                    local odds_picks
-                    odds_picks=$(jq -c '.picks[]' "$odds_file" 2>/dev/null)
-                    while IFS= read -r pick_json; do
-                        [ -z "$pick_json" ] && continue
-                        player=$(echo "$pick_json" | jq -r '.player_name')
-                        market=$(echo "$pick_json" | jq -r '.stat_type')
-                        line=$(echo "$pick_json" | jq -r '.line')
-                        mult=$(echo "$pick_json" | jq -r '.pick6_multiplier | tonumber | . * 100 | round / 100')
-                        projection=$(echo "$pick_json" | jq -r '.projection | tonumber | . * 10 | round / 10')
-                        edge=$(echo "$pick_json" | jq -r '.projection_diff | tonumber | . * 10 | round / 10')
-                        l5_rate=$(echo "$pick_json" | jq -r '.hit_rate_l5 | tonumber | . * 100 | round')
-                        opp_rank=$(echo "$pick_json" | jq -r '.opp_rank')
-                        filter_name=$(echo "$pick_json" | jq -r '.filter_name')
-                        expected_wr=$(echo "$pick_json" | jq -r '.expected_wr')
-
-                        echo -e "  ${BOLD}${PLAYER_NAME_COLOR}${player}${NC}"
-                        echo -e "  ${MUTED}|${NC} ${market} OVER ${BOLD}${line}${NC} @ Pick6"
-                        printf "  ${MUTED}|${NC}  %-12s %b\n" "Multiplier:" "${BOLD}${ORANGE}${mult}x${NC}"
-                        printf "  ${MUTED}|${NC}  %-12s %b\n" "Projection:" "${BOLD}${projection}${NC}"
-                        [ "$edge" != "null" ] && [ -n "$edge" ] && printf "  ${MUTED}|${NC}  %-12s %b\n" "Edge:" "${BOLD}${SUCCESS}+${edge}${NC}"
-                        [ "$l5_rate" != "null" ] && [ -n "$l5_rate" ] && printf "  ${MUTED}|${NC}  %-12s %b\n" "L5 Hit Rate:" "${BOLD}${l5_rate}%${NC}"
-                        [ "$opp_rank" != "null" ] && [ -n "$opp_rank" ] && printf "  ${MUTED}|${NC}  %-12s %b\n" "Opp Defense:" "#${opp_rank}"
-                        printf "  ${MUTED}|${NC}  %-12s %b\n" "Filter:" "${filter_name}"
-                        printf "  ${MUTED}|${NC}  %-12s %b\n" "Expected WR:" "${BOLD}${SUCCESS}${expected_wr}%${NC}"
-                        echo ""
-                    done <<< "$odds_picks"
-
-                    divider
-                    echo ""
-                    echo -e "  ${BOLD}Odds API Summary${NC}"
-                    echo -e "  ${MUTED}|${NC} Total: ${BOLD}${odds_picks_count}${NC} picks"
-                    echo -e "  ${MUTED}+${NC} Source: Pick6 multipliers + BettingPros cheatsheet"
-                    echo ""
-                    divider
-                    echo ""
-
-                    success "Odds API picks generated"
+                local odds_count=$(jq '.total_picks // 0' "$odds_file")
+                if [ "$odds_count" -gt 0 ]; then
+                    display_odds_api_picks "$odds_file"
+                    success "Odds API picks: ${odds_count}"
                 else
-                    info "No Odds API picks today (filters not met)"
+                    info "No Odds API picks (filters not met)"
                 fi
-            else
-                success "Odds API picks generated"
             fi
         else
-            warning "Odds API picks generation skipped"
+            warning "Odds API picks skipped"
         fi
-    else
-        info "Odds API generator not configured"
+    fi
+}
+
+################################################################################
+# DISPLAY HELPERS FOR PREDICTIONS
+################################################################################
+
+display_xl_picks() {
+    local pick_file="$1"
+    local picks_count="$2"
+
+    echo ""
+    divider
+    echo ""
+    echo -e "  ${BOLD}${PRIMARY}XL Picks${NC} | ${SOFT_WHITE}${DATE_STR}${NC} | ${MUTED}${picks_count} picks${NC}"
+    echo ""
+    divider
+
+    render_pick_section "POINTS" "$POINTS_COLOR" '.picks[] | select(.stat_type == "POINTS")' "$pick_file"
+    render_pick_section "REBOUNDS" "$REBOUNDS_COLOR" '.picks[] | select(.stat_type == "REBOUNDS")' "$pick_file"
+
+    local star_tier=$(jq '.summary.by_tier.star_tier // 0' "$pick_file")
+    local goldmine=$(jq '.summary.by_tier.Goldmine // 0' "$pick_file")
+
+    divider
+    echo ""
+    echo -e "  ${MUTED}Star: ${star_tier} | Goldmine: ${goldmine} | Total: ${picks_count}${NC}"
+    echo ""
+}
+
+display_pro_picks() {
+    local pro_file="$1"
+
+    echo ""
+    divider
+    echo ""
+    echo -e "  ${BOLD}${ORANGE}Pro Picks${NC} | ${MUTED}Cheatsheet Filters${NC}"
+    echo ""
+    divider
+
+    # Display all Pro picks using unified format
+    local all_picks
+    all_picks=$(jq -c '.picks[]' "$pro_file" 2>/dev/null)
+    while IFS= read -r pick_json; do
+        [ -z "$pick_json" ] && continue
+        local player=$(echo "$pick_json" | jq -r '.player_name')
+        local market=$(echo "$pick_json" | jq -r '.stat_type')
+        local line=$(echo "$pick_json" | jq -r '.line')
+        local projection=$(echo "$pick_json" | jq -r '.projection | tonumber | . * 10 | round / 10')
+        local edge=$(echo "$pick_json" | jq -r '.projection_diff | tonumber | . * 10 | round / 10')
+        local l5_rate=$(echo "$pick_json" | jq -r '.hit_rate_l5 | tonumber | . * 100 | round')
+        local opp_rank=$(echo "$pick_json" | jq -r '.opp_rank')
+        local season_rate=$(echo "$pick_json" | jq -r '.hit_rate_season | tonumber | . * 100 | round')
+        local expected_wr=$(echo "$pick_json" | jq -r '.expected_wr')
+
+        # Expand combo stat names
+        case "$market" in
+            PA) market="PTS+AST" ;;
+            PR) market="PTS+REB" ;;
+            RA) market="REB+AST" ;;
+        esac
+
+        print_pro_pick "$player" "$market" "$line" "Underdog" "$projection" "$edge" "$l5_rate" "$opp_rank" "$season_rate" "$expected_wr"
+    done <<< "$all_picks"
+
+    divider
+    echo ""
+}
+
+display_odds_api_picks() {
+    local odds_file="$1"
+
+    echo ""
+    divider
+    echo ""
+    echo -e "  ${BOLD}${ORANGE}Odds API Picks${NC} | ${MUTED}Pick6 Multipliers${NC}"
+    echo ""
+    divider
+
+    local odds_picks
+    odds_picks=$(jq -c '.picks[]' "$odds_file" 2>/dev/null)
+    while IFS= read -r pick_json; do
+        [ -z "$pick_json" ] && continue
+        local player=$(echo "$pick_json" | jq -r '.player_name')
+        local market=$(echo "$pick_json" | jq -r '.stat_type')
+        local line=$(echo "$pick_json" | jq -r '.line')
+        local mult=$(echo "$pick_json" | jq -r '.pick6_multiplier | tonumber | . * 100 | round / 100')
+        local projection=$(echo "$pick_json" | jq -r '.projection | tonumber | . * 10 | round / 10')
+        local expected_wr=$(echo "$pick_json" | jq -r '.expected_wr')
+
+        echo -e "  ${BOLD}${PLAYER_NAME_COLOR}${player}${NC}"
+        echo -e "  ${MUTED}|${NC} ${market} OVER ${BOLD}${line}${NC} @ Pick6"
+        printf "  ${MUTED}|${NC}  %-12s %b\n" "Multiplier:" "${BOLD}${ORANGE}${mult}x${NC}"
+        printf "  ${MUTED}|${NC}  %-12s %b\n" "Projection:" "${BOLD}${projection}${NC}"
+        printf "  ${MUTED}|${NC}  %-12s %b\n" "Expected WR:" "${BOLD}${SUCCESS}${expected_wr}%${NC}"
+        echo ""
+    done <<< "$odds_picks"
+
+    divider
+    echo ""
+}
+
+################################################################################
+# FULL WORKFLOW (run once daily)
+################################################################################
+
+full_workflow() {
+    header "Full Workflow" "Complete data collection + predictions"
+
+    # Data collection
+    fetch_and_load_props || return 1
+    fetch_and_load_cheatsheet
+    enrich_matchups || return 1
+
+    section "Fetching Game Results" "Yesterday's stats"
+    if [ -f "$SCRIPT_DIR/scripts/fetch_daily_stats.py" ]; then
+        if verbose_run python3 "$SCRIPT_DIR/scripts/fetch_daily_stats.py" --days 1; then
+            success "Game results updated"
+        else
+            info "No new games"
+        fi
     fi
 
-    complete "Evening Workflow Complete" "Picks ready for review"
+    section "Populating Actuals" "Update props with results"
+    if [ -f "$SCRIPT_DIR/betting_xl/populate_actual_values.py" ]; then
+        if verbose_run python3 "$SCRIPT_DIR/betting_xl/populate_actual_values.py" --days 7; then
+            success "Actuals populated"
+        fi
+    fi
+
+    section "Calibrator Status" "21-day lookback"
+    if [ -f "$SCRIPT_DIR/models/json_calibrator.py" ]; then
+        if python3 "$SCRIPT_DIR/models/json_calibrator.py" status --lookback 21 >> "$LOG_FILE" 2>&1; then
+            success "Calibrator checked"
+        fi
+    fi
+
+    update_injuries
+
+    section "Loading Team Games" "NBA API"
+    if [ -f "$SCRIPT_DIR/scripts/loaders/load_nba_games_incremental.py" ]; then
+        if verbose_run python3 "$SCRIPT_DIR/scripts/loaders/load_nba_games_incremental.py"; then
+            success "Team games loaded"
+        fi
+    fi
+
+    section "Team Season Stats" "Pace/ratings"
+    if [ -f "$SCRIPT_DIR/scripts/loaders/calculate_team_stats.py" ]; then
+        if verbose_run python3 "$SCRIPT_DIR/scripts/loaders/calculate_team_stats.py" --season "$CURRENT_SEASON"; then
+            success "Team stats updated"
+        fi
+    fi
+
+    section "Team Advanced Stats" "NBA API PACE"
+    if [ -f "$SCRIPT_DIR/scripts/loaders/load_team_advanced_stats.py" ]; then
+        if verbose_run python3 "$SCRIPT_DIR/scripts/loaders/load_team_advanced_stats.py"; then
+            success "Advanced stats loaded"
+        fi
+    fi
+
+    fetch_vegas_lines
+
+    section "Minutes Projections"
+    if [ -f "$SCRIPT_DIR/scripts/loaders/calculate_minutes_projections.py" ]; then
+        if verbose_run python3 "$SCRIPT_DIR/scripts/loaders/calculate_minutes_projections.py" --update; then
+            success "Minutes projections updated"
+        fi
+    fi
+
+    section "Prop History" "Bayesian hit rates"
+    if [ -f "$SCRIPT_DIR/scripts/compute_prop_history.py" ]; then
+        if verbose_run python3 "$SCRIPT_DIR/scripts/compute_prop_history.py" --season "$CURRENT_SEASON" --incremental --days 7; then
+            success "Prop history updated"
+        fi
+    fi
+
+    # Generate predictions
+    generate_all_predictions
+
+    complete "Full Workflow Complete" "Predictions ready"
+}
+
+################################################################################
+# REFRESH WORKFLOW (run anytime for line movements)
+################################################################################
+
+refresh_workflow() {
+    header "Refresh Workflow" "Line movements + injury updates + predictions"
+
+    # Quick health check
+    if [ -f "$SCRIPT_DIR/betting_xl/health_check.py" ]; then
+        if python3 "$SCRIPT_DIR/betting_xl/health_check.py" --quick >> "$LOG_FILE" 2>&1; then
+            success "Health check passed"
+        else
+            warning "Health check issues - proceeding"
+        fi
+    fi
+
+    # Monitor (stop-loss check)
+    if [ -f "$SCRIPT_DIR/betting_xl/monitor.py" ]; then
+        if python3 "$SCRIPT_DIR/betting_xl/monitor.py" >> "$LOG_FILE" 2>&1; then
+            success "Stop-loss check passed"
+        else
+            error "Stop-loss triggered"
+            return 1
+        fi
+    fi
+
+    # Refresh data that changes intraday
+    fetch_and_load_props || return 1
+    fetch_and_load_cheatsheet
+    update_injuries
+    fetch_vegas_lines
+    enrich_matchups || return 1
+
+    # Generate predictions
+    generate_all_predictions
+
+    complete "Refresh Complete" "Predictions updated with latest lines"
+}
+
+################################################################################
+# INDIVIDUAL STEPS (for Airflow DAG tasks)
+################################################################################
+
+# These can be called individually: ./nba-predictions.sh step:fetch_props
+step_fetch_props() {
+    header "Step: Fetch Props"
+    fetch_and_load_props
+}
+
+step_fetch_cheatsheet() {
+    header "Step: Fetch Cheatsheet"
+    fetch_and_load_cheatsheet
+}
+
+step_enrich() {
+    header "Step: Enrich Matchups"
+    enrich_matchups
+}
+
+step_injuries() {
+    header "Step: Update Injuries"
+    update_injuries
+}
+
+step_vegas() {
+    header "Step: Fetch Vegas Lines"
+    fetch_vegas_lines
+}
+
+step_predict() {
+    header "Step: Generate Predictions"
+    generate_all_predictions
+}
+
+step_game_results() {
+    header "Step: Fetch Game Results"
+    if [ -f "$SCRIPT_DIR/scripts/fetch_daily_stats.py" ]; then
+        if verbose_run python3 "$SCRIPT_DIR/scripts/fetch_daily_stats.py" --days 1; then
+            success "Game results updated"
+        fi
+    fi
+}
+
+step_populate_actuals() {
+    header "Step: Populate Actuals"
+    if [ -f "$SCRIPT_DIR/betting_xl/populate_actual_values.py" ]; then
+        if verbose_run python3 "$SCRIPT_DIR/betting_xl/populate_actual_values.py" --days 7; then
+            success "Actuals populated"
+        fi
+    fi
+}
+
+step_team_stats() {
+    header "Step: Team Stats"
+    if [ -f "$SCRIPT_DIR/scripts/loaders/calculate_team_stats.py" ]; then
+        verbose_run python3 "$SCRIPT_DIR/scripts/loaders/calculate_team_stats.py" --season "$CURRENT_SEASON"
+    fi
+    if [ -f "$SCRIPT_DIR/scripts/loaders/load_team_advanced_stats.py" ]; then
+        verbose_run python3 "$SCRIPT_DIR/scripts/loaders/load_team_advanced_stats.py"
+    fi
 }
 
 ################################################################################
@@ -1166,11 +1019,32 @@ main() {
 
     # Quick commands that skip the intro
     if [ "$command" = "picks" ]; then
-        python3 "$SCRIPT_DIR/betting_xl/show_picks.py"
+        python3 "$SCRIPT_DIR/betting_xl/show_picks.py" "${all_args[@]:1}"
         exit 0
     fi
 
-    intro_sequence
+    # Step commands for Airflow (skip banner for cleaner logs)
+    if [[ "$command" == step:* ]]; then
+        local step_name="${command#step:}"
+        case "$step_name" in
+            fetch_props)     step_fetch_props ;;
+            fetch_cheatsheet) step_fetch_cheatsheet ;;
+            enrich)          step_enrich ;;
+            injuries)        step_injuries ;;
+            vegas)           step_vegas ;;
+            predict)         step_predict ;;
+            game_results)    step_game_results ;;
+            populate_actuals) step_populate_actuals ;;
+            team_stats)      step_team_stats ;;
+            *)
+                error "Unknown step: $step_name"
+                echo "Available steps: fetch_props, fetch_cheatsheet, enrich, injuries, vegas, predict, game_results, populate_actuals, team_stats"
+                exit 1
+                ;;
+        esac
+        exit $?
+    fi
+
     system_banner
 
     # Show debug status in banner if enabled
@@ -1180,11 +1054,11 @@ main() {
     fi
 
     case "$command" in
-        morning)
-            morning_workflow
+        ""|full|run)
+            full_workflow
             ;;
-        evening)
-            evening_workflow
+        refresh)
+            refresh_workflow
             ;;
         health)
             health_check
@@ -1237,36 +1111,55 @@ main() {
 
             validate_workflow "$val_date" "$val_end" "$val_verbose"
             ;;
+        help|--help|-h)
+            show_help
+            ;;
         *)
+            echo -e "${ERROR}Unknown command: ${command}${NC}"
             echo ""
-            echo -e "${BOLD}${BRIGHT_WHITE}Usage:${NC} $0 ${PRIMARY}[--debug] {morning|evening|health|validate|picks}${NC}"
-            echo ""
-            echo -e "  ${PRIMARY}morning${NC}   Data collection workflow (run ~10am EST)"
-            echo -e "            ${MUTED}|${NC} Fetch props from 7 sportsbooks"
-            echo -e "            ${MUTED}|${NC} Load to database"
-            echo -e "            ${MUTED}+${NC} Enrich matchup data"
-            echo ""
-            echo -e "  ${PRIMARY}evening${NC}   Generate predictions (run ~5pm EST)"
-            echo -e "            ${MUTED}|${NC} Pre-flight validation"
-            echo -e "            ${MUTED}|${NC} Refresh lines (capture movements)"
-            echo -e "            ${MUTED}+${NC} Run XL models & output picks"
-            echo ""
-            echo -e "  ${PRIMARY}validate${NC}  Validate pick performance (default: yesterday)"
-            echo -e "            ${MUTED}|${NC} --date YYYY-MM-DD   Single date"
-            echo -e "            ${MUTED}|${NC} --start/--end       Date range"
-            echo -e "            ${MUTED}|${NC} --7d                Last 7 days"
-            echo -e "            ${MUTED}|${NC} --30d               Last 30 days"
-            echo -e "            ${MUTED}+${NC} -v, --verbose       Show all picks"
-            echo ""
-            echo -e "  ${PRIMARY}picks${NC}     View today's picks"
-            echo -e "            ${MUTED}+${NC} Options: --xl-only, --pro-only, --date YYYY-MM-DD"
-            echo ""
-            echo -e "  ${PRIMARY}health${NC}    System diagnostics"
-            echo -e "            ${MUTED}+${NC} Check DB, models, props, coverage"
-            echo ""
+            show_help
             exit 1
             ;;
     esac
+}
+
+show_help() {
+    echo ""
+    echo -e "${BOLD}${BRIGHT_WHITE}NBA XL Prediction System${NC}"
+    echo ""
+    echo -e "${BOLD}Usage:${NC} $0 ${PRIMARY}[--debug] <command>${NC}"
+    echo ""
+    echo -e "${BOLD}Commands:${NC}"
+    echo ""
+    echo -e "  ${PRIMARY}(default)${NC}  Full workflow - all data + predictions"
+    echo -e "  ${PRIMARY}full${NC}       Same as default"
+    echo -e "             ${MUTED}Run once daily (morning/early afternoon)${NC}"
+    echo ""
+    echo -e "  ${PRIMARY}refresh${NC}    Quick refresh - lines + injuries + predictions"
+    echo -e "             ${MUTED}Run anytime to capture line movements${NC}"
+    echo ""
+    echo -e "  ${PRIMARY}validate${NC}   Check pick performance"
+    echo -e "             ${MUTED}--date YYYY-MM-DD   Single date${NC}"
+    echo -e "             ${MUTED}--start/--end       Date range${NC}"
+    echo -e "             ${MUTED}--7d / --30d        Last N days${NC}"
+    echo -e "             ${MUTED}-v, --verbose       Show all picks${NC}"
+    echo ""
+    echo -e "  ${PRIMARY}picks${NC}      View today's picks"
+    echo ""
+    echo -e "  ${PRIMARY}health${NC}     System diagnostics"
+    echo ""
+    echo -e "${BOLD}Airflow Steps:${NC} ${MUTED}(for DAG tasks)${NC}"
+    echo ""
+    echo -e "  ${PRIMARY}step:fetch_props${NC}      Fetch props from sportsbooks"
+    echo -e "  ${PRIMARY}step:fetch_cheatsheet${NC} Fetch BettingPros data"
+    echo -e "  ${PRIMARY}step:enrich${NC}           Add matchup context"
+    echo -e "  ${PRIMARY}step:injuries${NC}         Update injury reports"
+    echo -e "  ${PRIMARY}step:vegas${NC}            Fetch vegas lines"
+    echo -e "  ${PRIMARY}step:predict${NC}          Generate all predictions"
+    echo -e "  ${PRIMARY}step:game_results${NC}     Fetch yesterday's results"
+    echo -e "  ${PRIMARY}step:populate_actuals${NC} Update props with results"
+    echo -e "  ${PRIMARY}step:team_stats${NC}       Update team stats"
+    echo ""
 }
 
 main "$@"
