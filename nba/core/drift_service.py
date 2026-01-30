@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Set
 
 import numpy as np
 import pandas as pd
+import psycopg2
 
 from nba.core.reference_distributions import ReferenceDistributions
 
@@ -126,7 +127,7 @@ class DriftService:
                     f"Loaded reference distributions for {self.market} "
                     f"({len(self.reference.features)} features)"
                 )
-            except Exception as e:
+            except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
                 logger.warning(f"Failed to load reference distributions: {e}")
         else:
             logger.warning(f"Reference distributions not found: {path}")

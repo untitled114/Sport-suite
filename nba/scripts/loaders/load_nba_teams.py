@@ -48,7 +48,7 @@ class NBATeamLoader:
         try:
             self.conn = psycopg2.connect(**DB_CONFIG)
             logger.info("✅ Connected to nba_team database")
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"❌ Database connection failed: {e}")
             raise
 
@@ -195,7 +195,7 @@ class NBATeamLoader:
                     )
                 )
 
-            except Exception as e:
+            except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
                 logger.warning(f"Failed to load stats for {team['abbreviation']}: {e}")
                 continue
 
@@ -251,7 +251,7 @@ def main():
 
         logger.info("🎉 Team data loading complete!")
 
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         logger.error(f"❌ Loading failed: {e}")
         raise
     finally:

@@ -89,7 +89,7 @@ def load_team_advanced_stats(season: str = None) -> int:
 
         logger.info(f"API returned stats for {len(df)} entries")
 
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         logger.error(f"API call failed: {e}")
         return 0
 
@@ -142,7 +142,7 @@ def load_team_advanced_stats(season: str = None) -> int:
         conn.commit()
         logger.info(f"✅ Updated {updated} teams with real pace/ratings")
 
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         logger.error(f"Database error: {e}")
         conn.rollback()
         raise
@@ -171,7 +171,7 @@ def main():
         else:
             logger.warning("No teams updated")
         return 0
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         logger.error(f"❌ Failed: {e}")
         return 1
 

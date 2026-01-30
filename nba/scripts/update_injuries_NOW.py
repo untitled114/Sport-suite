@@ -58,7 +58,7 @@ def fetch_injuries():
         print(f"✅ Fetched {len(injuries)} injuries from ESPN\n")
         return injuries
 
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         print(f"❌ Failed to fetch: {e}")
         return []
 
@@ -138,7 +138,7 @@ def load_to_database(injuries):
                 print(f"   ✅ {inj_name}: {status}")
                 inserted += 1
 
-            except Exception as e:
+            except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
                 print(f"   ❌ Error inserting {inj.get('name', 'Unknown')}: {e}")
                 skipped += 1
                 continue
@@ -151,7 +151,7 @@ def load_to_database(injuries):
         if skipped > 0:
             print(f"   ⚠️  Skipped {skipped} (no player match)")
 
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         print(f"❌ Database error: {e}")
 
 

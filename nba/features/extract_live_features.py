@@ -152,8 +152,11 @@ class LiveFeatureExtractor:
             psycopg2.OperationalError: If database connection fails
         """
         self.conn = psycopg2.connect(**self.PLAYER_DB_CONFIG)
+        self.conn.autocommit = True  # Avoid stuck transactions on query errors
         self.games_conn = psycopg2.connect(**self.GAMES_DB_CONFIG)
+        self.games_conn.autocommit = True
         self.team_conn = psycopg2.connect(**self.TEAM_DB_CONFIG)
+        self.team_conn.autocommit = True
 
     def normalize_team_abbrev(self, team_abbrev):
         """
@@ -192,7 +195,7 @@ class LiveFeatureExtractor:
                 result = cur.fetchone()
                 if result:
                     return result[0]
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error getting player name for ID {player_id}: {e}")
 
         return None
@@ -257,7 +260,7 @@ class LiveFeatureExtractor:
                 result = cur.fetchone()
                 if result:
                     return result[0]
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error querying player game logs: {e}")
 
         # Fallback to player_profile if no game logs found
@@ -274,7 +277,7 @@ class LiveFeatureExtractor:
                 result = cur.fetchone()
                 if result:
                     return result[0]
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error querying player profile: {e}")
 
         return None
@@ -327,7 +330,7 @@ class LiveFeatureExtractor:
                     "def_rating": float(df["defensive_rating"].mean()),
                 }
                 return stats
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error querying team_game_logs for {team_abbrev}: {e}")
 
         # Fallback to season averages if insufficient game logs
@@ -350,7 +353,7 @@ class LiveFeatureExtractor:
                         "off_rating": float(result[1]) if result[1] else 110.0,
                         "def_rating": float(result[2]) if result[2] else 110.0,
                     }
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error querying team_season_stats for {team_abbrev}: {e}")
 
         # Last resort - return league average defaults (no warning, this is expected for some teams)
@@ -596,7 +599,7 @@ class LiveFeatureExtractor:
                 "h2h_L3_stat": h2h_L3_stat,
             }
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error querying H2H stats: {e}")
             return {"h2h_games": 0.0, "h2h_avg_stat": None, "h2h_L3_stat": None}
 
@@ -645,7 +648,7 @@ class LiveFeatureExtractor:
                 else:
                     # Never achieved milestone
                     return 999.0
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error querying milestone for {player_name}: {e}")
             return 999.0
 
@@ -756,7 +759,7 @@ class LiveFeatureExtractor:
 
             return {"home": home_streak, "away": away_streak}
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error calculating streaks for {player_name}: {e}")
             return {"home": 0.0, "away": 0.0}
 
@@ -799,7 +802,7 @@ class LiveFeatureExtractor:
                 cur.execute(query, (opponent_team, yesterday_date))
                 result = cur.fetchone()
                 return 1.0 if result and result[0] > 0 else 0.0
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error checking opponent back-to-back: {e}")
             return 0.0
 
@@ -840,7 +843,7 @@ class LiveFeatureExtractor:
             else:
                 # Not enough data, use season average
                 return self._get_opponent_season_def_rating(opponent_team)
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error querying opponent defensive efficiency: {e}")
             return 1.1
 
@@ -860,7 +863,7 @@ class LiveFeatureExtractor:
                 result = cur.fetchone()
                 if result and result[0] is not None:
                     return float(result[0] / 100.0)  # Convert to per possession
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error querying season defensive rating: {e}")
 
         return 1.1  # League average
@@ -909,7 +912,7 @@ class LiveFeatureExtractor:
             elif len(df) == 1:
                 # Only 1 game - blend with league average (less confidence)
                 return float((df["defensive_rating"].iloc[0] + 110.0) / 2.0)
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error querying opponent L3 def rating for {opponent_team}: {e}")
 
         # Fallback to team_season_stats
@@ -927,7 +930,7 @@ class LiveFeatureExtractor:
                 result = cur.fetchone()
                 if result and result[0] is not None:
                     return float(result[0])
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error querying season def rating for {opponent_team}: {e}")
 
         return 110.0  # League average fallback
@@ -1119,7 +1122,7 @@ class LiveFeatureExtractor:
                         "assist_rate": float(result[2]) if result[2] is not None else 0.15,
                         "true_shooting_pct": float(result[3]) if result[3] is not None else 0.55,
                     }
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error querying season stats for {player_name}: {e}")
 
         # Return defaults
@@ -1177,7 +1180,7 @@ class LiveFeatureExtractor:
                     "usage_allowed": float(usage_allowed),
                     "reb_allowed_per_pos": float(reb_allowed),
                 }
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error querying opponent stats: {e}")
 
         return {"usage_allowed": 0.20, "reb_allowed_per_pos": 0.10}
@@ -1234,7 +1237,7 @@ class LiveFeatureExtractor:
                     if usages:
                         return np.mean(usages)
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             pass  # Fail silently, return default
 
         return 0.20  # Default teammate usage rate
@@ -1286,7 +1289,7 @@ class LiveFeatureExtractor:
                 # Return ratio of games started
                 return float(games_started) / float(total_games)
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error calculating starter ratio for {player_name}: {e}")
             return 0.5
 
@@ -1364,7 +1367,7 @@ class LiveFeatureExtractor:
             int_conn.close()
             return result[0] if result else 0
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error getting injured teammates: {e}")
             return 0
 
@@ -1456,7 +1459,7 @@ class LiveFeatureExtractor:
             int_conn.close()
             return float(total_absences)
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error getting teammate absences for {player_name}: {e}")
             return 0.0
 
@@ -1499,7 +1502,7 @@ class LiveFeatureExtractor:
 
             return round(phase, 3)
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error calculating season phase: {e}")
             return 0.5  # Default to mid-season
 
@@ -1546,7 +1549,7 @@ class LiveFeatureExtractor:
 
             return 1.0 if is_prime else 0.0
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error calculating prime time flag: {e}")
             return 0.0  # Default to non-prime time
 
@@ -1588,7 +1591,7 @@ class LiveFeatureExtractor:
             # If played this opponent in last 30 days, it's a revenge game
             return 1.0 if matchup_count > 0 else 0.0
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error calculating revenge game flag: {e}")
             return 0.0  # Default to no revenge game
 

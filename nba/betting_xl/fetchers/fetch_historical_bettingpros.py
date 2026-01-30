@@ -36,6 +36,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import requests
+
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent))
 from base_fetcher import BaseFetcher
@@ -181,7 +183,7 @@ class HistoricalBettingProsFetcher(BaseFetcher):
         # Parse response
         try:
             data = response.json()
-        except Exception as e:
+        except (requests.RequestException, KeyError, ValueError, TypeError) as e:
             if self.verbose:
                 print(f"  ❌ JSON parse error: {e}")
             return []
@@ -292,7 +294,7 @@ class HistoricalBettingProsFetcher(BaseFetcher):
 
                 props.append(prop)
 
-            except Exception as e:
+            except (requests.RequestException, KeyError, ValueError, TypeError) as e:
                 if self.verbose:
                     print(f"  ⚠️  Error parsing prop: {e}")
                 continue

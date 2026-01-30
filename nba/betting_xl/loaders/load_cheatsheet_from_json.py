@@ -208,7 +208,7 @@ def load_to_database(props: list, batch_size: int = 1000):
             total_loaded += len(batch)
             if (i // batch_size) % 10 == 0:
                 logger.info(f"    Loaded {total_loaded:,}/{len(values):,} props...")
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"  Error loading batch at {i}: {e}")
             conn.rollback()
 

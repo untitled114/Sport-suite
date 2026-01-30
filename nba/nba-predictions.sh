@@ -217,13 +217,26 @@ render_pick_section() {
         best_line=$(echo "$pick_json" | jq -r '.best_line')
         best_book=$(echo "$pick_json" | jq -r '.best_book')
         edge=$(echo "$pick_json" | jq -r '.edge | tonumber | . * 100 | round / 100')
+        edge_pct=$(echo "$pick_json" | jq -r '.edge_pct | tonumber | . * 10 | round / 10')
         prediction=$(echo "$pick_json" | jq -r '.prediction | tonumber | . * 10 | round / 10')
         prob=$(echo "$pick_json" | jq -r '.p_over | tonumber | . * 1000 | round / 1000')
         opp_rank=$(echo "$pick_json" | jq -r '.opp_rank // ""')
         expected_wr=$(echo "$pick_json" | jq -r '.expected_wr // ""')
         filter_tier=$(echo "$pick_json" | jq -r '.filter_tier // "unknown"')
 
-        print_pick_card "$player" "$market" "$side" "$best_line" "$best_book" "$edge" "$prediction" "$prob" "$opp_rank" "$expected_wr" "$accent" "$filter_tier"
+        # New fields for better betting decisions
+        opponent=$(echo "$pick_json" | jq -r '.opponent_team // ""')
+        is_home=$(echo "$pick_json" | jq -r '.is_home // true')
+        consensus_line=$(echo "$pick_json" | jq -r '.consensus_line | tonumber | . * 10 | round / 10')
+        line_spread=$(echo "$pick_json" | jq -r '.line_spread | tonumber | . * 10 | round / 10')
+        num_books=$(echo "$pick_json" | jq -r '.num_books // 1')
+        confidence=$(echo "$pick_json" | jq -r '.confidence // "STANDARD"')
+
+        # Get line distribution summary (which books have which lines)
+        line_dist=$(echo "$pick_json" | jq -r '[.line_distribution[] | "\(.line):\(.count)"] | join(" | ")')
+        alt_books=$(echo "$pick_json" | jq -r '[.top_3_lines[1:3][] | .book] | join(", ")')
+
+        print_pick_card "$player" "$market" "$side" "$best_line" "$best_book" "$edge" "$edge_pct" "$prediction" "$prob" "$opp_rank" "$expected_wr" "$accent" "$filter_tier" "$opponent" "$is_home" "$consensus_line" "$line_spread" "$num_books" "$confidence" "$line_dist" "$alt_books"
     done <<< "$picks"
 }
 
@@ -234,46 +247,91 @@ print_pick_card() {
     local best_line="$4"
     local best_book="$5"
     local edge="$6"
-    local prediction="$7"
-    local prob="$8"
-    local opp_rank="$9"
-    local expected_wr="${10}"
-    local accent="${11:-$PRIMARY}"
-    local tier="${12:-unknown}"
+    local edge_pct="$7"
+    local prediction="$8"
+    local prob="$9"
+    local opp_rank="${10}"
+    local expected_wr="${11}"
+    local accent="${12:-$PRIMARY}"
+    local tier="${13:-unknown}"
+    local opponent="${14:-}"
+    local is_home="${15:-true}"
+    local consensus_line="${16:-}"
+    local line_spread="${17:-0}"
+    local num_books="${18:-1}"
+    local confidence="${19:-STANDARD}"
+    local line_dist="${20:-}"
+    local alt_books="${21:-}"
 
     # Convert probability to percentage
     local prob_pct=$(echo "$prob * 100" | bc -l | xargs printf "%.0f")
 
-    # Format expected WR from tier
-    local wr_display="N/A"
-    case "$tier" in
-        JAN_PRIME_OVER) wr_display="91.7%" ;;
-        JAN_CONFIDENT_OVER) wr_display="87.5%" ;;
-        JAN_LINE_OVER) wr_display="82.4%" ;;
-        V3_ELITE_OVER|V3_ELITE_UNDER) wr_display="85%" ;;
-        V3_STANDARD_OVER|V3_STANDARD_UNDER) wr_display="75%" ;;
-        STAR_V3|star_tier) wr_display="80%" ;;
-        X|tier_x) wr_display="75%" ;;
-        A|tier_a) wr_display="70%" ;;
-        *)
-            if [ -n "$expected_wr" ] && [ "$expected_wr" != "null" ]; then
-                wr_display="${expected_wr}%"
-            fi
-            ;;
-    esac
-
-    echo -e "  ${BOLD}${PLAYER_NAME_COLOR}${player}${NC}"
-    echo -e "  ${MUTED}|${NC} ${market} ${side} ${BOLD}${best_line}${NC} @ ${best_book}"
-    printf "  ${MUTED}|${NC}  %-12s %b\n" "Projection:" "${BOLD}${ORANGE}${prediction}${NC}"
-    printf "  ${MUTED}|${NC}  %-12s %b\n" "Edge:" "${BOLD}${SUCCESS}+${edge}${NC}"
-
-    # Opponent Defense Rank (if available)
-    if [ -n "$opp_rank" ] && [ "$opp_rank" != "null" ]; then
-        printf "  ${MUTED}|${NC}  %-12s %b\n" "Opp Defense:" "#${opp_rank}"
+    # Format matchup (@ AWAY or vs HOME)
+    local matchup=""
+    if [ -n "$opponent" ] && [ "$opponent" != "null" ]; then
+        if [ "$is_home" = "true" ]; then
+            matchup="vs ${opponent}"
+        else
+            matchup="@ ${opponent}"
+        fi
     fi
 
-    printf "  ${MUTED}|${NC}  %-12s %b\n" "Confidence:" "${BOLD}${prob_pct}%${NC}"
-    printf "  ${MUTED}|${NC}  %-12s %b\n" "Expected WR:" "${BOLD}${SUCCESS}${wr_display}${NC}"
+    # Confidence level color
+    local conf_color="$MUTED"
+    case "$confidence" in
+        HIGH) conf_color="$SUCCESS" ;;
+        MEDIUM) conf_color="$ORANGE" ;;
+        STANDARD) conf_color="$PRIMARY" ;;
+    esac
+
+    # Edge color (green if positive, red if negative)
+    local edge_color="$SUCCESS"
+    if (( $(echo "$edge < 0" | bc -l) )); then
+        edge_color="$ERROR"
+    fi
+
+    # Line spread indicator
+    local spread_indicator=""
+    if (( $(echo "$line_spread >= 2.0" | bc -l) )); then
+        spread_indicator=" ${BOLD}${SUCCESS}[GOLDMINE]${NC}"
+    elif (( $(echo "$line_spread >= 1.0" | bc -l) )); then
+        spread_indicator=" ${MUTED}[spread: ${line_spread}]${NC}"
+    fi
+
+    # Header: Player + Matchup
+    echo -e "  ${BOLD}${PLAYER_NAME_COLOR}${player}${NC}  ${MUTED}${matchup}${NC}"
+
+    # Main bet line
+    echo -e "  ${MUTED}|${NC} ${market} ${side} ${BOLD}${best_line}${NC} @ ${BOLD}${best_book}${NC}${spread_indicator}"
+
+    # Projection and edge
+    printf "  ${MUTED}|${NC}  %-14s %b  ${MUTED}|${NC}  %-8s %b\n" \
+        "Projection:" "${BOLD}${ORANGE}${prediction}${NC}" \
+        "Edge:" "${BOLD}${edge_color}${edge_pct}%${NC} ${MUTED}(${edge})${NC}"
+
+    # Consensus comparison and books count
+    if [ -n "$consensus_line" ] && [ "$consensus_line" != "null" ]; then
+        local consensus_diff=$(echo "$consensus_line - $best_line" | bc -l | xargs printf "%.1f")
+        printf "  ${MUTED}|${NC}  %-14s %b  ${MUTED}|${NC}  %-8s %b\n" \
+            "Consensus:" "${consensus_line}" \
+            "Books:" "${num_books} offering"
+    fi
+
+    # Confidence and P(over)
+    printf "  ${MUTED}|${NC}  %-14s %b  ${MUTED}|${NC}  %-8s %b\n" \
+        "Confidence:" "${BOLD}${conf_color}${confidence}${NC}" \
+        "P(over):" "${BOLD}${prob_pct}%${NC}"
+
+    # Line distribution (where else to bet)
+    if [ -n "$line_dist" ] && [ "$line_dist" != "null" ]; then
+        echo -e "  ${MUTED}|${NC}  ${MUTED}Lines:${NC} ${line_dist}"
+    fi
+
+    # Alternative books
+    if [ -n "$alt_books" ] && [ "$alt_books" != "null" ] && [ "$alt_books" != "" ]; then
+        echo -e "  ${MUTED}|${NC}  ${MUTED}Also at:${NC} ${alt_books}"
+    fi
+
     echo ""
 }
 
@@ -518,25 +576,8 @@ morning_workflow() {
         info "Vegas lines fetcher not configured"
     fi
 
-    section "Updating Rolling Stats"
-    local latest_game
-    latest_game=$(PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p 5536 -U "$DB_USER" -d nba_players -t -c \
-        "SELECT MAX(game_date) FROM player_game_logs WHERE season = $CURRENT_SEASON;" 2>/dev/null | tr -d ' ')
-    latest_game="${latest_game:-}"
-
-    local yesterday
-    yesterday=$(date -d 'yesterday' +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d)
-    if [ -n "$latest_game" ] && { [ "$latest_game" = "$DATE_STR" ] || [ "$latest_game" = "$yesterday" ]; }; then
-        if [ -f "$SCRIPT_DIR/scripts/update_rolling_stats_incremental.py" ]; then
-            if verbose_run python3 "$SCRIPT_DIR/scripts/update_rolling_stats_incremental.py"; then
-                success "Rolling statistics updated"
-            else
-                info "Stats update skipped"
-            fi
-        fi
-    else
-        info "No new games to process"
-    fi
+    # Rolling stats are now calculated on-the-fly by the feature extractor
+    # No separate update script needed
 
     section "Updating Minutes Projections"
     if [ -f "$SCRIPT_DIR/scripts/loaders/calculate_minutes_projections.py" ]; then
@@ -955,6 +996,62 @@ evening_workflow() {
 }
 
 ################################################################################
+# VALIDATE PICKS
+################################################################################
+
+validate_workflow() {
+    local target_date="${1:-}"
+    local end_date="${2:-}"
+    local verbose="${3:-}"
+
+    # Default to yesterday if no date provided
+    if [ -z "$target_date" ]; then
+        target_date=$(date -d 'yesterday' +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d)
+    fi
+
+    header "Pick Validation" "Comparing predictions vs actual results"
+
+    echo ""
+    echo -e "${BOLD}${INFO}* Validation Parameters${NC}"
+
+    if [ -n "$end_date" ]; then
+        info "Date Range: $target_date to $end_date"
+    else
+        info "Date: $target_date"
+    fi
+
+    echo ""
+
+    # Build command arguments
+    local cmd_args=""
+
+    if [ -n "$end_date" ]; then
+        cmd_args="--start-date $target_date --end-date $end_date"
+    else
+        cmd_args="--date $target_date"
+    fi
+
+    if [ "$verbose" = "1" ]; then
+        cmd_args="$cmd_args --verbose"
+    fi
+
+    # Run validation (from betting_xl directory so relative paths work)
+    section "Running Validation" "Checking XL, PRO, and ODDS_API picks"
+
+    pushd "$SCRIPT_DIR/betting_xl" > /dev/null
+    if python3 validate_predictions.py $cmd_args 2>&1 | tee -a "$LOG_FILE"; then
+        popd > /dev/null
+        echo ""
+        complete "Validation Complete" "Results displayed above"
+    else
+        popd > /dev/null
+        echo ""
+        error "Validation failed"
+        return 1
+    fi
+}
+
+################################################################################
 # HEALTH CHECK
 ################################################################################
 
@@ -1064,12 +1161,14 @@ health_check() {
 
 main() {
     local command="${1:-}"
+    local all_args=("$@")
 
     # Handle --debug flag
     if [ "$command" = "--debug" ]; then
         DEBUG=1
         export DEBUG
         command="${2:-}"
+        all_args=("${@:2}")  # Remove --debug from args
         echo -e "${YELLOW}[DEBUG] Debug mode enabled${NC}"
     fi
 
@@ -1098,9 +1197,57 @@ main() {
         health)
             health_check
             ;;
+        validate)
+            # Parse validate options
+            local val_date=""
+            local val_end=""
+            local val_verbose=""
+            local args=("${all_args[@]:1}")  # Remove 'validate' from args
+
+            local i=0
+            while [ $i -lt ${#args[@]} ]; do
+                case "${args[$i]}" in
+                    --date)
+                        val_date="${args[$((i+1))]}"
+                        i=$((i+2))
+                        ;;
+                    --start)
+                        val_date="${args[$((i+1))]}"
+                        i=$((i+2))
+                        ;;
+                    --end)
+                        val_end="${args[$((i+1))]}"
+                        i=$((i+2))
+                        ;;
+                    --verbose|-v)
+                        val_verbose="1"
+                        i=$((i+1))
+                        ;;
+                    --7d)
+                        val_date=$(date -d '7 days ago' +%Y-%m-%d 2>/dev/null || date -v-7d +%Y-%m-%d)
+                        val_end=$(date -d 'yesterday' +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d)
+                        i=$((i+1))
+                        ;;
+                    --30d)
+                        val_date=$(date -d '30 days ago' +%Y-%m-%d 2>/dev/null || date -v-30d +%Y-%m-%d)
+                        val_end=$(date -d 'yesterday' +%Y-%m-%d 2>/dev/null || date -v-1d +%Y-%m-%d)
+                        i=$((i+1))
+                        ;;
+                    *)
+                        # Assume it's a date if it looks like YYYY-MM-DD
+                        if [[ "${args[$i]}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+                            val_date="${args[$i]}"
+                        fi
+                        i=$((i+1))
+                        ;;
+                esac
+            done
+
+            validate_workflow "$val_date" "$val_end" "$val_verbose"
+            ;;
         *)
             echo ""
-            echo -e "${BOLD}${BRIGHT_WHITE}Usage:${NC} $0 ${PRIMARY}[--debug] {morning|evening|health|picks}${NC}"
+            echo -e "${BOLD}${BRIGHT_WHITE}Usage:${NC} $0 ${PRIMARY}[--debug] {morning|evening|health|validate|picks}${NC}"
             echo ""
             echo -e "  ${PRIMARY}morning${NC}   Data collection workflow (run ~10am EST)"
             echo -e "            ${MUTED}|${NC} Fetch props from 7 sportsbooks"
@@ -1111,6 +1258,13 @@ main() {
             echo -e "            ${MUTED}|${NC} Pre-flight validation"
             echo -e "            ${MUTED}|${NC} Refresh lines (capture movements)"
             echo -e "            ${MUTED}+${NC} Run XL models & output picks"
+            echo ""
+            echo -e "  ${PRIMARY}validate${NC}  Validate pick performance (default: yesterday)"
+            echo -e "            ${MUTED}|${NC} --date YYYY-MM-DD   Single date"
+            echo -e "            ${MUTED}|${NC} --start/--end       Date range"
+            echo -e "            ${MUTED}|${NC} --7d                Last 7 days"
+            echo -e "            ${MUTED}|${NC} --30d               Last 30 days"
+            echo -e "            ${MUTED}+${NC} -v, --verbose       Show all picks"
             echo ""
             echo -e "  ${PRIMARY}picks${NC}     View today's picks"
             echo -e "            ${MUTED}+${NC} Options: --xl-only, --pro-only, --date YYYY-MM-DD"

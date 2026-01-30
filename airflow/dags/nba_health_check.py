@@ -22,6 +22,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from callbacks import on_failure, on_retry, on_success
+
 from airflow.decorators import dag, task
 from airflow.models import Variable
 from airflow.utils.email import send_email
@@ -48,6 +50,9 @@ default_args = {
     "retries": 2,
     "retry_delay": timedelta(minutes=2),
     "execution_timeout": timedelta(minutes=10),
+    "on_success_callback": on_success,
+    "on_failure_callback": on_failure,
+    "on_retry_callback": on_retry,
 }
 
 
@@ -183,8 +188,6 @@ def nba_health_check():
     )
     def check_model_files() -> dict[str, Any]:
         """Verify XL model files exist and are valid."""
-        import glob
-
         models_path = Path(MODELS_DIR)
 
         if not models_path.exists():
@@ -198,9 +201,8 @@ def nba_health_check():
         json_files = list(models_path.glob("*.json"))
         json_count = len(json_files)
 
-        # Check minimum requirements
+        # Check minimum requirements (24 pkl files, 4 json metadata)
         expected_pkl = 24
-        expected_json = 4
 
         if pkl_count < expected_pkl:
             raise Exception(f"Missing model files: {pkl_count}/{expected_pkl} .pkl files")
@@ -494,15 +496,15 @@ def nba_health_check():
         print("NBA HEALTH CHECK SUMMARY")
         print("=" * 60)
         print(f"Database: {db_result.get('status', 'unknown')}")
-        print(
-            f"Models: {model_result.get('status', 'unknown')} ({model_result.get('pkl_count', 0)} files)"
-        )
-        print(
-            f"Data: {data_result.get('status', 'unknown')} ({data_result.get('props_count', 0)} props)"
-        )
-        print(
-            f"Disk: {disk_result.get('status', 'unknown')} ({disk_result.get('usage_percent', 0):.1f}%)"
-        )
+        model_status = model_result.get("status", "unknown")
+        model_files = model_result.get("pkl_count", 0)
+        print(f"Models: {model_status} ({model_files} files)")
+        data_status = data_result.get("status", "unknown")
+        props_count = data_result.get("props_count", 0)
+        print(f"Data: {data_status} ({props_count} props)")
+        disk_status = disk_result.get("status", "unknown")
+        disk_pct = disk_result.get("usage_percent", 0)
+        print(f"Disk: {disk_status} ({disk_pct:.1f}%)")
         print(f"API: {api_result.get('status', 'unknown')}")
         print("=" * 60)
         print(f"OVERALL: {overall_status.upper()}")
@@ -524,11 +526,31 @@ def nba_health_check():
             <h4>Check Results:</h4>
             <table border="1" cellpadding="5">
                 <tr><th>Component</th><th>Status</th><th>Details</th></tr>
-                <tr><td>Database</td><td>{db_result.get('status')}</td><td>4/4 connected</td></tr>
-                <tr><td>Models</td><td>{model_result.get('status')}</td><td>{model_result.get('pkl_count')} files</td></tr>
-                <tr><td>Data</td><td>{data_result.get('status')}</td><td>{data_result.get('props_count')} props, {data_result.get('coverage')}% coverage</td></tr>
-                <tr><td>Disk</td><td>{disk_result.get('status')}</td><td>{disk_result.get('usage_percent'):.1f}% used</td></tr>
-                <tr><td>API</td><td>{api_result.get('status')}</td><td>ESPN: {api_result.get('espn_api')}</td></tr>
+                <tr>
+                    <td>Database</td>
+                    <td>{db_result.get('status')}</td>
+                    <td>4/4 connected</td>
+                </tr>
+                <tr>
+                    <td>Models</td>
+                    <td>{model_result.get('status')}</td>
+                    <td>{model_result.get('pkl_count')} files</td>
+                </tr>
+                <tr>
+                    <td>Data</td>
+                    <td>{data_result.get('status')}</td>
+                    <td>{data_result.get('props_count')} props</td>
+                </tr>
+                <tr>
+                    <td>Disk</td>
+                    <td>{disk_result.get('status')}</td>
+                    <td>{disk_result.get('usage_percent'):.1f}% used</td>
+                </tr>
+                <tr>
+                    <td>API</td>
+                    <td>{api_result.get('status')}</td>
+                    <td>ESPN: {api_result.get('espn_api')}</td>
+                </tr>
             </table>
 
             {f"<h4>Warnings:</h4>{warnings_html}" if warnings_html else ""}
@@ -557,8 +579,8 @@ def nba_health_check():
     disk_check = check_disk_space()
     api_check = check_api_health()
 
-    # Aggregate results
-    report = send_health_report(
+    # Aggregate results (terminal task)
+    send_health_report(
         db_check,
         model_check,
         data_check,

@@ -166,7 +166,7 @@ def load_game_logs_for_season(season: str, min_minutes: int = 100, limit: int = 
                                 ),
                             )
                         )
-                    except Exception as e:
+                    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
                         logger.warning(f"  Skipping game log row: {e}")
                         continue
 
@@ -207,13 +207,13 @@ def load_game_logs_for_season(season: str, min_minutes: int = 100, limit: int = 
                     conn.commit()
                     logger.info(f"  ✅ Loaded {len(insert_data)} game logs")
                     total_loaded += len(insert_data)
-                except Exception as e:
+                except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
                     conn.rollback()
                     logger.error(f"  ❌ Insert failed: {e}")
                     failed += 1
                     continue
 
-            except Exception as e:
+            except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
                 logger.error(f"  ❌ Failed to load player {player_id}: {e}")
                 failed += 1
                 continue
@@ -254,7 +254,7 @@ def main():
         logger.info(f"")
         logger.info(f"🎉 All seasons complete! Total time: {elapsed/60:.1f} minutes")
 
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         logger.error(f"❌ Loading failed: {e}")
         raise
 

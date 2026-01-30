@@ -119,7 +119,7 @@ class DataFreshnessValidator:
             cursor.close()
             conn.close()
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             self.failures.append(f"Props freshness check failed: {str(e)}")
             result["status"] = "ERROR"
             result["error"] = str(e)
@@ -172,7 +172,7 @@ class DataFreshnessValidator:
             cursor.close()
             conn.close()
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             self.warnings.append(f"Game results check failed: {str(e)}")
             result["status"] = "ERROR"
             result["error"] = str(e)
@@ -228,7 +228,7 @@ class DataFreshnessValidator:
             cursor.close()
             conn.close()
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             self.warnings.append(f"Injury reports check failed: {str(e)}")
             result["status"] = "ERROR"
             result["error"] = str(e)
@@ -288,7 +288,7 @@ class DataFreshnessValidator:
                 self.warnings.append("Model trained date not found in registry")
                 result["status"] = "WARNING"
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             self.warnings.append(f"Model age check failed: {str(e)}")
             result["status"] = "ERROR"
             result["error"] = str(e)

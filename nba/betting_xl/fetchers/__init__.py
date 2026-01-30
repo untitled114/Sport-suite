@@ -5,9 +5,11 @@ Fetchers for props from multiple sportsbooks.
 
 Available Fetchers:
 - BettingProsFetcher: Fetch from BettingPros API (consensus lines)
-- [TODO] AllBooksFetcher: Scrape all books from BettingPros website
-- [TODO] UnderdogFetcher: Scrape Underdog cheat sheet
-- [TODO] PrizePicksFetcher: Scrape PrizePicks cheat sheet
+
+Planned Fetchers (see GitHub issues):
+- AllBooksFetcher: Scrape all books from BettingPros website
+- UnderdogFetcher: Scrape Underdog cheat sheet
+- PrizePicksFetcher: Scrape PrizePicks cheat sheet
 
 Usage:
     from nba.betting_xl.fetchers import BettingProsFetcher

@@ -211,7 +211,7 @@ class NameNormalizer:
             print(f"✓ Loaded name mapping from cache ({len(self.mapping):,} normalized names)")
             return True
 
-        except Exception as e:
+        except (KeyError, ValueError, TypeError) as e:
             print(f"Error loading cache: {e}, rebuilding...")
             return False
 
@@ -228,7 +228,7 @@ class NameNormalizer:
                     f,
                 )
             print(f"✓ Saved name mapping to cache")
-        except Exception as e:
+        except (KeyError, ValueError, TypeError) as e:
             print(f"Warning: Could not save cache: {e}")
 
     def _build_from_database(self):

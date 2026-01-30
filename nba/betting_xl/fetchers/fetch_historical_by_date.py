@@ -45,6 +45,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import requests
+
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent))
 from base_fetcher import BaseFetcher
@@ -160,7 +162,7 @@ class HistoricalDateFetcher(BaseFetcher):
                     # Empty response - this book has no historical data for this date
                     break
                 data = response.json()
-            except Exception as e:
+            except (requests.RequestException, KeyError, ValueError, TypeError) as e:
                 # Silently skip - expected for some books on historical dates
                 break
 
@@ -181,7 +183,7 @@ class HistoricalDateFetcher(BaseFetcher):
                     if parsed_prop:
                         all_props.append(parsed_prop)
 
-                except Exception as e:
+                except (requests.RequestException, KeyError, ValueError, TypeError) as e:
                     if self.verbose:
                         print(f"    ⚠️  Error parsing prop: {e}")
                     continue
@@ -365,7 +367,7 @@ class HistoricalDateFetcher(BaseFetcher):
 
             return prop
 
-        except Exception as e:
+        except (requests.RequestException, KeyError, ValueError, TypeError) as e:
             if self.verbose:
                 print(f"    ⚠️  Parse error: {e}")
             return None

@@ -4,6 +4,11 @@ Validate Predictions Against Actual Results
 =============================================
 Compare predicted picks against actual game results.
 
+Validates all pick sources:
+- XL picks (xl_picks_*.json) - ML model predictions
+- PRO picks (pro_picks_*.json) - BettingPros cheatsheet filters
+- ODDS_API picks (odds_api_picks_*.json) - Pick6 multiplier strategy
+
 Usage:
     # Single date
     python3 validate_predictions.py --date 2025-11-10
@@ -11,8 +16,11 @@ Usage:
     # Date range
     python3 validate_predictions.py --start-date 2025-11-01 --end-date 2025-11-30
 
-    # Backtest directory
-    python3 validate_predictions.py --start-date 2025-11-01 --end-date 2025-11-30 --backtest-dir backtest/
+    # Specific system only
+    python3 validate_predictions.py --start-date 2025-11-01 --end-date 2025-11-30 --system xl
+
+    # Verbose output with all picks
+    python3 validate_predictions.py --start-date 2025-11-01 --end-date 2025-11-30 --verbose
 """
 
 import argparse
@@ -33,91 +41,111 @@ DB_CONFIG = {
     "database": "nba_players",
 }
 
+# Stat type -> game log column mapping
+STAT_COLUMN_MAP = {
+    "POINTS": "points",
+    "REBOUNDS": "rebounds",
+    "ASSISTS": "assists",
+    "THREES": "three_pointers_made",
+}
 
-def load_predictions(date: str, predictions_dir: str = "predictions") -> Optional[Dict]:
-    """Load predictions JSON file (XL picks + Pro picks combined)"""
-    # Try both date formats (YYYY-MM-DD and YYYYMMDD)
+# Combo stat mappings
+COMBO_STAT_MAP = {
+    "PA": ("points", "assists"),
+    "PR": ("points", "rebounds"),
+    "RA": ("rebounds", "assists"),
+    "PRA": ("points", "rebounds", "assists"),
+}
+
+
+def load_all_predictions(date: str, predictions_dir: str = "predictions") -> Dict[str, List]:
+    """
+    Load predictions from all sources (XL, PRO, ODDS_API).
+
+    Returns dict with keys: 'xl', 'pro', 'odds_api', each containing list of picks.
+    """
     date_compact = date.replace("-", "")
+    result = {"xl": [], "pro": [], "odds_api": []}
 
-    # XL picks files
+    # XL picks
     xl_files = [
         Path(predictions_dir) / f"xl_picks_{date}.json",
         Path(predictions_dir) / f"xl_picks_{date_compact}.json",
-        Path(predictions_dir) / f"backtest_{date_compact}.json",
     ]
-
-    # Pro picks files
-    pro_files = [
-        Path(predictions_dir) / f"pro_picks_{date}.json",
-        Path(predictions_dir) / f"pro_picks_{date_compact}.json",
-    ]
-
-    combined_picks = []
-    combined_data = None
-    markets_enabled = set()
-
-    # Load XL picks
     for filepath in xl_files:
         if filepath.exists():
             try:
                 with open(filepath, "r") as f:
                     data = json.load(f)
-                    combined_data = data
-                    combined_picks.extend(data.get("picks", []))
-                    markets_enabled.update(data.get("markets_enabled", []))
-                    break
-            except json.JSONDecodeError:
+                for pick in data.get("picks", []):
+                    pick["_source"] = "xl"
+                    pick["_game_date"] = date
+                    pick["_filter"] = pick.get("filter_tier", "unknown")
+                    # Normalize field names
+                    if "best_line" not in pick and "line" in pick:
+                        pick["best_line"] = pick["line"]
+                    result["xl"].append(pick)
+                break
+            except (json.JSONDecodeError, KeyError):
                 continue
 
-    # Load Pro picks
+    # PRO picks
+    pro_files = [
+        Path(predictions_dir) / f"pro_picks_{date}.json",
+        Path(predictions_dir) / f"pro_picks_{date_compact}.json",
+    ]
     for filepath in pro_files:
         if filepath.exists():
             try:
                 with open(filepath, "r") as f:
-                    pro_data = json.load(f)
-                    # Convert pro picks format to match XL format
-                    for pick in pro_data.get("picks", []):
-                        converted_pick = {
-                            "player_name": pick.get("player_name"),
-                            "stat_type": pick.get("stat_type"),
-                            "side": pick.get("side", "OVER"),
-                            "best_line": pick.get("line"),
-                            "prediction": pick.get("projection", pick.get("line", 0)),
-                            "filter_tier": pick.get("filter_tier", "pro"),
-                            "source": "pro_tier",
-                        }
-                        combined_picks.append(converted_pick)
-                    markets_enabled.update([p["stat_type"] for p in pro_data.get("picks", [])])
-                    break
-            except json.JSONDecodeError:
+                    data = json.load(f)
+                for pick in data.get("picks", []):
+                    pick["_source"] = "pro"
+                    pick["_game_date"] = date
+                    pick["_filter"] = pick.get("filter_name", pick.get("filter_tier", "pro"))
+                    # Normalize field names
+                    if "best_line" not in pick:
+                        pick["best_line"] = pick.get("line")
+                    if "prediction" not in pick:
+                        pick["prediction"] = pick.get("projection", pick.get("line", 0))
+                    if "side" not in pick:
+                        pick["side"] = "OVER"
+                    result["pro"].append(pick)
+                break
+            except (json.JSONDecodeError, KeyError):
                 continue
 
-    if not combined_picks:
-        print(f"[ERROR] Predictions file not found for {date} in {predictions_dir}")
-        return None
+    # ODDS_API picks
+    odds_files = [
+        Path(predictions_dir) / f"odds_api_picks_{date}.json",
+        Path(predictions_dir) / f"odds_api_picks_{date_compact}.json",
+    ]
+    for filepath in odds_files:
+        if filepath.exists():
+            try:
+                with open(filepath, "r") as f:
+                    data = json.load(f)
+                for pick in data.get("picks", []):
+                    pick["_source"] = "odds_api"
+                    pick["_game_date"] = date
+                    pick["_filter"] = pick.get("filter_name", pick.get("source", "odds_api"))
+                    # Normalize field names
+                    if "best_line" not in pick:
+                        pick["best_line"] = pick.get("line")
+                    if "prediction" not in pick:
+                        pick["prediction"] = pick.get("projection", pick.get("line", 0))
+                    if "side" not in pick:
+                        pick["side"] = "OVER"
+                    result["odds_api"].append(pick)
+                break
+            except (json.JSONDecodeError, KeyError):
+                continue
 
-    # Build combined result
-    if combined_data:
-        combined_data["picks"] = combined_picks
-        combined_data["total_picks"] = len(combined_picks)
-        combined_data["markets_enabled"] = list(markets_enabled)
-    else:
-        combined_data = {
-            "date": date,
-            "generated_at": datetime.now().isoformat(),
-            "picks": combined_picks,
-            "total_picks": len(combined_picks),
-            "markets_enabled": list(markets_enabled),
-        }
-
-    return combined_data
+    return result
 
 
 def normalize_name(name: str) -> str:
     """Normalize player name for matching (remove Jr, III, etc.)"""
-    import re
-
-    # Remove common suffixes
     suffixes = [" Jr", " Jr.", " III", " II", " IV", " Sr", " Sr."]
     normalized = name.strip()
     for suffix in suffixes:
@@ -126,8 +154,8 @@ def normalize_name(name: str) -> str:
     return normalized.lower()
 
 
-def get_actual_results(date: str) -> Dict[Tuple[str, str], Dict]:
-    """Get actual game results from database"""
+def get_actual_results(date: str) -> Dict[str, Dict]:
+    """Get actual game results from database, keyed by normalized player name."""
     conn = psycopg2.connect(**DB_CONFIG)
     cursor = conn.cursor()
 
@@ -149,12 +177,22 @@ def get_actual_results(date: str) -> Dict[Tuple[str, str], Dict]:
 
     for row in cursor.fetchall():
         name, points, rebounds, assists, threes, opponent = row
-        # Store both original and normalized name keys
-        key = (name, opponent)
-        normalized_key = (normalize_name(name), opponent)
-        stats = {"POINTS": points, "REBOUNDS": rebounds, "ASSISTS": assists, "THREES": threes}
-        results[key] = stats
-        results[normalized_key] = stats  # Also store normalized version
+        normalized = normalize_name(name)
+
+        stats = {
+            "POINTS": points or 0,
+            "REBOUNDS": rebounds or 0,
+            "ASSISTS": assists or 0,
+            "THREES": threes or 0,
+            # Combo stats
+            "PA": (points or 0) + (assists or 0),
+            "PR": (points or 0) + (rebounds or 0),
+            "RA": (rebounds or 0) + (assists or 0),
+            "PRA": (points or 0) + (rebounds or 0) + (assists or 0),
+        }
+
+        results[normalized] = stats
+        results[name] = stats  # Also store original name
 
     cursor.close()
     conn.close()
@@ -163,50 +201,38 @@ def get_actual_results(date: str) -> Dict[Tuple[str, str], Dict]:
 
 
 def validate_pick(pick: Dict, actuals: Dict) -> Dict:
-    """Validate a single pick against actual results"""
-    player = pick["player_name"]
-    stat_type = pick["stat_type"]
-    line = pick["best_line"]
-    side = pick["side"]
-    prediction = pick["prediction"]
+    """Validate a single pick against actual results."""
+    player = pick.get("player_name", "Unknown")
+    stat_type = pick.get("stat_type", "POINTS")
+    line = pick.get("best_line") or pick.get("line") or 0
+    side = pick.get("side", "OVER")
+    prediction = pick.get("prediction", line)
 
-    # Try to find actual result (with and without opponent matching)
+    # Try to find actual result
     actual = None
-    matched_key = None
+    normalized_player = normalize_name(player)
 
-    # First try exact match
-    for key, stats in actuals.items():
-        if key[0] == player:
-            actual = stats.get(stat_type)
-            matched_key = key
-            break
-
-    # If not found, try normalized name (handles Jr, III, etc.)
-    if actual is None:
-        normalized_player = normalize_name(player)
-        for key, stats in actuals.items():
-            if key[0] == normalized_player:
-                actual = stats.get(stat_type)
-                matched_key = key
-                break
+    if normalized_player in actuals:
+        actual = actuals[normalized_player].get(stat_type)
+    elif player in actuals:
+        actual = actuals[player].get(stat_type)
 
     if actual is None:
-        return {"status": "NO_DATA", "reason": f"No game log found for {player} (DNP?)"}
+        return {"status": "NO_DATA", "reason": f"No game log for {player}"}
 
-    # Determine if pick won
+    # Determine outcome
     if side == "OVER":
-        result = actual > line
+        won = actual > line
         push = actual == line
     else:
-        result = actual < line
+        won = actual < line
         push = actual == line
 
-    # Calculate profit (assuming -110 odds)
     if push:
         profit = 0.0
         outcome = "PUSH"
-    elif result:
-        profit = 0.909  # Win 0.909 units on 1 unit bet at -110
+    elif won:
+        profit = 0.909  # Win at -110
         outcome = "WIN"
     else:
         profit = -1.0
@@ -220,297 +246,262 @@ def validate_pick(pick: Dict, actuals: Dict) -> Dict:
         "prediction": prediction,
         "diff": actual - line,
         "profit": profit,
-        "opponent": matched_key[1] if matched_key else "Unknown",
     }
 
 
-def print_validation_report(predictions: Dict, actuals: Dict):
-    """Print detailed validation report"""
-    print("\n" + "=" * 80)
-    print(f"VALIDATION REPORT: {predictions['date']}")
-    print("=" * 80)
-    print(f"Generated at: {predictions['generated_at']}")
-    print(f"Total picks: {predictions['total_picks']}")
-    print(f"Markets: {', '.join(predictions['markets_enabled'])}")
-    print()
-
-    results = []
-    by_market = {}
-
-    for pick in predictions["picks"]:
-        validation = validate_pick(pick, actuals)
-
-        market = pick["stat_type"]
-        if market not in by_market:
-            by_market[market] = {
-                "total": 0,
-                "wins": 0,
-                "losses": 0,
-                "pushes": 0,
-                "no_data": 0,
-                "profit": 0.0,
-            }
-
-        by_market[market]["total"] += 1
-
-        if validation["status"] == "NO_DATA":
-            by_market[market]["no_data"] += 1
-            print(f"[WARN]  {pick['player_name']:25s} {market:10s} {validation['reason']}")
-        else:
-            outcome = validation["outcome"]
-            if outcome == "WIN":
-                by_market[market]["wins"] += 1
-                emoji = "[OK]"
-            elif outcome == "LOSS":
-                by_market[market]["losses"] += 1
-                emoji = "[ERROR]"
-            else:
-                by_market[market]["pushes"] += 1
-                emoji = "[-]"
-
-            by_market[market]["profit"] += validation["profit"]
-
-            side_char = "O" if pick.get("side", "OVER") == "OVER" else "U"
-            print(
-                f"{emoji} {pick['player_name']:25s} {market:10s} "
-                f"{side_char}{validation['line']:4.1f} → {validation['actual']:2d} "
-                f"(pred: {validation['prediction']:5.1f}, diff: {validation['diff']:+4.1f})"
-            )
-
-            results.append(
-                {
-                    "player": pick["player_name"],
-                    "market": market,
-                    "outcome": outcome,
-                    "profit": validation["profit"],
-                    **validation,
-                }
-            )
-
-    print("\n" + "=" * 80)
-    print("SUMMARY BY MARKET")
-    print("=" * 80)
-
-    total_wins = 0
-    total_losses = 0
-    total_pushes = 0
-    total_profit = 0.0
-    total_bets = 0
-
-    for market in sorted(by_market.keys()):
-        stats = by_market[market]
-        validated = stats["total"] - stats["no_data"]
-
-        if validated > 0:
-            win_rate = (stats["wins"] / validated) * 100
-            roi = (stats["profit"] / validated) * 100
-
-            print(f"\n{market}:")
-            print(f"  Total: {validated} bets")
-            print(f"  Wins: {stats['wins']} ({win_rate:.1f}%)")
-            print(f"  Losses: {stats['losses']}")
-            print(f"  Pushes: {stats['pushes']}")
-            print(f"  Profit: {stats['profit']:+.2f} units")
-            print(f"  ROI: {roi:+.2f}%")
-
-            total_wins += stats["wins"]
-            total_losses += stats["losses"]
-            total_pushes += stats["pushes"]
-            total_profit += stats["profit"]
-            total_bets += validated
-
-    print("\n" + "=" * 80)
-    print("OVERALL RESULTS")
-    print("=" * 80)
-
-    if total_bets > 0:
-        overall_win_rate = (total_wins / total_bets) * 100
-        overall_roi = (total_profit / total_bets) * 100
-
-        print(f"Total bets: {total_bets}")
-        print(f"Wins: {total_wins} ({overall_win_rate:.1f}%)")
-        print(f"Losses: {total_losses}")
-        print(f"Pushes: {total_pushes}")
-        print(f"Total profit: {total_profit:+.2f} units")
-        print(f"ROI: {overall_roi:+.2f}%")
-
-        print("\n" + "=" * 80)
-        print("COMPARISON TO VALIDATION BENCHMARKS")
-        print("=" * 80)
-
-        for market in sorted(by_market.keys()):
-            stats = by_market[market]
-            validated = stats["total"] - stats["no_data"]
-
-            if validated > 0:
-                win_rate = (stats["wins"] / validated) * 100
-                roi = (stats["profit"] / validated) * 100
-
-                expected = predictions.get("expected_performance", {}).get(market, {})
-                expected_wr = expected.get("win_rate", 0)
-                expected_roi = expected.get("roi", 0)
-
-                wr_diff = win_rate - expected_wr
-                roi_diff = roi - expected_roi
-
-                wr_emoji = "[OK]" if wr_diff >= 0 else "[WARN]"
-                roi_emoji = "[OK]" if roi_diff >= 0 else "[WARN]"
-
-                print(f"\n{market}:")
-                print(
-                    f"  Win Rate: {win_rate:.1f}% (expected {expected_wr:.1f}%, {wr_emoji} {wr_diff:+.1f}%)"
-                )
-                print(
-                    f"  ROI: {roi:+.2f}% (expected {expected_roi:+.2f}%, {roi_emoji} {roi_diff:+.2f}%)"
-                )
-
-        # Overall line shopping benchmark
-        expected_overall = predictions.get("expected_performance", {}).get(
-            "overall_line_shopping", {}
-        )
-        if expected_overall:
-            expected_wr = expected_overall.get("win_rate", 0)
-            expected_roi = expected_overall.get("roi", 0)
-
-            wr_diff = overall_win_rate - expected_wr
-            roi_diff = overall_roi - expected_roi
-
-            wr_emoji = "[OK]" if wr_diff >= 0 else "[WARN]"
-            roi_emoji = "[OK]" if roi_diff >= 0 else "[WARN]"
-
-            print(f"\nOVERALL:")
-            print(
-                f"  Win Rate: {overall_win_rate:.1f}% (expected {expected_wr:.1f}%, {wr_emoji} {wr_diff:+.1f}%)"
-            )
-            print(
-                f"  ROI: {overall_roi:+.2f}% (expected {expected_roi:+.2f}%, {roi_emoji} {roi_diff:+.2f}%)"
-            )
-
-    print("\n" + "=" * 80)
-
-
 def validate_date_range(
-    start_date: str, end_date: str, predictions_dir: str = "predictions"
+    start_date: str,
+    end_date: str,
+    predictions_dir: str = "predictions",
+    system_filter: Optional[str] = None,
+    verbose: bool = False,
 ) -> Dict:
     """
-    Validate predictions across a date range and aggregate results.
-
-    Returns aggregated results dictionary.
+    Validate predictions across a date range with detailed breakdowns.
     """
     start = datetime.strptime(start_date, "%Y-%m-%d").date()
     end = datetime.strptime(end_date, "%Y-%m-%d").date()
 
-    # Aggregate stats
-    total_wins = 0
-    total_losses = 0
-    total_pushes = 0
-    total_profit = 0.0
-    by_market: Dict[str, Dict] = defaultdict(
-        lambda: {"wins": 0, "losses": 0, "pushes": 0, "profit": 0.0}
+    # Aggregate stats by system
+    by_system: Dict[str, Dict] = defaultdict(
+        lambda: {"wins": 0, "losses": 0, "pushes": 0, "profit": 0.0, "picks": []}
     )
-    daily_results = []
+
+    # Aggregate stats by system + market
+    by_system_market: Dict[str, Dict[str, Dict]] = defaultdict(
+        lambda: defaultdict(lambda: {"wins": 0, "losses": 0, "pushes": 0, "profit": 0.0})
+    )
+
+    # Aggregate stats by filter
+    by_filter: Dict[str, Dict] = defaultdict(
+        lambda: {"wins": 0, "losses": 0, "pushes": 0, "profit": 0.0, "system": None}
+    )
+
+    # Daily results by system
+    daily_by_system: Dict[str, List] = defaultdict(list)
+
+    all_picks = []
 
     current = start
     while current <= end:
         date_str = current.strftime("%Y-%m-%d")
 
-        predictions = load_predictions(date_str, predictions_dir)
-        if not predictions:
-            daily_results.append({"date": date_str, "status": "NO_PREDICTIONS"})
-            current += timedelta(days=1)
-            continue
-
+        predictions = load_all_predictions(date_str, predictions_dir)
         actuals = get_actual_results(date_str)
+
         if not actuals:
-            daily_results.append({"date": date_str, "status": "NO_ACTUALS"})
             current += timedelta(days=1)
             continue
 
-        day_wins = 0
-        day_losses = 0
-        day_pushes = 0
-        day_profit = 0.0
+        for system, picks in predictions.items():
+            if system_filter and system != system_filter:
+                continue
 
-        for pick in predictions.get("picks", []):
-            validation = validate_pick(pick, actuals)
-            market = pick["stat_type"]
+            day_wins = 0
+            day_losses = 0
+            day_profit = 0.0
 
-            if validation["status"] == "VALIDATED":
+            for pick in picks:
+                validation = validate_pick(pick, actuals)
+
+                if validation["status"] != "VALIDATED":
+                    continue
+
+                market = pick.get("stat_type", "UNKNOWN")
+                filter_name = pick.get("_filter", "unknown")
                 outcome = validation["outcome"]
+                profit = validation["profit"]
+
+                # Store pick detail
+                pick_detail = {
+                    "date": date_str,
+                    "player": pick.get("player_name"),
+                    "market": market,
+                    "side": pick.get("side", "OVER"),
+                    "line": validation["line"],
+                    "actual": validation["actual"],
+                    "prediction": validation["prediction"],
+                    "outcome": outcome,
+                    "profit": profit,
+                    "system": system,
+                    "filter": filter_name,
+                }
+                all_picks.append(pick_detail)
+                by_system[system]["picks"].append(pick_detail)
+
+                # Update aggregates
                 if outcome == "WIN":
+                    by_system[system]["wins"] += 1
+                    by_system_market[system][market]["wins"] += 1
+                    by_filter[filter_name]["wins"] += 1
                     day_wins += 1
-                    by_market[market]["wins"] += 1
                 elif outcome == "LOSS":
+                    by_system[system]["losses"] += 1
+                    by_system_market[system][market]["losses"] += 1
+                    by_filter[filter_name]["losses"] += 1
                     day_losses += 1
-                    by_market[market]["losses"] += 1
-                else:
-                    day_pushes += 1
-                    by_market[market]["pushes"] += 1
+                else:  # PUSH
+                    by_system[system]["pushes"] += 1
+                    by_system_market[system][market]["pushes"] += 1
+                    by_filter[filter_name]["pushes"] += 1
 
-                day_profit += validation["profit"]
-                by_market[market]["profit"] += validation["profit"]
+                by_system[system]["profit"] += profit
+                by_system_market[system][market]["profit"] += profit
+                by_filter[filter_name]["profit"] += profit
+                by_filter[filter_name]["system"] = system
+                day_profit += profit
 
-        total_wins += day_wins
-        total_losses += day_losses
-        total_pushes += day_pushes
-        total_profit += day_profit
-
-        day_total = day_wins + day_losses
-        day_wr = (day_wins / day_total * 100) if day_total > 0 else 0
-
-        daily_results.append(
-            {
-                "date": date_str,
-                "wins": day_wins,
-                "losses": day_losses,
-                "pushes": day_pushes,
-                "win_rate": day_wr,
-                "profit": day_profit,
-            }
-        )
-
-        print(
-            f"{date_str}: {day_wins}W / {day_losses}L ({day_wr:.1f}%) | Profit: {day_profit:+.2f}u"
-        )
+            if day_wins + day_losses > 0:
+                daily_by_system[system].append(
+                    {
+                        "date": date_str,
+                        "wins": day_wins,
+                        "losses": day_losses,
+                        "profit": day_profit,
+                    }
+                )
 
         current += timedelta(days=1)
 
-    # Print summary
-    print("\n" + "=" * 80)
-    print(f"AGGREGATE RESULTS: {start_date} to {end_date}")
-    print("=" * 80)
+    # Print results
+    print("\n" + "=" * 90)
+    print(f"PICK VALIDATION REPORT: {start_date} to {end_date}")
+    print("=" * 90)
 
-    total_bets = total_wins + total_losses
-    overall_wr = (total_wins / total_bets * 100) if total_bets > 0 else 0
-    overall_roi = (total_profit / total_bets * 100) if total_bets > 0 else 0
+    # Overall summary by system
+    print("\n" + "-" * 90)
+    print("RESULTS BY SYSTEM")
+    print("-" * 90)
+    print(
+        f"{'System':<12} {'Graded':<8} {'W':<6} {'L':<6} {'P':<4} {'Win Rate':<10} {'ROI':<10} {'Profit':<10}"
+    )
+    print("-" * 90)
 
-    print(f"\nTotal bets: {total_bets}")
-    print(f"Wins: {total_wins} ({overall_wr:.1f}%)")
-    print(f"Losses: {total_losses}")
-    print(f"Pushes: {total_pushes}")
-    print(f"Total profit: {total_profit:+.2f} units")
-    print(f"ROI: {overall_roi:+.2f}%")
+    total_wins = 0
+    total_losses = 0
+    total_pushes = 0
+    total_profit = 0.0
 
-    print("\n--- BY MARKET ---")
-    for market in ["POINTS", "REBOUNDS", "THREES", "ASSISTS"]:
-        if market in by_market:
-            stats = by_market[market]
-            wins, losses = stats["wins"], stats["losses"]
-            wr = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0
-            roi = (stats["profit"] / (wins + losses) * 100) if (wins + losses) > 0 else 0
-            print(f"{market:10}: {wins}W / {losses}L = {wr:.1f}% WR | ROI: {roi:+.1f}%")
+    for system in ["xl", "pro", "odds_api"]:
+        stats = by_system[system]
+        wins, losses, pushes = stats["wins"], stats["losses"], stats["pushes"]
+        graded = wins + losses + pushes
+        profit = stats["profit"]
 
-    print("=" * 80)
+        if graded > 0:
+            wr = wins / graded * 100
+            roi = profit / graded * 100
+            print(
+                f"{system.upper():<12} {graded:<8} {wins:<6} {losses:<6} {pushes:<4} {wr:>6.1f}%    {roi:>+6.1f}%    {profit:>+.2f}u"
+            )
+
+            total_wins += wins
+            total_losses += losses
+            total_pushes += pushes
+            total_profit += profit
+
+    # Total
+    total_graded = total_wins + total_losses + total_pushes
+    if total_graded > 0:
+        total_wr = total_wins / total_graded * 100
+        total_roi = total_profit / total_graded * 100
+        print("-" * 90)
+        print(
+            f"{'TOTAL':<12} {total_graded:<8} {total_wins:<6} {total_losses:<6} {total_pushes:<4} {total_wr:>6.1f}%    {total_roi:>+6.1f}%    {total_profit:>+.2f}u"
+        )
+
+    # Results by system + market
+    print("\n" + "-" * 90)
+    print("RESULTS BY SYSTEM + MARKET")
+    print("-" * 90)
+    print(f"{'System':<10} {'Market':<12} {'W':<5} {'L':<5} {'P':<4} {'Win Rate':<10} {'ROI':<10}")
+    print("-" * 90)
+
+    for system in ["xl", "pro", "odds_api"]:
+        markets = by_system_market[system]
+        if not markets:
+            continue
+        for market in sorted(markets.keys()):
+            stats = markets[market]
+            wins, losses, pushes = stats["wins"], stats["losses"], stats["pushes"]
+            graded = wins + losses + pushes
+            if graded > 0:
+                wr = wins / graded * 100
+                roi = stats["profit"] / graded * 100
+                print(
+                    f"{system.upper():<10} {market:<12} {wins:<5} {losses:<5} {pushes:<4} {wr:>6.1f}%    {roi:>+6.1f}%"
+                )
+
+    # Results by filter
+    print("\n" + "-" * 90)
+    print("RESULTS BY FILTER/TIER")
+    print("-" * 90)
+    print(f"{'Filter':<30} {'System':<8} {'W':<5} {'L':<5} {'Win Rate':<10} {'ROI':<10}")
+    print("-" * 90)
+
+    # Sort filters by win rate (descending)
+    sorted_filters = sorted(
+        by_filter.items(),
+        key=lambda x: (
+            x[1]["wins"] / (x[1]["wins"] + x[1]["losses"])
+            if (x[1]["wins"] + x[1]["losses"]) > 0
+            else 0
+        ),
+        reverse=True,
+    )
+
+    for filter_name, stats in sorted_filters:
+        wins, losses = stats["wins"], stats["losses"]
+        graded = wins + losses + stats["pushes"]
+        if graded >= 2:  # Only show filters with 2+ picks
+            wr = wins / (wins + losses) * 100 if (wins + losses) > 0 else 0
+            roi = stats["profit"] / graded * 100
+            system = stats["system"] or "?"
+            # Truncate long filter names
+            display_name = filter_name[:28] + ".." if len(filter_name) > 30 else filter_name
+            print(
+                f"{display_name:<30} {system.upper():<8} {wins:<5} {losses:<5} {wr:>6.1f}%    {roi:>+6.1f}%"
+            )
+
+    # Daily breakdown by system
+    print("\n" + "-" * 90)
+    print("DAILY BREAKDOWN BY SYSTEM")
+    print("-" * 90)
+
+    for system in ["xl", "pro", "odds_api"]:
+        daily = daily_by_system[system]
+        if not daily:
+            continue
+        print(f"\n{system.upper()}:")
+        for day in daily:
+            total = day["wins"] + day["losses"]
+            wr = day["wins"] / total * 100 if total > 0 else 0
+            print(
+                f"  {day['date']}: {day['wins']}W-{day['losses']}L ({wr:.0f}%) | {day['profit']:+.2f}u"
+            )
+
+    # Verbose: show all picks
+    if verbose:
+        print("\n" + "-" * 90)
+        print("ALL VALIDATED PICKS")
+        print("-" * 90)
+
+        for pick in sorted(all_picks, key=lambda x: (x["date"], x["system"])):
+            icon = "✓" if pick["outcome"] == "WIN" else ("✗" if pick["outcome"] == "LOSS" else "—")
+            side_char = "O" if pick["side"] == "OVER" else "U"
+            print(
+                f"{icon} {pick['date']} [{pick['system'].upper():<7}] {pick['player'][:22]:<22} "
+                f"{pick['market']:<10} {side_char}{pick['line']:<5} → {pick['actual']:<4} "
+                f"[{pick['filter'][:20]}]"
+            )
+
+    print("\n" + "=" * 90)
 
     return {
-        "total_wins": total_wins,
-        "total_losses": total_losses,
-        "total_pushes": total_pushes,
-        "total_profit": total_profit,
-        "overall_win_rate": overall_wr,
-        "overall_roi": overall_roi,
-        "by_market": dict(by_market),
-        "daily_results": daily_results,
+        "by_system": dict(by_system),
+        "by_system_market": dict(by_system_market),
+        "by_filter": dict(by_filter),
+        "all_picks": all_picks,
     }
 
 
@@ -524,28 +515,35 @@ def main():
         default="predictions",
         help="Directory containing prediction files (default: predictions/)",
     )
-    parser.add_argument("--backtest-dir", help="Alias for --predictions-dir for backtest results")
+    parser.add_argument(
+        "--system",
+        choices=["xl", "pro", "odds_api"],
+        help="Filter to specific system only",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Show all individual picks",
+    )
     args = parser.parse_args()
 
-    # Handle backtest-dir alias
-    predictions_dir = args.backtest_dir or args.predictions_dir
-
-    # Validate arguments
     if args.start_date and args.end_date:
-        # Date range mode
-        validate_date_range(args.start_date, args.end_date, predictions_dir)
-        return
+        validate_date_range(
+            args.start_date,
+            args.end_date,
+            args.predictions_dir,
+            system_filter=args.system,
+            verbose=args.verbose,
+        )
     elif args.date:
-        # Single date mode
-        predictions = load_predictions(args.date, predictions_dir)
-        if not predictions:
-            return
-
-        print(f"Fetching actual results for {args.date}...")
-        actuals = get_actual_results(args.date)
-        print(f"[OK] Found {len(actuals)} player game logs\n")
-
-        print_validation_report(predictions, actuals)
+        validate_date_range(
+            args.date,
+            args.date,
+            args.predictions_dir,
+            system_filter=args.system,
+            verbose=args.verbose,
+        )
     else:
         parser.error("Either --date or both --start-date and --end-date are required")
 

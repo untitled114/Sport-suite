@@ -87,7 +87,7 @@ class ModelManager:
                     self.predictors[market] = predictor
                     feature_count = len(predictor.features) if predictor.features else 0
                     logger.info(f"  [OK] {market}: Loaded XL model ({feature_count} features)")
-                except Exception as e:
+                except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
                     logger.error(f"  [ERROR] {market}: Failed to load model: {e}")
                     self.predictors[market] = None
 
@@ -116,7 +116,7 @@ class ModelManager:
             self.feature_extractor = LiveFeatureExtractorXL()
             logger.info("  [OK] Feature extractor loaded")
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"  [ERROR] Failed to load feature extractor: {e}")
             raise RuntimeError(f"Feature extractor not available: {e}") from e
 
@@ -332,7 +332,7 @@ def check_database_connection(config: Dict) -> Dict:
         )
         conn.close()
         result["connected"] = True
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         result["error"] = str(e)
 
     return result

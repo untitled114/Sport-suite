@@ -8,7 +8,7 @@ that provides additional signal for prop predictions.
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from .base import BaseFeatureExtractor
 
@@ -104,7 +104,7 @@ class CheatsheetExtractor(BaseFeatureExtractor):
 
         return self._compute_features(df, line)
 
-    def _compute_features(self, df, line: float = None) -> Dict[str, float]:
+    def _compute_features(self, df, line: Optional[float] = None) -> Dict[str, float]:
         """
         Compute cheatsheet features from query result.
 

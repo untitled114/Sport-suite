@@ -33,7 +33,7 @@ class BaseFeatureExtractor(ABC):
     # Subclasses must define this
     FEATURE_NAMES: tuple = ()
 
-    def __init__(self, conn: Any, name: str = None):
+    def __init__(self, conn: Any, name: Optional[str] = None):
         """
         Initialize the feature extractor.
 
@@ -97,7 +97,7 @@ class BaseFeatureExtractor(ABC):
         try:
             df = pd.read_sql_query(query, self.conn, params=params)
             return df if len(df) > 0 else None
-        except Exception as e:
+        except (pd.errors.DatabaseError, ValueError, TypeError) as e:
             logger.debug(f"{self.name}: Query failed: {e}")
             return None
 

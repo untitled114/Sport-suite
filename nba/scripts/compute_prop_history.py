@@ -141,7 +141,7 @@ class PropHistoryLearner:
                 for row in cur.fetchall():
                     rankings[row[0]] = row[1]
             logger.info(f"Loaded {len(rankings)} team defense rankings")
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.warning(f"Could not load defense rankings: {e}")
         finally:
             if conn:
@@ -679,7 +679,7 @@ class PropHistoryLearner:
                 "dry_run": dry_run,
             }
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"Update failed: {e}")
             raise
         finally:

@@ -177,7 +177,7 @@ def load_games_incremental(season: str = None) -> int:
                     )
                 )
 
-            except Exception as e:
+            except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
                 logger.warning(f"Skipping game: {e}")
                 continue
 
@@ -218,7 +218,7 @@ def load_games_incremental(season: str = None) -> int:
 
         return len(new_games)
 
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         logger.error(f"Error loading games: {e}")
         conn.rollback()
         raise
@@ -244,7 +244,7 @@ def main():
         else:
             logger.info("✅ No new games to load")
         return 0
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         logger.error(f"❌ Failed: {e}")
         return 1
 

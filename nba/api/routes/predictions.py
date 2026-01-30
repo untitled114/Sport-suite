@@ -9,6 +9,7 @@ import time
 from datetime import date, datetime
 from typing import List
 
+import psycopg2
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from nba.api.dependencies import ModelManager, get_model_manager
@@ -187,7 +188,7 @@ def make_prediction(
 
     except HTTPException:
         raise
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         logger.error(f"Prediction error for {request.player_name}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -280,7 +281,7 @@ async def predict_batch(
         except HTTPException as e:
             logger.warning(f"Batch prediction failed for {req.player_name}: {e.detail}")
             failed += 1
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"Batch prediction error for {req.player_name}: {e}")
             failed += 1
 

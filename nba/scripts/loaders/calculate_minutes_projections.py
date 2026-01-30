@@ -60,7 +60,7 @@ class MinutesProjector:
         try:
             self.conn = psycopg2.connect(**DB_CONFIG)
             logger.info("✅ Connected to nba_players database")
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"❌ Database connection failed: {e}")
             raise
 
@@ -429,7 +429,7 @@ class MinutesProjector:
 
             logger.info(f"\n✅ Minutes projection complete!")
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"❌ Projection failed: {e}")
             if self.conn:
                 self.conn.rollback()
@@ -454,7 +454,7 @@ def main():
         projector.connect()
         projector.run(update_db=args.update, min_games=args.min_games)
 
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         logger.error(f"❌ Failed: {e}")
         raise
     finally:

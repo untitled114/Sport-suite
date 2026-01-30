@@ -211,7 +211,7 @@ class InjuryBackfiller:
                     (player_id, game_date),
                 )
                 insert_count += cur.rowcount
-            except Exception as e:
+            except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
                 logger.debug(f"Error inserting injury for {player_name}: {e}")
 
         self.conn_intel.commit()

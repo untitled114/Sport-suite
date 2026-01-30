@@ -104,7 +104,7 @@ class XLMarketValidator:
                 extra={"market": self.market_key, "feature_count": len(self.features)},
             )
             return True
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error("Failed to load model", extra={"market": self.market_key, "error": str(e)})
             return False
 
@@ -158,7 +158,7 @@ class XLMarketValidator:
 
             return base_pred, prob_over, side, abs(edge)
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.warning("Prediction error", extra={"error": str(e)})
             return None, None, None, None
 
@@ -225,7 +225,7 @@ class XLMarketValidator:
                     }
                 )
 
-            except Exception as e:
+            except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
                 # Skip props where feature extraction fails
                 continue
 

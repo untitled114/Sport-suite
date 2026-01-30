@@ -103,7 +103,7 @@ class VegasLinesFetcher:
 
             return response.json()
 
-        except Exception as e:
+        except (requests.RequestException, KeyError, ValueError, TypeError) as e:
             logger.error(f"Request failed: {e}")
             return None
 
@@ -454,7 +454,7 @@ class VegasLinesFetcher:
                     )
                     conn.commit()
 
-            except Exception as e:
+            except (requests.RequestException, KeyError, ValueError, TypeError) as e:
                 conn.rollback()
                 logger.warning(f"Failed {game['away_team']} @ {game['home_team']}: {e}")
         cursor.close()

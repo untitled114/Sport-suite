@@ -116,7 +116,7 @@ def fetch_gamelogs_for_date_range(date_from, date_to, season="2025-26"):
             )
             time.sleep(delay)
             continue
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.error(f"API request failed: {e}")
             return pd.DataFrame()
 
@@ -224,7 +224,7 @@ def load_gamelogs_to_db(df, conn):
                     int(row.get("PLUS_MINUS", 0)) if pd.notna(row.get("PLUS_MINUS")) else 0,
                 )
             )
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.warning(f"Skipping row: {e}")
             continue
 
@@ -265,7 +265,7 @@ def load_gamelogs_to_db(df, conn):
         conn.commit()
         logger.info(f"✅ Loaded {len(insert_data)} game logs to database")
         return len(insert_data)
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         conn.rollback()
         logger.error(f"❌ Insert failed: {e}")
         return 0

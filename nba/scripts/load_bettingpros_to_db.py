@@ -246,7 +246,7 @@ def load_props_to_database(props, players_conn, intel_conn, dry_run=False):
 
             inserted += 1
 
-        except Exception as e:
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             print(f"❌ Error loading prop: {str(e)}")
             print(f"   Prop: {prop['player_slug']} {prop['stat_type']} {prop['game_date']}")
             errors += 1
@@ -284,7 +284,7 @@ def main():
         intel_conn = psycopg2.connect(**DB_CONFIG)
         print("✅ Connected to nba_players (port 5536)")
         print("✅ Connected to nba_intelligence (port 5539)")
-    except Exception as e:
+    except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         print(f"❌ Database connection failed: {str(e)}")
         return
 

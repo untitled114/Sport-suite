@@ -923,7 +923,7 @@ def main():
 
         return 0
 
-    except Exception as e:
+    except (OSError, KeyError, ValueError, TypeError) as e:
         logger.error("Training failed", extra={"error": str(e)}, exc_info=True)
         return 1
 
