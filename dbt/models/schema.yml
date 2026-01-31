@@ -1,0 +1,91 @@
+version: 2
+
+models:
+  # Staging Models
+  - name: stg_player_game_logs
+    description: Cleaned player game logs with derived metrics
+    columns:
+      - name: player_id
+        description: NBA player ID
+        tests:
+          - not_null
+      - name: game_date
+        description: Date of the game
+        tests:
+          - not_null
+      - name: minutes
+        description: Minutes played (DNPs excluded)
+        tests:
+          - not_null
+      - name: fg_pct
+        description: Field goal percentage (0-1)
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1
+              inclusive: true
+
+  - name: stg_props
+    description: Cleaned prop lines with normalized book names
+    columns:
+      - name: prop_id
+        description: Unique prop identifier
+        tests:
+          - unique
+          - not_null
+      - name: stat_type
+        description: Type of stat being bet on
+        tests:
+          - accepted_values:
+              values: ['POINTS', 'REBOUNDS', 'ASSISTS', 'THREES']
+      - name: line
+        description: Sportsbook line value
+        tests:
+          - not_null
+
+  # Intermediate Models
+  - name: int_rolling_stats
+    description: Rolling statistics with EMA weighting
+    columns:
+      - name: player_id
+        tests:
+          - not_null
+      - name: avg_points_l3
+        description: Average points over last 3 games
+      - name: games_played_prior
+        description: Number of games played before this one
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 5
+              inclusive: true
+
+  - name: int_book_spreads
+    description: Book disagreement features
+    columns:
+      - name: num_books
+        description: Number of books with lines
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 3
+              inclusive: true
+      - name: line_spread
+        description: Max line minus min line across books
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: true
+
+  # Marts Models
+  - name: fct_feature_vectors
+    description: Final feature vectors for ML model training
+    columns:
+      - name: prop_id
+        tests:
+          - unique
+          - not_null
+      - name: hit_over
+        description: Whether the actual exceeded the line (1/0/null)
+        tests:
+          - accepted_values:
+              values: [0, 1]
+              quote: false

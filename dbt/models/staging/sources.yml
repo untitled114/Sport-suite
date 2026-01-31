@@ -1,0 +1,44 @@
+version: 2
+
+sources:
+  - name: nba_players
+    description: Player data from nba_players database (port 5536)
+    database: nba_players
+    schema: public
+    tables:
+      - name: player_game_logs
+        description: Individual player game statistics
+        columns:
+          - name: player_id
+            description: NBA player ID
+          - name: game_id
+            description: NBA game ID
+          - name: game_date
+            description: Date of the game
+          - name: points
+            description: Points scored
+          - name: rebounds
+            description: Total rebounds
+          - name: assists
+            description: Assists
+          - name: minutes
+            description: Minutes played
+
+  - name: nba_intelligence
+    description: Props and betting data from nba_intelligence database (port 5539)
+    database: nba_intelligence
+    schema: public
+    tables:
+      - name: nba_props_xl
+        description: Player prop lines from multiple sportsbooks
+        columns:
+          - name: prop_id
+            description: Unique prop identifier
+          - name: player_name
+            description: Player full name
+          - name: stat_type
+            description: Type of stat (POINTS, REBOUNDS, etc.)
+          - name: line
+            description: Sportsbook line value
+          - name: book_id
+            description: Sportsbook identifier
