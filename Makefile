@@ -1,4 +1,4 @@
-.PHONY: help install test lint fmt run refresh validate picks train dbt-run dbt-test dbt-docs db-up db-down backup clean
+.PHONY: help install test lint fmt run refresh validate picks train walk-forward dbt-run dbt-test dbt-docs db-up db-down backup clean
 
 # Default target
 help:
@@ -25,10 +25,13 @@ help:
 	@echo "  picks        Show current picks"
 	@echo ""
 	@echo "Training:"
-	@echo "  train        Retrain all models (POINTS, REBOUNDS)"
-	@echo "  train-points Retrain POINTS model only"
-	@echo "  train-rebounds Retrain REBOUNDS model only"
-	@echo "  validate-data Run data quality checks before training"
+	@echo "  train           Retrain all models (POINTS, REBOUNDS)"
+	@echo "  train-points    Retrain POINTS model only"
+	@echo "  train-rebounds  Retrain REBOUNDS model only"
+	@echo "  validate-data   Run data quality checks before training"
+	@echo "  walk-forward    Run walk-forward validation (all markets)"
+	@echo "  walk-forward-points   Walk-forward for POINTS only"
+	@echo "  walk-forward-rebounds Walk-forward for REBOUNDS only"
 	@echo ""
 	@echo "dbt:"
 	@echo "  dbt-run      Run dbt models"
@@ -127,6 +130,19 @@ build-dataset:
 	@echo "Building training datasets..."
 	python3 nba/features/build_xl_training_dataset.py --output nba/features/datasets/
 	@echo "Datasets built"
+
+walk-forward: validate-data
+	@echo "Running walk-forward validation for POINTS..."
+	python3 -m nba.models.walk_forward_validation --market POINTS --output nba/models/walk_forward_POINTS.txt
+	@echo "Running walk-forward validation for REBOUNDS..."
+	python3 -m nba.models.walk_forward_validation --market REBOUNDS --output nba/models/walk_forward_REBOUNDS.txt
+	@echo "Walk-forward validation complete. See nba/models/walk_forward_*.txt"
+
+walk-forward-points:
+	python3 -m nba.models.walk_forward_validation --market POINTS
+
+walk-forward-rebounds:
+	python3 -m nba.models.walk_forward_validation --market REBOUNDS
 
 # =============================================================================
 # dbt
