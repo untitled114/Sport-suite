@@ -1,0 +1,22 @@
+nba_features:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: localhost
+      port: 5539  # nba_intelligence database
+      user: "{{ env_var('DB_USER', 'nba_user') }}"
+      password: "{{ env_var('DB_PASSWORD') }}"
+      dbname: nba_intelligence
+      schema: dbt_dev
+      threads: 4
+
+    prod:
+      type: postgres
+      host: localhost
+      port: 5539
+      user: "{{ env_var('DB_USER', 'nba_user') }}"
+      password: "{{ env_var('DB_PASSWORD') }}"
+      dbname: nba_intelligence
+      schema: dbt_prod
+      threads: 4

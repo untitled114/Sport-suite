@@ -218,6 +218,13 @@ nba/
 │   └── database.py                  # Database connection config
 │
 └── nba-predictions.sh               # Pipeline orchestrator
+
+dbt/                                  # Feature engineering (SQL)
+├── models/
+│   ├── staging/                     # Raw data cleaning
+│   ├── intermediate/                # Rolling stats, book spreads
+│   └── marts/                       # ML-ready feature vectors
+└── dbt_project.yml
 ```
 
 ---
@@ -308,6 +315,7 @@ pip install -e ".[dev]"
 - **Centralized configuration** - Frozen dataclasses for thresholds, no magic numbers
 - **Modular feature extractors** - Dependency injection, single responsibility
 - **Airflow DAGs** - `nba_full_pipeline` and `nba_refresh_pipeline` for orchestration
+- **dbt transformations** - SQL-based feature engineering with tests and docs
 
 ### Documentation
 - **Architecture Decision Records** (ADRs) in `docs/adr/`
