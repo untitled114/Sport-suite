@@ -1,12 +1,17 @@
 # NBA Player Props ML System
 
+![Tests](https://github.com/untitled114/Sport-suite/actions/workflows/test.yml/badge.svg)
+![Lint](https://github.com/untitled114/Sport-suite/actions/workflows/lint.yml/badge.svg)
+![Coverage](https://img.shields.io/badge/coverage-95.94%25-brightgreen)
+![Python](https://img.shields.io/badge/python-3.10+-blue)
+
 End-to-end machine learning pipeline for NBA player prop betting. Ingests live odds from 7 sportsbooks, extracts 102 features per prop, and generates calibrated predictions using stacked LightGBM architectures.
 
 ## What This Project Demonstrates
 
 - **ML Pipeline Design**: Feature extraction, model training, probability calibration
 - **Data Engineering**: Multi-source ingestion, PostgreSQL schema design, automated pipelines
-- **Production Thinking**: Validation methodology, filtering strategies, monitoring
+- **Production Thinking**: Validation methodology, drift monitoring, CI/CD
 
 ## Results (January 2026)
 
@@ -115,20 +120,54 @@ All XL features (102) plus:
 
 ## System Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           DATA INGESTION                                │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                   │
-│  │ BettingPros  │  │ ESPN API     │  │ NBA Stats    │                   │
-│  │ (7 books)    │  │ (schedule)   │  │ (box scores) │                   │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘                   │
-│         └─────────────────┼─────────────────┘                           │
-│                           ▼                                             │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │                    PostgreSQL (4 databases)                      │   │
-│  │  nba_players:5536  nba_games:5537  nba_team:5538  nba_intel:5539│   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph ingestion["Data Ingestion"]
+        BP[BettingPros API<br/>7 Sportsbooks]
+        ESPN[ESPN API<br/>Schedules]
+        NBA[NBA Stats API<br/>Box Scores]
+    end
+
+    subgraph storage["PostgreSQL Databases"]
+        DB1[(nba_players<br/>:5536)]
+        DB2[(nba_games<br/>:5537)]
+        DB3[(nba_team<br/>:5538)]
+        DB4[(nba_intel<br/>:5539)]
+    end
+
+    subgraph processing["Feature Engineering"]
+        FE[Feature Extractor<br/>102 Features]
+        DRIFT[Drift Monitor<br/>KS Tests + Z-Score]
+    end
+
+    subgraph ml["ML Pipeline"]
+        REG[LightGBM Regressor<br/>Predicts Value]
+        CLF[LightGBM Classifier<br/>Predicts P OVER]
+        CAL[Isotonic Calibration]
+        BLEND[Blended Output<br/>60% clf + 40% reg]
+    end
+
+    subgraph output["Output"]
+        PICKS[Daily Picks<br/>JSON + CLI]
+        VAL[Validation<br/>Win Rate + ROI]
+    end
+
+    BP --> DB4
+    ESPN --> DB2
+    NBA --> DB1
+
+    DB1 --> FE
+    DB2 --> FE
+    DB3 --> FE
+    DB4 --> FE
+
+    FE --> DRIFT
+    FE --> REG
+    REG -->|expected_diff| CLF
+    CLF --> CAL
+    CAL --> BLEND
+    BLEND --> PICKS
+    PICKS --> VAL
 ```
 
 ---
@@ -253,16 +292,27 @@ pip install -e ".[dev]"
 
 ---
 
-## Engineering Highlights
+## Engineering Practices
 
-- **512 tests** with pytest (unit + integration), 96% coverage
-- **Pydantic schemas** for data validation
-- **Custom exception hierarchy** for error handling
-- **Feature drift detection** with KS tests and z-score monitoring
-- **MLflow integration** for experiment tracking (optional)
-- **Pre-commit hooks** (black, isort, flake8, bandit)
-- **GitHub Actions CI/CD** for automated testing
-- **Airflow DAGs** for pipeline orchestration
+### Testing & CI/CD
+- **512 tests** with pytest (unit + integration), **95.94% coverage**
+- **GitHub Actions CI/CD** - Automated linting, testing, type checking on every push
+- **Pre-commit hooks** - black, isort, flake8, bandit for code quality
+
+### Data Quality & Observability
+- **Feature drift detection** - KS tests and z-score monitoring for model degradation
+- **Pydantic schemas** - Runtime data validation for all pipeline inputs
+- **Custom exception hierarchy** - Granular error handling (`PickleLoadError`, `CalibrationError`, etc.)
+
+### Architecture
+- **Centralized configuration** - Frozen dataclasses for thresholds, no magic numbers
+- **Modular feature extractors** - Dependency injection, single responsibility
+- **Airflow DAGs** - `nba_full_pipeline` and `nba_refresh_pipeline` for orchestration
+
+### Documentation
+- **Architecture Decision Records** (ADRs) in `docs/adr/`
+- **Model cards** with SHAP feature importance plots
+- **Conventional commits** for clear git history
 
 ---
 
