@@ -225,6 +225,9 @@ dbt/                                  # Feature engineering (SQL)
 │   ├── intermediate/                # Rolling stats, book spreads
 │   └── marts/                       # ML-ready feature vectors
 └── dbt_project.yml
+
+notebooks/
+└── model_retraining_guide.ipynb     # Retraining workflow + SHAP analysis
 ```
 
 ---
@@ -244,30 +247,33 @@ git clone https://github.com/untitled114/Sport-suite.git
 cd Sport-suite
 cp .env.example .env  # Add your credentials
 
-# Start databases
-cd docker && docker-compose up -d
+# Install and start (using Makefile)
+make install
+make db-up
 
-# Install
+# Or manually:
 pip install -e ".[dev]"
-
-# Run full pipeline (data collection + predictions)
-./nba/nba-predictions.sh full
-
-# Quick refresh (line movements + regenerate predictions)
-./nba/nba-predictions.sh refresh
+cd docker && docker-compose up -d
 ```
 
-### Validate Results
+### Common Commands
 
 ```bash
-# Using the CLI (recommended)
-./nba/nba-predictions.sh validate           # Yesterday's results
-./nba/nba-predictions.sh validate --7d      # Last 7 days
-./nba/nba-predictions.sh validate --30d     # Last 30 days
+make run          # Full pipeline (data + predictions)
+make refresh      # Quick refresh (line movements only)
+make picks        # Show current picks
+make validate     # Validate yesterday's results
+make validate-7d  # Validate last 7 days
 
-# Show current picks
-./nba/nba-predictions.sh picks
+make test         # Run tests with coverage
+make lint         # Run linters
+make train        # Retrain models (with data validation)
+
+make dbt-run      # Run dbt models
+make dbt-test     # Run dbt tests
 ```
+
+Run `make help` for all available commands.
 
 ---
 
@@ -307,6 +313,7 @@ pip install -e ".[dev]"
 - **Pre-commit hooks** - black, isort, flake8, bandit for code quality
 
 ### Data Quality & Observability
+- **Pre-training validation** - Great Expectations-style checks before model training
 - **Feature drift detection** - KS tests and z-score monitoring for model degradation
 - **Pydantic schemas** - Runtime data validation for all pipeline inputs
 - **Custom exception hierarchy** - Granular error handling (`PickleLoadError`, `CalibrationError`, etc.)
