@@ -1,7 +1,7 @@
 """
 NBA Validation Pipeline DAG
 
-Scheduled: Daily at 11:00 AM EST (after morning data collection)
+Scheduled: Daily at 09:30 AM EST (14:30 UTC)
 Purpose: Validate pick performance and track win rates
 
 Tasks:
@@ -83,7 +83,7 @@ def send_performance_alert(subject: str, body: str, is_critical: bool = False) -
 @dag(
     dag_id="nba_validation_pipeline",
     description="NBA pick performance validation and tracking",
-    schedule="0 11 * * *",  # 11:00 AM EST daily
+    schedule="30 14 * * *",  # 09:30 AM EST daily (14:30 UTC)
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["nba", "validation", "performance", "tracking"],
