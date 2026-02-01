@@ -1,7 +1,7 @@
 """
 NBA Health Check DAG
 
-Scheduled: Every 6 hours
+Scheduled: Every 4 hours
 Purpose: System health monitoring and alerting
 
 Tasks:
@@ -94,8 +94,8 @@ def alert_on_health_failure(context: dict[str, Any]) -> None:
 
 @dag(
     dag_id="nba_health_check",
-    description="NBA system health monitoring (every 6 hours)",
-    schedule="0 */6 * * *",  # Every 6 hours
+    description="NBA system health monitoring (every 4 hours)",
+    schedule="0 */4 * * *",  # Every 4 hours
     start_date=datetime(2025, 11, 7),
     catchup=False,
     tags=["nba", "health", "monitoring"],

@@ -1,7 +1,7 @@
 """
 NBA Full Pipeline DAG
 
-Scheduled: Daily at 10:00 AM EST (or run manually)
+Scheduled: Daily at 09:00 AM EST (14:00 UTC)
 Purpose: Complete data collection + predictions
 
 This is the main daily workflow that:
@@ -116,7 +116,7 @@ def alert_on_failure(context: dict[str, Any]) -> None:
 @dag(
     dag_id="nba_full_pipeline",
     description="NBA complete data collection + predictions (run once daily)",
-    schedule="0 10 * * *",  # 10:00 AM EST daily
+    schedule="0 14 * * *",  # 09:00 AM EST daily (14:00 UTC)
     start_date=datetime(2025, 11, 7),
     catchup=False,
     tags=["nba", "predictions", "full", "data-collection"],
