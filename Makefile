@@ -25,9 +25,12 @@ help:
 	@echo "  picks        Show current picks"
 	@echo ""
 	@echo "Training:"
-	@echo "  train           Retrain all models (POINTS, REBOUNDS)"
-	@echo "  train-points    Retrain POINTS model only"
-	@echo "  train-rebounds  Retrain REBOUNDS model only"
+	@echo "  train           Retrain all XL models (POINTS, REBOUNDS)"
+	@echo "  train-v3        Retrain all V3 models (136 features)"
+	@echo "  train-points    Retrain POINTS XL model only"
+	@echo "  train-rebounds  Retrain REBOUNDS XL model only"
+	@echo "  train-points-v3 Retrain POINTS V3 model only"
+	@echo "  train-rebounds-v3 Retrain REBOUNDS V3 model only"
 	@echo "  validate-data   Run data quality checks before training"
 	@echo "  walk-forward    Run walk-forward validation (all markets)"
 	@echo "  walk-forward-points   Walk-forward for POINTS only"
@@ -125,6 +128,19 @@ train-points: validate-data
 train-rebounds: validate-data
 	python3 nba/models/train_market.py --market REBOUNDS --data nba/features/datasets/xl_training_REBOUNDS_2023_2025.csv
 	python3 -m nba.models.generate_feature_importance --market REBOUNDS
+
+train-v3: validate-data
+	@echo "Retraining POINTS V3 model (136 features)..."
+	python3 nba/models/train_market.py --market POINTS --model-version v3 --data nba/features/datasets/xl_training_POINTS_2023_2025.csv
+	@echo "Retraining REBOUNDS V3 model (136 features)..."
+	python3 nba/models/train_market.py --market REBOUNDS --model-version v3 --data nba/features/datasets/xl_training_REBOUNDS_2023_2025.csv
+	@echo "V3 training complete"
+
+train-points-v3: validate-data
+	python3 nba/models/train_market.py --market POINTS --model-version v3 --data nba/features/datasets/xl_training_POINTS_2023_2025.csv
+
+train-rebounds-v3: validate-data
+	python3 nba/models/train_market.py --market REBOUNDS --model-version v3 --data nba/features/datasets/xl_training_REBOUNDS_2023_2025.csv
 
 build-dataset:
 	@echo "Building training datasets..."
