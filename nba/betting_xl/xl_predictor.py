@@ -15,7 +15,7 @@ import pickle
 import warnings
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -429,6 +429,138 @@ class XLPredictor:
             logger.error(f"   {self.market}: Failed to load book intelligence: {e}")
             self.enable_book_intelligence = False
 
+    def _apply_dynamic_calibration(
+        self,
+        prob: float,
+        player_name: Optional[str],
+        game_date: Optional[str],
+        line: float,
+    ) -> Tuple[float, Optional[Dict[str, Any]]]:
+        """
+        Apply dynamic calibration adjustment to probability.
+
+        Dynamic calibration adjusts predictions based on recent model performance,
+        correcting for systematic over- or under-prediction biases.
+
+        Args:
+            prob: Base probability (P(OVER)) to adjust
+            player_name: Optional player name for calibration logging
+            game_date: Optional game date for calibration logging
+            line: Sportsbook prop line value
+
+        Returns:
+            Tuple of (adjusted_prob, dynamic_adjustment_dict or None)
+            - adjusted_prob: Calibrated probability, clipped to [0.01, 0.99]
+            - dynamic_adjustment_dict: Dict with adjustment details if applied, else None
+                - adjustment: Float adjustment applied
+                - reason: String explanation of adjustment
+                - was_adjusted: Boolean indicating if adjustment was applied
+        """
+        if not self.enable_dynamic_calibration or not self.dynamic_calibrator:
+            return prob, None
+
+        try:
+            adjustment_result = self.dynamic_calibrator.apply_adjustment(
+                raw_prob=prob,
+                player_name=player_name,
+                game_date=game_date,
+                line=line,
+            )
+            adjusted_prob = adjustment_result["adjusted_prob"]
+            dynamic_adjustment = {
+                "adjustment": adjustment_result["adjustment_applied"],
+                "reason": adjustment_result["reason"],
+                "was_adjusted": adjustment_result["was_adjusted"],
+            }
+            return adjusted_prob, dynamic_adjustment
+        except (ValueError, KeyError, CalibrationError) as e:
+            logger.debug(f"Dynamic calibration failed ({type(e).__name__}): {e}")
+            return prob, None
+
+    def _apply_book_intelligence_ensemble(
+        self,
+        prob_base: float,
+        features_dict: Dict[str, Any],
+        book_features: Optional[Dict[str, float]],
+    ) -> Tuple[float, Optional[float]]:
+        """
+        Apply book intelligence ensemble blending to base probability.
+
+        Book intelligence is a separate model head that predicts P(OVER) based on
+        sportsbook line disagreements and historical book accuracy. When available,
+        the final probability is a weighted blend of base model and book intelligence.
+
+        Args:
+            prob_base: Base model probability (P(OVER))
+            features_dict: Dict of features (used to extract book features if not provided)
+            book_features: Optional dict with 4 book intelligence features:
+                - softest_book_historical_accuracy
+                - line_spread
+                - books_in_agreement
+                - softest_vs_consensus
+
+        Returns:
+            Tuple of (final_prob, prob_over_book or None)
+            - final_prob: Ensemble-blended probability (70% base, 30% book intelligence)
+            - prob_over_book: Book intelligence probability if computed, else None
+        """
+        if not self.enable_book_intelligence or not self.book_intelligence_predictor:
+            return prob_base, None
+
+        prob_over_book = None
+        try:
+            # Extract book intelligence features from features_dict if not provided separately
+            if book_features is None:
+                book_features = {
+                    "softest_book_historical_accuracy": features_dict.get(
+                        "softest_book_historical_accuracy"
+                    ),
+                    "line_spread": features_dict.get("line_spread"),
+                    "books_in_agreement": features_dict.get("books_in_agreement"),
+                    "softest_vs_consensus": features_dict.get("softest_vs_consensus"),
+                }
+
+            # Only predict if all features are present
+            if all(v is not None for v in book_features.values()):
+                prob_over_book = self.book_intelligence_predictor.predict(book_features)
+            else:
+                logger.debug(f"Book intelligence features incomplete: {book_features}")
+        except (ValueError, KeyError, AttributeError) as e:
+            logger.debug(f"Book intelligence prediction failed ({type(e).__name__}): {e}")
+            prob_over_book = None
+
+        # Ensemble blend (70% base, 30% book intelligence)
+        if prob_over_book is not None:
+            prob_over_final = 0.70 * prob_base + 0.30 * prob_over_book
+            prob_over_final = np.clip(prob_over_final, 0.01, 0.99)
+        else:
+            prob_over_final = prob_base
+
+        return float(prob_over_final), prob_over_book
+
+    def _determine_confidence(self, edge: float) -> str:
+        """
+        Determine confidence level based on prediction edge.
+
+        Confidence levels help prioritize bets based on the magnitude of
+        the predicted edge (predicted_value - line).
+
+        Args:
+            edge: Difference between predicted value and sportsbook line
+
+        Returns:
+            Confidence level string:
+            - "HIGH": |edge| >= 5.0 (strong conviction)
+            - "MEDIUM": |edge| >= 3.0 (moderate conviction)
+            - "LOW": |edge| < 3.0 (weak conviction)
+        """
+        if abs(edge) >= 5.0:
+            return "HIGH"
+        elif abs(edge) >= 3.0:
+            return "MEDIUM"
+        else:
+            return "LOW"
+
     def predict(
         self,
         features_dict: Dict[str, Any],
@@ -483,12 +615,12 @@ class XLPredictor:
 
     def _predict_2head(
         self,
-        features_dict: Dict,
+        features_dict: Dict[str, Any],
         line: float,
-        book_features: Optional[Dict] = None,
-        player_name: str = None,
-        game_date: str = None,
-    ) -> Dict:
+        book_features: Optional[Dict[str, float]] = None,
+        player_name: Optional[str] = None,
+        game_date: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         """Legacy 2-head prediction pipeline (regressor + classifier)"""
         try:
             # Ensure line is float (PostgreSQL NUMERIC returns Decimal)
@@ -530,68 +662,21 @@ class XLPredictor:
             # Blend (60% classifier, 40% residual signal)
             residual_signal = 1 / (1 + np.exp(-expected_diff / 5.0))
             prob_over_blended = 0.6 * prob_over + 0.4 * residual_signal
-            prob_over_base = np.clip(prob_over_blended, 0.01, 0.99)
+            prob_over_base = float(np.clip(prob_over_blended, 0.01, 0.99))
 
             # Stage 4: Dynamic calibration adjustment (if enabled)
-            dynamic_adjustment = None
-            if self.enable_dynamic_calibration and self.dynamic_calibrator:
-                try:
-                    adjustment_result = self.dynamic_calibrator.apply_adjustment(
-                        raw_prob=prob_over_base,
-                        player_name=player_name,
-                        game_date=game_date,
-                        line=line,
-                    )
-                    prob_over_base = adjustment_result["adjusted_prob"]
-                    dynamic_adjustment = {
-                        "adjustment": adjustment_result["adjustment_applied"],
-                        "reason": adjustment_result["reason"],
-                        "was_adjusted": adjustment_result["was_adjusted"],
-                    }
-                except (ValueError, KeyError, CalibrationError) as e:
-                    logger.debug(f"Dynamic calibration failed ({type(e).__name__}): {e}")
+            prob_over_base, dynamic_adjustment = self._apply_dynamic_calibration(
+                prob_over_base, player_name, game_date, line
+            )
 
-            # Book intelligence ensemble (third head)
-            prob_over_book = None
-            if self.enable_book_intelligence and self.book_intelligence_predictor:
-                try:
-                    # Extract book intelligence features from features_dict if not provided separately
-                    if book_features is None:
-                        book_features = {
-                            "softest_book_historical_accuracy": features_dict.get(
-                                "softest_book_historical_accuracy"
-                            ),
-                            "line_spread": features_dict.get("line_spread"),
-                            "books_in_agreement": features_dict.get("books_in_agreement"),
-                            "softest_vs_consensus": features_dict.get("softest_vs_consensus"),
-                        }
+            # Stage 5: Book intelligence ensemble (third head)
+            prob_over_final, prob_over_book = self._apply_book_intelligence_ensemble(
+                prob_over_base, features_dict, book_features
+            )
 
-                    # Only predict if all features are present
-                    if all(v is not None for v in book_features.values()):
-                        prob_over_book = self.book_intelligence_predictor.predict(book_features)
-                    else:
-                        logger.debug(f"Book intelligence features incomplete: {book_features}")
-                except (ValueError, KeyError, AttributeError) as e:
-                    logger.debug(f"Book intelligence prediction failed ({type(e).__name__}): {e}")
-                    prob_over_book = None
-
-            # Ensemble blend (70% base, 30% book intelligence)
-            if prob_over_book is not None:
-                prob_over_final = 0.70 * prob_over_base + 0.30 * prob_over_book
-                prob_over_final = np.clip(prob_over_final, 0.01, 0.99)
-            else:
-                prob_over_final = prob_over_base
-
-            # Calculate edge
+            # Calculate edge and confidence
             edge = predicted_value - line
-
-            # Determine confidence level
-            if abs(edge) >= 5.0:
-                confidence = "HIGH"
-            elif abs(edge) >= 3.0:
-                confidence = "MEDIUM"
-            else:
-                confidence = "LOW"
+            confidence = self._determine_confidence(edge)
 
             result = {
                 "predicted_value": float(predicted_value),
@@ -617,12 +702,12 @@ class XLPredictor:
 
     def _predict_3head(
         self,
-        features_dict: Dict,
+        features_dict: Dict[str, Any],
         line: float,
-        book_features: Optional[Dict] = None,
-        player_name: str = None,
-        game_date: str = None,
-    ) -> Dict:
+        book_features: Optional[Dict[str, float]] = None,
+        player_name: Optional[str] = None,
+        game_date: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         """3-head matchup prediction pipeline (base + matchup + enhanced classifier)"""
         try:
             # Ensure line is float (PostgreSQL NUMERIC returns Decimal)
@@ -675,66 +760,23 @@ class XLPredictor:
                 prob_over_base = (
                     classifier_weight * prob_over_calibrated + residual_weight * residual_prob
                 )
-                prob_over_base = np.clip(prob_over_base, 0.01, 0.99)
+                prob_over_base = float(np.clip(prob_over_base, 0.01, 0.99))
             else:
-                prob_over_base = np.clip(prob_over_calibrated, 0.01, 0.99)
+                prob_over_base = float(np.clip(prob_over_calibrated, 0.01, 0.99))
 
             # Stage 4: Dynamic calibration adjustment (if enabled)
-            dynamic_adjustment = None
-            if self.enable_dynamic_calibration and self.dynamic_calibrator:
-                try:
-                    adjustment_result = self.dynamic_calibrator.apply_adjustment(
-                        raw_prob=prob_over_base,
-                        player_name=player_name,
-                        game_date=game_date,
-                        line=line,
-                    )
-                    prob_over_base = adjustment_result["adjusted_prob"]
-                    dynamic_adjustment = {
-                        "adjustment": adjustment_result["adjustment_applied"],
-                        "reason": adjustment_result["reason"],
-                        "was_adjusted": adjustment_result["was_adjusted"],
-                    }
-                except (ValueError, KeyError, CalibrationError) as e:
-                    logger.debug(f"Dynamic calibration failed ({type(e).__name__}): {e}")
+            prob_over_base, dynamic_adjustment = self._apply_dynamic_calibration(
+                prob_over_base, player_name, game_date, line
+            )
 
-            # Book intelligence ensemble (optional separate head)
-            prob_over_book = None
-            if self.enable_book_intelligence and self.book_intelligence_predictor:
-                try:
-                    if book_features is None:
-                        book_features = {
-                            "softest_book_historical_accuracy": features_dict.get(
-                                "softest_book_historical_accuracy"
-                            ),
-                            "line_spread": features_dict.get("line_spread"),
-                            "books_in_agreement": features_dict.get("books_in_agreement"),
-                            "softest_vs_consensus": features_dict.get("softest_vs_consensus"),
-                        }
+            # Stage 5: Book intelligence ensemble (optional separate head)
+            prob_over_final, prob_over_book = self._apply_book_intelligence_ensemble(
+                prob_over_base, features_dict, book_features
+            )
 
-                    if all(v is not None for v in book_features.values()):
-                        prob_over_book = self.book_intelligence_predictor.predict(book_features)
-                except (ValueError, KeyError, AttributeError) as e:
-                    logger.debug(f"Book intelligence prediction failed ({type(e).__name__}): {e}")
-                    prob_over_book = None
-
-            # Final ensemble blend
-            if prob_over_book is not None:
-                prob_over_final = 0.70 * prob_over_base + 0.30 * prob_over_book
-                prob_over_final = np.clip(prob_over_final, 0.01, 0.99)
-            else:
-                prob_over_final = prob_over_base
-
-            # Calculate edge
+            # Calculate edge and confidence
             edge = predicted_value - line
-
-            # Determine confidence level
-            if abs(edge) >= 5.0:
-                confidence = "HIGH"
-            elif abs(edge) >= 3.0:
-                confidence = "MEDIUM"
-            else:
-                confidence = "LOW"
+            confidence = self._determine_confidence(edge)
 
             result = {
                 "predicted_value": float(predicted_value),

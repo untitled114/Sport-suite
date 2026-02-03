@@ -128,7 +128,13 @@ def show_xl_picks(date_str, compact=False):
         return
 
     picks = data["picks"]
-    print_header(f"XL MODEL PICKS ({len(picks)})")
+    # Count by model version
+    xl_count = sum(1 for p in picks if p.get("model_version", "xl") == "xl")
+    v3_count = sum(1 for p in picks if p.get("model_version") == "v3")
+    model_breakdown = f"XL: {xl_count}, V3: {v3_count}" if v3_count > 0 else f"{len(picks)} total"
+
+    print_header(f"XL + V3 MODEL PICKS ({len(picks)})")
+    print(f"  {MUTED}Models:{RESET} {model_breakdown}")
     print(f"  {MUTED}Strategy:{RESET} {data.get('strategy', 'N/A')}")
     print(f"  {MUTED}Markets:{RESET} {', '.join(data.get('markets_enabled', []))}")
 
@@ -189,11 +195,14 @@ def show_xl_picks(date_str, compact=False):
             # Player name + matchup + home/away
             print(f"  {BOLD}{WHITE}{player}{RESET}  {MUTED}{matchup} ({home_away}){RESET}")
 
-            # Main bet line + tier
+            # Main bet line + tier + model version
+            model_ver = pick.get("model_version", "xl").upper()
             print(
                 f"  {MUTED}│{RESET} {side} {BOLD}{best_line}{RESET} @ {BOLD}{best_book}{RESET}{spread_tag}"
             )
-            print(f"  {MUTED}│{RESET}  Tier: {format_tier(tier)}")
+            print(
+                f"  {MUTED}│{RESET}  Tier: {format_tier(tier)}  {MUTED}│{RESET}  Model: {CYAN}{model_ver}{RESET}"
+            )
 
             # Projection and Edge
             print(
@@ -276,10 +285,14 @@ def show_pro_picks(date_str, compact=False):
             season_rate = pick.get("hit_rate_season", 0)
             opp_rank = pick.get("opp_rank", "?")
             expected_wr = pick.get("expected_wr", "?")
+            filter_name = pick.get("filter_name", "")
 
             edge_color = GREEN if diff > 0 else RED
 
-            print(f"  {BOLD}{WHITE}{player}{RESET}")
+            # Format filter name for display (use cyan for visibility)
+            filter_display = f"  {CYAN}[{filter_name}]{RESET}" if filter_name else ""
+
+            print(f"  {BOLD}{WHITE}{player}{RESET}{filter_display}")
             print(f"  {MUTED}│{RESET} {stat} {side} {BOLD}{line}{RESET} @ Underdog")
             print(
                 f"  {MUTED}│{RESET}  Projection: {BOLD}{CYAN}{projection:.1f}{RESET}  {MUTED}│{RESET}  Edge: {edge_color}{BOLD}{diff:+.1f}{RESET}"

@@ -106,7 +106,7 @@ class XLPredictionsGenerator:
 
         # Components
         self.feature_extractor = None
-        self.predictors = {}
+        self.predictors = {}  # {market: {version: XLPredictor}}
         self.line_optimizer = None
         self.hit_rate_cache = HitRateCache(self.game_date)
         self.normalizer = NameNormalizer()
@@ -133,29 +133,35 @@ class XLPredictionsGenerator:
         logger.info("[OK] Connected to databases")
 
     def load_models(self):
-        """Load XL predictors for enabled markets"""
-        logger.info("Loading XL models...")
+        """Load XL and V3 predictors for enabled markets"""
+        logger.info("Loading XL and V3 models...")
 
         enabled_markets = [k for k, v in PRODUCTION_CONFIG.items() if v.get("enabled", False)]
+        model_versions = ["xl", "v3"]  # Load both model versions
 
         for market in enabled_markets:
-            try:
-                # Load XL model (model_version='xl')
-                self.predictors[market] = XLPredictor(
-                    market,
-                    use_3head=False,
-                    as_of_date=self.as_of_date,
-                    backtest_mode=self.backtest_mode,
-                    predictions_dir=self.predictions_dir,
-                    model_version="xl",
-                    enable_dynamic_calibration=True,
-                )
-            except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
-                logger.error(f"Failed to load {market} XL model: {e}")
+            self.predictors[market] = {}
+            for version in model_versions:
+                try:
+                    self.predictors[market][version] = XLPredictor(
+                        market,
+                        use_3head=False,
+                        as_of_date=self.as_of_date,
+                        backtest_mode=self.backtest_mode,
+                        predictions_dir=self.predictions_dir,
+                        model_version=version,
+                        enable_dynamic_calibration=True,
+                    )
+                except (psycopg2.Error, KeyError, TypeError, ValueError, FileNotFoundError) as e:
+                    logger.warning(f"Failed to load {market} {version.upper()} model: {e}")
+
+        # Count successfully loaded models
+        xl_count = sum(1 for m in self.predictors.values() if "xl" in m)
+        v3_count = sum(1 for m in self.predictors.values() if "v3" in m)
 
         # NOTE: Odds API picks are now handled by standalone generate_odds_api_picks.py
 
-        logger.info(f"[OK] Loaded {len(self.predictors)} XL models")
+        logger.info(f"[OK] Loaded {xl_count} XL models + {v3_count} V3 models")
 
     def initialize_components(self):
         """Initialize feature extractor and line optimizer"""
@@ -746,8 +752,8 @@ class XLPredictionsGenerator:
             stat_type = row["stat_type"]
             player_name = row["player_name"]
 
-            # Skip if no predictor for this market
-            if stat_type not in self.predictors:
+            # Skip if no predictors for this market
+            if stat_type not in self.predictors or not self.predictors[stat_type]:
                 continue
 
             try:
@@ -766,6 +772,11 @@ class XLPredictionsGenerator:
                     line=row["min_line"],  # Use softest line for features
                     stat_type=stat_type,
                 )
+
+                # Guard against None features
+                if features is None:
+                    logger.warning(f"[WARN]  No features extracted for {player_name} {stat_type}")
+                    continue
 
                 # Validate features before prediction
                 is_valid, missing_features = self.feature_extractor.validate_features(features)
@@ -786,20 +797,23 @@ class XLPredictionsGenerator:
                 home_flag = bool(row["is_home"]) if pd.notna(row["is_home"]) else None
 
                 # ============================================================
-                # PATH 1: XL MODEL PREDICTION (Tier X, Tier A, Star)
+                # RUN BOTH XL AND V3 MODELS (separate picks for each)
                 # ============================================================
-                pred_result = self.predictors[stat_type].predict(
-                    features, row["min_line"], player_name=player_name, game_date=self.game_date
-                )
+                for model_version, predictor in self.predictors[stat_type].items():
+                    pred_result = predictor.predict(
+                        features, row["min_line"], player_name=player_name, game_date=self.game_date
+                    )
 
-                if pred_result is not None:
+                    if pred_result is None:
+                        continue
+
                     # Apply optional bias adjustment
                     bias_adj = (
                         self.bias_adjustments.get(stat_type, 0.0) if self.bias_adjustments else 0.0
                     )
                     adjusted_prediction = pred_result["predicted_value"] - bias_adj
 
-                    # Find best line via line shopping (XL model path)
+                    # Find best line via line shopping
                     # Get avg minutes for tier logic (X = starters, Z = bench)
                     avg_minutes = features.get("ema_minutes_L5", 25.0)
 
@@ -845,7 +859,7 @@ class XLPredictionsGenerator:
                             ),
                             "p_under": optimized.get("p_under"),
                             "expected_wr": optimized.get("expected_wr"),
-                            "model_version": optimized.get("model_version", "xl"),
+                            "model_version": model_version,  # 'xl' or 'v3'
                             "reasoning": self._generate_reasoning(
                                 pred_result["predicted_value"],
                                 optimized["best_line"],
@@ -928,16 +942,23 @@ class XLPredictionsGenerator:
 
     def save_picks(self, output_file: str, dry_run: bool = False):
         """Save picks to JSON file"""
-        # DEDUPLICATION: Remove duplicate (player_name, stat_type) combinations
-        # Keep the pick with highest edge for each unique (player_name, stat_type)
+        # DEDUPLICATION: Remove duplicate (player_name, stat_type, side, model_version) combinations
+        # Keep the pick with highest edge for each unique combination
+        # Note: XL and V3 picks are kept separate (model_version in key)
         original_count = len(self.picks)
 
         if original_count > 0:
-            # Group by (player_name, stat_type, side) and keep highest edge pick
+            # Group by (player_name, stat_type, side, model_version) and keep highest edge pick
             # FIX Jan 15: Include 'side' in key to preserve both OVER and UNDER picks for same player
+            # FIX Feb 3: Include 'model_version' to preserve both XL and V3 picks
             unique_picks = {}
             for pick in self.picks:
-                key = (pick["player_name"], pick["stat_type"], pick.get("side", "OVER"))
+                key = (
+                    pick["player_name"],
+                    pick["stat_type"],
+                    pick.get("side", "OVER"),
+                    pick.get("model_version", "xl"),
+                )
                 if key not in unique_picks or pick["edge"] > unique_picks[key]["edge"]:
                     unique_picks[key] = pick
 
@@ -946,7 +967,7 @@ class XLPredictionsGenerator:
 
             if duplicates_removed > 0:
                 logger.warning(
-                    f"[WARN]  Removed {duplicates_removed} duplicate picks (same player+market)"
+                    f"[WARN]  Removed {duplicates_removed} duplicate picks (same player+market+model)"
                 )
                 logger.info(
                     f"   Original: {original_count} picks → Deduplicated: {len(self.picks)} picks"
@@ -960,10 +981,14 @@ class XLPredictionsGenerator:
         star_picks = [p for p in self.picks if p.get("filter_tier") == "star_tier"]
         star_player_picks = [p for p in self.picks if p.get("player_name") in STAR_PLAYERS]
 
+        # Count picks by model version
+        xl_picks = [p for p in self.picks if p.get("model_version") == "xl"]
+        v3_picks = [p for p in self.picks if p.get("model_version") == "v3"]
+
         output = {
             "generated_at": datetime.now().isoformat(),
             "date": self.game_date,
-            "strategy": "XL Line Shopping (Softest Line)",
+            "strategy": "XL + V3 Line Shopping (Softest Line)",
             "markets_enabled": list(self.predictors.keys()),
             "total_picks": len(self.picks),
             "picks": self.picks,
@@ -972,6 +997,10 @@ class XLPredictionsGenerator:
                 "by_market": {
                     market: len([p for p in self.picks if p["stat_type"] == market])
                     for market in self.predictors.keys()
+                },
+                "by_model": {
+                    "xl": len(xl_picks),
+                    "v3": len(v3_picks),
                 },
                 "high_confidence": len([p for p in self.picks if p["confidence"] == "HIGH"]),
                 "avg_edge": round(np.mean([p["edge"] for p in self.picks]), 2) if self.picks else 0,
