@@ -19,9 +19,11 @@ import psycopg2
 from nba.config.thresholds import (
     POINTS_CONFIG,
     REBOUNDS_CONFIG,
+    STAKE_SIZING_CONFIG,
     STAR_POINTS_CONFIG,
     STAR_REBOUNDS_CONFIG,
     TRAP_BOOKS,
+    calculate_stake,
     get_market_config,
 )
 
@@ -106,10 +108,13 @@ TRAP_BOOKS_WHEN_SOFTEST = {
 }
 
 # Books that showed reliability when softest in December
+# DFS platforms (Underdog, PrizePicks) typically have softer lines
 RELIABLE_BOOKS_WHEN_SOFTEST = {
     "Underdog",
     "Underdog Fantasy",
     "ESPNBet",
+    "prizepicks",  # Added Jan 31, 2026 - DFS platform with soft lines
+    "PrizePicks",
 }
 
 # =============================================================================
@@ -141,26 +146,29 @@ BLACKLISTED_BOOKS = {
 # =============================================================================
 UNDERDOG_ONLY_MODE = False  # Jan 26, 2026: Disabled for backtest comparison
 
+# DFS platforms with typically softer lines (Underdog + PrizePicks)
+DFS_SOFT_BOOKS = {"underdog", "Underdog", "Underdog Fantasy", "prizepicks", "PrizePicks"}
+
 UNDERDOG_CONFIG = {
     "POINTS": {
         "enabled": True,  # Apply soft-book filter to POINTS
         "min_spread": 0.5,
-        "underdog_names": {"underdog", "Underdog", "Underdog Fantasy"},  # ONLY Underdog - Jan 15
+        "underdog_names": DFS_SOFT_BOOKS,  # Expanded to include PrizePicks - Jan 31, 2026
     },
     "REBOUNDS": {
         "enabled": False,  # KEEP NORMAL FILTERING - was 65-67% WR
         "min_spread": 1.0,
-        "underdog_names": {"underdog", "Underdog", "Underdog Fantasy"},
+        "underdog_names": DFS_SOFT_BOOKS,
     },
     "ASSISTS": {
         "enabled": False,
         "min_spread": 1.5,
-        "underdog_names": {"underdog", "Underdog", "Underdog Fantasy"},
+        "underdog_names": DFS_SOFT_BOOKS,
     },
     "THREES": {
         "enabled": False,
         "min_spread": 1.5,
-        "underdog_names": {"underdog", "Underdog", "Underdog Fantasy"},
+        "underdog_names": DFS_SOFT_BOOKS,
     },
 }
 
@@ -371,27 +379,27 @@ V3_TIER_CONFIG = {
 # ★ REGIME SHIFT FIX: Apply moderate edge filter to STAR tier for POINTS
 # STAR tier was dragging down overall WR: 25% WR with edge 0.3-0.5
 # Edge >= 3.0 balances WR vs volume (edge >= 5 was too aggressive)
-# STAR_TIER_CONFIG - RECALIBRATED Jan 30, 2026
-# POINTS: Uses POINTS_STAR_PLAYERS (5 hot stars, 84.8% WR combined)
-# REBOUNDS: p_over 0.60-0.72 = 72.7% WR (was 52% with 0.55-0.80)
+# STAR_TIER_CONFIG - DISABLED Feb 3, 2026
+# 7-day validation (Jan 27 - Feb 2): 1W-6L (14.3% WR, -72.7% ROI)
+# Star players underperforming vs lines - disable until regime stabilizes
 STAR_TIER_CONFIG = {
     "POINTS": {
-        "enabled": True,  # RE-ENABLED - uses POINTS_STAR_PLAYERS (84.8% WR)
+        "enabled": False,  # DISABLED Feb 3 - 14.3% WR in last 7 days
         "min_p_over": 0.60,
         "max_p_over": 0.85,
         "min_spread": 0.5,
-        "min_line": 15.0,  # Stars have high lines (avg 25+)
+        "min_line": 15.0,
         "max_line": 35.0,
         "min_edge": 0.5,
         "avoid_books_softest": {"betrivers", "BetRivers"},
     },
     "REBOUNDS": {
-        "enabled": True,
+        "enabled": False,  # DISABLED Feb 3 - 14.3% WR in last 7 days
         "min_p_over": 0.60,
-        "max_p_over": 0.75,  # raised from 0.72 - curated star list is pre-vetted
+        "max_p_over": 0.75,
         "min_spread": 0.5,
         "min_line": 4.5,
-        "max_line": 12.0,  # for Wemby/KAT (avg lines ~10)
+        "max_line": 12.0,
         "min_edge": 0.25,
     },
     "ASSISTS": {"enabled": False},
@@ -545,6 +553,7 @@ class LineOptimizer:
         is_home: bool = None,
         underdog_only: bool = None,
         avg_minutes: float = None,
+        volatility_features: Dict[str, float] = None,
     ) -> Optional[Dict]:
         """
         Find best book/line to bet based on model prediction and line shopping.
@@ -961,6 +970,40 @@ class LineOptimizer:
         # Check if underdog-only mode was used
         use_underdog_only = underdog_only if underdog_only is not None else UNDERDOG_ONLY_MODE
 
+        # =============================================================================
+        # VOLATILITY-AWARE STAKE SIZING (Feb 3, 2026)
+        # Uses player volatility features to adjust recommended stake
+        # Low volatility + high confidence = PRESS (increase stake)
+        # High volatility = FADE (decrease stake, even with high confidence)
+        # =============================================================================
+        stake_info = None
+        if volatility_features and STAKE_SIZING_CONFIG.enabled:
+            # Get usage_volatility_score (combined CV of stat + minutes)
+            # Fallback to computing from std/mean if not available
+            vol_score = volatility_features.get("usage_volatility_score", 0.0)
+
+            # If usage_volatility_score not available, compute from std features
+            if vol_score == 0.0:
+                stat_key = stat_type.lower()
+                std_key = f"{stat_key}_std_L5"
+                mean_key = f"ema_{stat_key}_L5"
+                if std_key in volatility_features and mean_key in volatility_features:
+                    std_val = volatility_features.get(std_key, 0.0)
+                    mean_val = volatility_features.get(mean_key, 1.0)
+                    if mean_val > 0:
+                        vol_score = std_val / mean_val  # Coefficient of variation
+
+            stake_info = calculate_stake(
+                p_over=p_over,
+                edge=edge,
+                volatility_score=vol_score,
+                market=stat_type,
+            )
+            logger.debug(
+                f"Stake sizing: {player_name} {stat_type} - "
+                f"vol={vol_score:.3f} → {stake_info['stake_units']}u ({stake_info['stake_label']})"
+            )
+
         return {
             "best_book": best_book,
             "best_line": float(best_line),
@@ -983,6 +1026,7 @@ class LineOptimizer:
                 "penalty_applied": book_penalty_applied,
             },
             "underdog_only_mode": use_underdog_only,
+            "stake_sizing": stake_info,  # NEW: Volatility-aware stake recommendation
         }
 
     def optimize_line_v3(
@@ -994,6 +1038,7 @@ class LineOptimizer:
         p_over: float,
         opponent_team: str = None,
         is_home: bool = None,
+        volatility_features: Dict[str, float] = None,
     ) -> Optional[Dict]:
         """
         V3 line optimizer with UNDER betting support.
@@ -1312,6 +1357,35 @@ class LineOptimizer:
             f"line {best_line:.1f} @ {best_book}, edge {edge:.2f}, p={p_over:.3f}"
         )
 
+        # =============================================================================
+        # VOLATILITY-AWARE STAKE SIZING (Feb 3, 2026)
+        # =============================================================================
+        stake_info = None
+        if volatility_features and STAKE_SIZING_CONFIG.enabled:
+            vol_score = volatility_features.get("usage_volatility_score", 0.0)
+
+            # Fallback: compute from std/mean if not available
+            if vol_score == 0.0:
+                stat_key = stat_type.lower()
+                std_key = f"{stat_key}_std_L5"
+                mean_key = f"ema_{stat_key}_L5"
+                if std_key in volatility_features and mean_key in volatility_features:
+                    std_val = volatility_features.get(std_key, 0.0)
+                    mean_val = volatility_features.get(mean_key, 1.0)
+                    if mean_val > 0:
+                        vol_score = std_val / mean_val
+
+            stake_info = calculate_stake(
+                p_over=p_over,
+                edge=edge,
+                volatility_score=vol_score,
+                market=stat_type,
+            )
+            logger.debug(
+                f"Stake sizing: {player_name} {stat_type} - "
+                f"vol={vol_score:.3f} → {stake_info['stake_units']}u ({stake_info['stake_label']})"
+            )
+
         return {
             "direction": matched_direction,
             "best_book": best_book,
@@ -1331,6 +1405,7 @@ class LineOptimizer:
             "top_3_lines": top_lines,
             "line_distribution": line_distribution,
             "model_version": "v3",
+            "stake_sizing": stake_info,  # NEW: Volatility-aware stake recommendation
         }
 
     # NOTE: apply_odds_api_filter() removed - Odds API filtering is now in

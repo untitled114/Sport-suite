@@ -17,7 +17,7 @@ Builds training dataset from nba_props_xl with:
 - Multiple leakage prevention guards
 
 Temporal Split Strategy:
-- Training: Jan 1, 2023 - Dec 1, 2025 (~35 months, 3 seasons)
+- Training: Oct 24, 2023 - Dec 1, 2025 (~26 months, 2+ seasons)
 - Test: Dec 2, 2025 - Jan 6, 2026 (5 weeks unseen data)
 
 Usage:
@@ -51,16 +51,29 @@ DB_CONFIG = {
     "password": os.getenv("DB_PASSWORD"),
 }
 
+# Games database (for schedule lookup - second pass opponent_team enrichment)
+GAMES_DB_CONFIG = {
+    "host": "localhost",
+    "port": 5537,  # nba_games database
+    "database": "nba_games",
+    "user": os.getenv("DB_USER", "nba_user"),
+    "password": os.getenv("DB_PASSWORD"),
+}
+
 import re
 
 
 def normalize_player_name(name: str) -> str:
     """
     Normalize player name for matching across different data sources.
+
     Handles variations like:
     - T.J. McConnell vs TJ McConnell
-    - P.J. Washington Jr. vs PJ Washington Jr
-    - Jimmy Butler III vs Jimmy Butler
+    - P.J. Washington Jr. vs PJ Washington (REMOVES suffix)
+    - Jimmy Butler III vs Jimmy Butler (REMOVES suffix)
+
+    IMPORTANT: This REMOVES suffixes (Jr, Sr, II, III, IV) to match player_profile
+    which often doesn't include suffixes in the name.
     """
     if not name:
         return name
@@ -68,9 +81,9 @@ def normalize_player_name(name: str) -> str:
     # Remove periods from initials (T.J. -> TJ)
     normalized = re.sub(r"\.", "", name)
 
-    # Normalize suffixes: Jr. -> Jr, III -> III (keep), II -> II (keep)
-    normalized = re.sub(r"\s+Jr\.?$", " Jr", normalized)
-    normalized = re.sub(r"\s+Sr\.?$", " Sr", normalized)
+    # REMOVE suffixes entirely (Jr, Sr, II, III, IV) - player_profile often doesn't have them
+    # Must check AFTER removing periods since suffix might be "Jr." or "Jr"
+    normalized = re.sub(r"\s+(Jr|Sr|II|III|IV|V)\.?$", "", normalized, flags=re.IGNORECASE)
 
     # Remove extra whitespace
     normalized = " ".join(normalized.split())
@@ -81,7 +94,7 @@ def normalize_player_name(name: str) -> str:
 # Temporal split cutoffs (as date objects)
 from datetime import date
 
-TRAIN_START = date(2023, 1, 1)  # Extended start date for retraining (Jan 7, 2026)
+TRAIN_START = date(2023, 10, 24)  # Start of 2023-24 season - matches The Odds API prop coverage
 TRAIN_END = date(2025, 12, 1)  # Training cutoff - includes Nov 2025 season data
 VAL_START = date(2025, 12, 2)  # Test period start (unseen data)
 VAL_END = date(2026, 1, 6)  # Test period end (latest validated data)
@@ -339,6 +352,106 @@ class XLDatasetBuilder:
             still_null_is_home = df["is_home"].isna().sum()
             still_null_opponent = df["opponent_team"].isna().sum()
 
+            # SECOND PASS: Use games schedule to fill remaining opponent_team NULLs
+            # This catches props where player didn't play (DNP/injury) but game happened
+            if still_null_opponent > 0:
+                if self.verbose:
+                    print(
+                        f"   🔄 Second pass: filling {still_null_opponent:,} remaining opponent_team from games schedule..."
+                    )
+
+                # Get player teams from player_profile (need new cursor since previous was closed)
+                cursor2 = conn_players.cursor()
+                cursor2.execute(
+                    """
+                    SELECT full_name, team_abbrev
+                    FROM player_profile
+                    WHERE team_abbrev IS NOT NULL AND team_abbrev != ''
+                """
+                )
+                player_teams = {}
+                for full_name, team_abbrev in cursor2.fetchall():
+                    normalized = normalize_player_name(full_name)
+                    player_teams[normalized] = team_abbrev
+                    player_teams[full_name] = team_abbrev
+                cursor2.close()
+
+                # Get games schedule from nba_games database
+                conn_games = psycopg2.connect(**GAMES_DB_CONFIG)
+                cursor_games = conn_games.cursor()
+
+                # Get all game dates we need
+                missing_dates = df[df["opponent_team"].isna()]["game_date"].unique().tolist()
+                if missing_dates:
+                    cursor_games.execute(
+                        """
+                        SELECT game_date, home_team, away_team
+                        FROM games
+                        WHERE game_date = ANY(%s::date[])
+                    """,
+                        (missing_dates,),
+                    )
+
+                    # Build game lookup: (date, team) -> opponent
+                    game_lookup = {}
+                    for game_date, home_team, away_team in cursor_games.fetchall():
+                        game_lookup[(game_date, home_team)] = (
+                            away_team,
+                            True,
+                        )  # (opponent, is_home)
+                        game_lookup[(game_date, away_team)] = (home_team, False)
+
+                    cursor_games.close()
+                    conn_games.close()
+
+                    # Fill missing opponent_team from games schedule
+                    def fill_from_schedule(row):
+                        if pd.notna(row.get("opponent_team")) and row["opponent_team"] != "":
+                            return row["opponent_team"]
+
+                        # Get player's team
+                        player_name = row["player_name"]
+                        normalized = normalize_player_name(player_name)
+                        player_team = player_teams.get(normalized) or player_teams.get(player_name)
+
+                        if not player_team:
+                            return None
+
+                        # Look up game
+                        game_date = row["game_date"]
+                        result = game_lookup.get((game_date, player_team))
+                        if result:
+                            return result[0]  # opponent
+                        return None
+
+                    def fill_is_home_from_schedule(row):
+                        if pd.notna(row.get("is_home")):
+                            return row["is_home"]
+
+                        player_name = row["player_name"]
+                        normalized = normalize_player_name(player_name)
+                        player_team = player_teams.get(normalized) or player_teams.get(player_name)
+
+                        if not player_team:
+                            return None
+
+                        game_date = row["game_date"]
+                        result = game_lookup.get((game_date, player_team))
+                        if result:
+                            return result[1]  # is_home
+                        return None
+
+                    df["opponent_team"] = df.apply(fill_from_schedule, axis=1)
+                    df["is_home"] = df.apply(fill_is_home_from_schedule, axis=1)
+
+                    # Update counts
+                    filled_count = still_null_opponent - df["opponent_team"].isna().sum()
+                    still_null_opponent = df["opponent_team"].isna().sum()
+                    still_null_is_home = df["is_home"].isna().sum()
+
+                    if self.verbose:
+                        print(f"   ✅ Filled {filled_count:,} more props from games schedule")
+
             # CRITICAL: Warn about missing opponent_team - these props will be skipped
             if still_null_opponent > 0:
                 missing_pct = (still_null_opponent / len(df)) * 100
@@ -588,6 +701,15 @@ class XLDatasetBuilder:
                 is_home=prop.get("is_home", True),  # Fallback only for is_home
                 line=prop.get("consensus_line", prop.get("avg_line", 0)),
             )
+
+            # STRICT POLICY: If None returned, player has insufficient history (<20 games)
+            if features is None:
+                if self.verbose:
+                    print(
+                        f"  ⚠️  SKIP: {prop['player_name']} on {prop['game_date']} - "
+                        f"insufficient game history (<20 games)"
+                    )
+                return None
 
             # Add pre-computed book features from aggregated data
             # ONLY override if the aggregated value exists and is non-zero

@@ -97,6 +97,54 @@ class LiveFeatureExtractor:
         "BRK": "BKN",  # Brooklyn Nets
     }
 
+    # SQL expression to normalize player names (removes accents and suffixes)
+    # Use this on BOTH sides of name comparisons for consistent matching
+    # Handles: Jr./Jr, Sr./Sr, II, III, IV suffixes and periods
+    SQL_NORMALIZE_NAME = """
+        regexp_replace(
+            regexp_replace(
+                unaccent(%s),
+                '\\.',
+                '',
+                'g'
+            ),
+            ' (Jr|Sr|II|III|IV)$',
+            '',
+            'i'
+        )
+    """
+
+    @classmethod
+    def sql_name_match(cls, column: str = "pp.full_name") -> str:
+        """
+        Generate SQL WHERE clause for normalized name matching.
+
+        Returns SQL that compares normalized versions of both the column and parameter.
+        Handles: accents (Jokić→Jokic), suffixes (Jr./Jr/III), periods.
+
+        Args:
+            column: Database column to compare (default: pp.full_name)
+
+        Returns:
+            SQL string with %s placeholder for the player name parameter
+
+        Example:
+            >>> cls.sql_name_match()
+            "regexp_replace(...unaccent(pp.full_name)...) = regexp_replace(...unaccent(%s)...)"
+        """
+        normalize_expr = """regexp_replace(
+            regexp_replace(
+                unaccent({col}),
+                '\\.',
+                '',
+                'g'
+            ),
+            ' (Jr|Sr|II|III|IV)$',
+            '',
+            'i'
+        )"""
+        return f"{normalize_expr.format(col=column)} = {normalize_expr.format(col='%s')}"
+
     @staticmethod
     def normalize_player_name(name: str) -> str:
         """
@@ -242,12 +290,12 @@ class LiveFeatureExtractor:
             Team abbreviation (e.g., 'GSW', 'LAL') or None if not found
         """
         # Try to get team from most recent game log before as_of_date
-        # Use unaccent() to handle accented characters like Dončić -> Doncic
-        query = """
+        # Use normalized name matching to handle accents AND suffixes (Jr./Jr, III, etc.)
+        query = f"""
         SELECT pgl.team_abbrev
         FROM player_game_logs pgl
         JOIN player_profile pp ON pgl.player_id = pp.player_id
-        WHERE unaccent(pp.full_name) = unaccent(%s)
+        WHERE {self.sql_name_match('pp.full_name')}
           AND pgl.game_date <= %s
           AND pgl.team_abbrev IS NOT NULL
         ORDER BY pgl.game_date DESC
@@ -264,11 +312,11 @@ class LiveFeatureExtractor:
             logger.debug(f"Error querying player game logs: {e}")
 
         # Fallback to player_profile if no game logs found
-        # Also use unaccent() for consistency
-        query_profile = """
+        # Use normalized name matching for consistency
+        query_profile = f"""
         SELECT team_abbrev
         FROM player_profile
-        WHERE unaccent(full_name) = unaccent(%s)
+        WHERE {self.sql_name_match('full_name')}
         """
 
         try:
@@ -284,7 +332,14 @@ class LiveFeatureExtractor:
 
     def get_team_rolling_stats(self, team_abbrev, as_of_date, opponent_abbrev=None, window=10):
         """
-        Get team's rolling statistics from recent games.
+        Get team's rolling statistics from team_season_stats (primary) with validation.
+
+        Priority order (uses team_season_stats which has verified correct data):
+        1. team_season_stats (most recent season) - PRIMARY SOURCE
+        2. League average defaults - FALLBACK
+
+        Note: team_game_logs was previously used but contains incorrect pace values
+        (170+ instead of expected 95-105 range). Using season stats until game logs are fixed.
 
         Args:
             team_abbrev: Team abbreviation (e.g., 'GSW')
@@ -298,42 +353,7 @@ class LiveFeatureExtractor:
         # Normalize team abbreviation
         team_abbrev = self.normalize_team_abbrev(team_abbrev)
 
-        # Query team_game_logs for recent games
-        query = """
-        SELECT pace, offensive_rating, defensive_rating
-        FROM team_game_logs
-        WHERE team_abbrev = %s
-          AND game_date < %s
-          AND pace IS NOT NULL
-          AND offensive_rating IS NOT NULL
-          AND defensive_rating IS NOT NULL
-        ORDER BY game_date DESC
-        LIMIT %s
-        """
-
-        try:
-            df = pd.read_sql_query(query, self.games_conn, params=(team_abbrev, as_of_date, window))
-
-            if len(df) >= 5:
-                # Sufficient data - use rolling averages
-                stats = {
-                    "pace": float(df["pace"].mean()),
-                    "off_rating": float(df["offensive_rating"].mean()),
-                    "def_rating": float(df["defensive_rating"].mean()),
-                }
-                return stats
-            elif len(df) > 0:
-                # Some data but < 5 games - use what we have (no warning needed)
-                stats = {
-                    "pace": float(df["pace"].mean()),
-                    "off_rating": float(df["offensive_rating"].mean()),
-                    "def_rating": float(df["defensive_rating"].mean()),
-                }
-                return stats
-        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
-            logger.debug(f"Error querying team_game_logs for {team_abbrev}: {e}")
-
-        # Fallback to season averages if insufficient game logs
+        # PRIMARY: Use team_season_stats (verified correct data)
         season_query = """
         SELECT pace, offensive_rating, defensive_rating
         FROM team_season_stats
@@ -347,37 +367,40 @@ class LiveFeatureExtractor:
                 cur.execute(season_query, (team_abbrev,))
                 result = cur.fetchone()
                 if result and result[0] is not None:
-                    # Successfully found season averages (no warning needed)
-                    return {
-                        "pace": float(result[0]),
-                        "off_rating": float(result[1]) if result[1] else 110.0,
-                        "def_rating": float(result[2]) if result[2] else 110.0,
-                    }
+                    pace = float(result[0])
+                    # Validate pace is in expected NBA range (90-110)
+                    if 90.0 <= pace <= 115.0:
+                        return {
+                            "pace": pace,
+                            "off_rating": float(result[1]) if result[1] else 110.0,
+                            "def_rating": float(result[2]) if result[2] else 110.0,
+                        }
+                    else:
+                        logger.debug(f"Invalid pace {pace} for {team_abbrev}, using defaults")
         except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error querying team_season_stats for {team_abbrev}: {e}")
 
-        # Last resort - return league average defaults (no warning, this is expected for some teams)
+        # FALLBACK: League average defaults
         logger.debug(f"Using league defaults for {team_abbrev}")
-        return {"pace": 98.0, "off_rating": 110.0, "def_rating": 110.0}
+        return {"pace": 100.0, "off_rating": 112.0, "def_rating": 112.0}
 
-    def get_recent_games(self, player_name, as_of_date, n_games=20, min_games_threshold=18):
+    def get_recent_games(self, player_name, as_of_date, n_games=20, min_games_threshold=20):
         """
-        Get player's recent games with cross-season fallback for exact deficit.
+        Get player's recent games with strict 20-game requirement.
 
-        Cross-Season Logic:
-        - Fetch current season games (up to n_games)
-        - If < min_games_threshold, calculate exact deficit and fetch from previous season
-        - Only fetch EXACTLY the number of missing games (not more)
-        - If can't fill to min_games_threshold, return what we have
+        Policy (Updated 2026-02-02):
+        - For January/February props: Use 20 random games from previous season (early season)
+        - For 0 games in current season: Fetch last 20 from previous season
+        - If still < 20 games total: Return None (player will be dropped from training)
 
         Args:
             player_name: Player's full name
             as_of_date: Date to query games before (datetime or string)
-            n_games: Target number of games (default 20)
-            min_games_threshold: Minimum acceptable games before cross-season fallback (default 18)
+            n_games: Target number of games (default 20) - STRICT requirement
+            min_games_threshold: Minimum games required (default 20) - must meet this or return None
 
         Returns:
-            DataFrame with games in chronological order (may be < n_games if insufficient data)
+            DataFrame with games in chronological order, or None if insufficient data
         """
         if isinstance(as_of_date, str):
             as_of_date = pd.to_datetime(as_of_date)
@@ -385,8 +408,75 @@ class LiveFeatureExtractor:
         # Normalize player name (Jr vs Jr., etc.)
         player_name = self.normalize_player_name(player_name)
 
-        # Query 1: Fetch current season games
-        current_season_query = """
+        # Helper to get season label (START year convention)
+        def season_label_start_year(date_obj):
+            return date_obj.year if date_obj.month >= 10 else date_obj.year - 1
+
+        current_season_start = season_label_start_year(as_of_date)
+        prev_season_label = current_season_start - 1
+
+        # Check if this is January or February (early season - use previous season data)
+        is_early_season = as_of_date.month in (1, 2)
+
+        if is_early_season:
+            # EARLY SEASON POLICY: Use 20 random games from previous season
+            # This avoids using limited current season data for early-season props
+            logger.info(
+                f"{player_name}: Early season ({as_of_date.strftime('%b')}), "
+                f"using random 20 games from {prev_season_label} season"
+            )
+
+            # Fetch ALL previous season games, then sample 20 randomly
+            prev_season_all_query = f"""
+            SELECT
+                pgl.game_date,
+                pgl.is_home,
+                pgl.minutes_played,
+                pgl.points,
+                pgl.rebounds,
+                pgl.assists,
+                pgl.three_pointers_made,
+                pgl.three_pt_attempted,
+                pgl.steals,
+                pgl.blocks,
+                pgl.turnovers,
+                pgl.fg_made,
+                pgl.fg_attempted,
+                pgl.ft_made,
+                pgl.ft_attempted,
+                pgl.plus_minus
+            FROM player_game_logs pgl
+            JOIN player_profile pp ON pgl.player_id = pp.player_id
+            WHERE {self.sql_name_match('pp.full_name')}
+              AND pgl.season = %s
+            ORDER BY pgl.game_date DESC
+            """
+
+            prev_games = pd.read_sql_query(
+                prev_season_all_query,
+                self.conn,
+                params=(player_name, prev_season_label),
+            )
+            prev_games = self._dedupe_and_sort_games(prev_games)
+
+            if len(prev_games) >= n_games:
+                # Sample 20 random games from previous season
+                sampled = prev_games.sample(n=n_games, random_state=42)
+                return sampled.sort_values("game_date")
+            elif len(prev_games) > 0:
+                logger.warning(
+                    f"{player_name}: Only {len(prev_games)} games in {prev_season_label} season "
+                    f"(need {n_games}), dropping player"
+                )
+                return None  # Not enough games - drop player
+            else:
+                logger.warning(
+                    f"{player_name}: No games found in {prev_season_label} season, dropping player"
+                )
+                return None  # No previous season data - drop player
+
+        # REGULAR SEASON POLICY: Fetch current season games first
+        current_season_query = f"""
         SELECT
             pgl.game_date,
             pgl.is_home,
@@ -406,7 +496,7 @@ class LiveFeatureExtractor:
             pgl.plus_minus
         FROM player_game_logs pgl
         JOIN player_profile pp ON pgl.player_id = pp.player_id
-        WHERE unaccent(pp.full_name) = unaccent(%s)
+        WHERE {self.sql_name_match('pp.full_name')}
           AND pgl.game_date < %s
         ORDER BY pgl.game_date DESC
         LIMIT %s
@@ -423,15 +513,56 @@ class LiveFeatureExtractor:
         if current_count >= n_games:
             return current_games.sort_values("game_date")
 
-        # If we're close enough to threshold, return what we have
-        if current_count >= min_games_threshold:
-            logger.debug(
-                f"{player_name}: {current_count}/{n_games} games "
-                f"(sufficient, threshold={min_games_threshold})"
+        # FALLBACK: If 0 games in current window, fetch last 20 from previous season
+        if current_count == 0:
+            logger.info(
+                f"{player_name}: 0 games in current season, "
+                f"fetching last 20 from {prev_season_label} season"
             )
-            return current_games.sort_values("game_date")
 
-        # Calculate EXACT deficit to reach n_games
+            prev_season_query = f"""
+            SELECT
+                pgl.game_date,
+                pgl.is_home,
+                pgl.minutes_played,
+                pgl.points,
+                pgl.rebounds,
+                pgl.assists,
+                pgl.three_pointers_made,
+                pgl.three_pt_attempted,
+                pgl.steals,
+                pgl.blocks,
+                pgl.turnovers,
+                pgl.fg_made,
+                pgl.fg_attempted,
+                pgl.ft_made,
+                pgl.ft_attempted,
+                pgl.plus_minus
+            FROM player_game_logs pgl
+            JOIN player_profile pp ON pgl.player_id = pp.player_id
+            WHERE {self.sql_name_match('pp.full_name')}
+              AND pgl.season = %s
+            ORDER BY pgl.game_date DESC
+            LIMIT %s
+            """
+
+            prev_games = pd.read_sql_query(
+                prev_season_query,
+                self.conn,
+                params=(player_name, prev_season_label, n_games),
+            )
+            prev_games = self._dedupe_and_sort_games(prev_games)
+
+            if len(prev_games) >= n_games:
+                return prev_games.sort_values("game_date")
+            else:
+                logger.warning(
+                    f"{player_name}: Only {len(prev_games)} games in previous season "
+                    f"(need {n_games}), dropping player"
+                )
+                return None  # Not enough games - drop player
+
+        # CROSS-SEASON FILL: Have some current games but < 20, fill from previous season
         deficit = n_games - current_count
 
         logger.info(
@@ -439,16 +570,7 @@ class LiveFeatureExtractor:
             f"fetching exactly {deficit} from previous season"
         )
 
-        # Query 2: Fetch EXACTLY deficit games from previous season
-        # Use START year convention for season labels (matches historical data)
-        # e.g., 2024-25 season = season 2024, 2025-26 season = season 2025
-        def season_label_start_year(date_obj):
-            return date_obj.year if date_obj.month >= 10 else date_obj.year - 1
-
-        current_season_start = season_label_start_year(as_of_date)
-        prev_season_label = current_season_start - 1
-
-        previous_season_query = """
+        previous_season_query = f"""
         SELECT
             pgl.game_date,
             pgl.is_home,
@@ -468,7 +590,7 @@ class LiveFeatureExtractor:
             pgl.plus_minus
         FROM player_game_logs pgl
         JOIN player_profile pp ON pgl.player_id = pp.player_id
-        WHERE unaccent(pp.full_name) = unaccent(%s)
+        WHERE {self.sql_name_match('pp.full_name')}
           AND pgl.season = %s
           AND pgl.game_date < %s
         ORDER BY pgl.game_date DESC
@@ -485,26 +607,23 @@ class LiveFeatureExtractor:
         previous_count = len(previous_games)
         total_games = current_count + previous_count
 
-        # Log result
-        if previous_count < deficit:
+        # STRICT CHECK: Must have at least 20 games total
+        if total_games < min_games_threshold:
             logger.warning(
                 f"{player_name}: Only {total_games} total games "
                 f"({previous_count} previous + {current_count} current), "
-                f"could not fill deficit of {deficit}"
+                f"need {min_games_threshold}, dropping player"
             )
-        else:
-            logger.info(
-                f"{player_name}: Combined {previous_count} previous + "
-                f"{current_count} current = {total_games} total games"
-            )
+            return None  # Not enough games - drop player
+
+        logger.info(
+            f"{player_name}: Combined {previous_count} previous + "
+            f"{current_count} current = {total_games} total games"
+        )
 
         # Combine games: previous season games first (oldest), then current season
-        if previous_count > 0:
-            combined_games = pd.concat([previous_games, current_games], ignore_index=True)
-            return combined_games.sort_values("game_date")
-        else:
-            # No previous season games available, return current only
-            return current_games.sort_values("game_date")
+        combined_games = pd.concat([previous_games, current_games], ignore_index=True)
+        return combined_games.sort_values("game_date")
 
     def _dedupe_and_sort_games(self, games_df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -561,13 +680,14 @@ class LiveFeatureExtractor:
         stat_column = stat_column_map.get(stat_type, "points")
 
         # Query all H2H games before as_of_date
+        # Use normalized name matching to handle suffixes (Jr./Jr, III, etc.)
         query = f"""
         SELECT
             pgl.game_date,
             pgl.{stat_column} as stat_value
         FROM player_game_logs pgl
         JOIN player_profile pp ON pgl.player_id = pp.player_id
-        WHERE unaccent(pp.full_name) = unaccent(%s)
+        WHERE {self.sql_name_match('pp.full_name')}
           AND pgl.opponent_abbrev = %s
           AND pgl.game_date < %s
         ORDER BY pgl.game_date DESC
@@ -624,7 +744,7 @@ class LiveFeatureExtractor:
         SELECT pgl.game_date
         FROM player_game_logs pgl
         JOIN player_profile pp ON pgl.player_id = pp.player_id
-        WHERE unaccent(pp.full_name) = unaccent(%s)
+        WHERE {self.sql_name_match('pp.full_name')}
           AND pgl.game_date < %s
           AND pgl.{stat} >= %s
         ORDER BY pgl.game_date DESC
@@ -702,14 +822,15 @@ class LiveFeatureExtractor:
             as_of_date = pd.to_datetime(as_of_date)
 
         # Query game logs with win/loss info (using plus_minus as proxy)
-        query = """
+        # Use normalized name matching to handle suffixes (Jr./Jr, III, etc.)
+        query = f"""
         SELECT
             pgl.game_date,
             pgl.is_home,
             pgl.plus_minus
         FROM player_game_logs pgl
         JOIN player_profile pp ON pgl.player_id = pp.player_id
-        WHERE unaccent(pp.full_name) = unaccent(%s)
+        WHERE {self.sql_name_match('pp.full_name')}
           AND pgl.game_date < %s
           AND pgl.plus_minus IS NOT NULL
         ORDER BY pgl.game_date DESC
@@ -810,42 +931,21 @@ class LiveFeatureExtractor:
         """
         Get opponent's defensive efficiency (points allowed per possession).
 
+        Uses team_season_stats as primary source (verified correct data).
+
         Args:
             opponent_team: Team abbreviation (e.g., 'GSW', 'LAL')
             as_of_date: Date to calculate stats as of (datetime or string)
-            window: Number of games to include (default 10)
+            window: Number of games to include (default 10, unused - using season stats)
 
         Returns:
             Points allowed per possession (e.g., 1.08 = 108 points per 100 possessions)
         """
         if opponent_team is None:
-            return 1.1  # League average default
+            return 1.12  # League average default
 
-        query = """
-        SELECT defensive_rating
-        FROM team_game_logs
-        WHERE team_abbrev = %s
-          AND game_date < %s
-          AND defensive_rating IS NOT NULL
-        ORDER BY game_date DESC
-        LIMIT %s
-        """
-
-        try:
-            df = pd.read_sql_query(
-                query, self.games_conn, params=(opponent_team, as_of_date, window)
-            )
-
-            if len(df) >= 3:
-                # Defensive rating is already per 100 possessions, convert to per possession
-                avg_def_rating = df["defensive_rating"].mean()
-                return float(avg_def_rating / 100.0)  # Convert 110.0 → 1.10
-            else:
-                # Not enough data, use season average
-                return self._get_opponent_season_def_rating(opponent_team)
-        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
-            logger.debug(f"Error querying opponent defensive efficiency: {e}")
-            return 1.1
+        # Use team_season_stats directly (team_game_logs has incorrect data)
+        return self._get_opponent_season_def_rating(opponent_team)
 
     def _get_opponent_season_def_rating(self, opponent_team):
         """Fallback: Get opponent's season-long defensive rating"""
@@ -866,7 +966,73 @@ class LiveFeatureExtractor:
         except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error querying season defensive rating: {e}")
 
-        return 1.1  # League average
+        return 1.12  # League average (~112 points per 100 possessions)
+
+    def get_opponent_position_defense(self, opponent_team, position_encoded):
+        """
+        Get opponent's defensive rating against a specific position.
+
+        Uses position-specific defense columns from team_season_stats:
+        - def_rating_vs_pg (position 1-1.5)
+        - def_rating_vs_sg (position 2)
+        - def_rating_vs_sf (position 2.5-3.5)
+        - def_rating_vs_pf (position 4)
+        - def_rating_vs_c (position 4.5-5)
+
+        Args:
+            opponent_team: Team abbreviation (e.g., 'BOS', 'LAL')
+            position_encoded: Player's position (1=PG, 2=SG, 3=SF, 4=PF, 5=C)
+
+        Returns:
+            Points allowed per possession vs that position (e.g., 1.02 = 102 per 100 poss)
+        """
+        if not opponent_team:
+            return 1.12  # League average default
+
+        # Normalize opponent team
+        opponent_team = self.normalize_team_abbrev(opponent_team)
+
+        # Map position_encoded to column name
+        # 1-1.5 = PG, 2 = SG, 2.5-3.5 = SF, 4 = PF, 4.5-5 = C
+        if position_encoded <= 1.5:
+            pos_col = "def_rating_vs_pg"
+        elif position_encoded <= 2.25:
+            pos_col = "def_rating_vs_sg"
+        elif position_encoded <= 3.5:
+            pos_col = "def_rating_vs_sf"
+        elif position_encoded <= 4.25:
+            pos_col = "def_rating_vs_pf"
+        else:
+            pos_col = "def_rating_vs_c"
+
+        # Query position-specific defense, preferring seasons with real data
+        # Check if position-specific data varies from overall (indicates real data vs placeholder)
+        query = f"""
+        SELECT {pos_col}, defensive_rating,
+               ABS(def_rating_vs_pg - def_rating_vs_c) as pos_variance
+        FROM team_season_stats
+        WHERE team_abbrev = %s
+          AND {pos_col} IS NOT NULL
+        ORDER BY
+            CASE WHEN ABS(def_rating_vs_pg - def_rating_vs_c) > 1 THEN 0 ELSE 1 END,  -- Prefer real variance
+            season DESC
+        LIMIT 1
+        """
+
+        try:
+            with self.team_conn.cursor() as cur:
+                cur.execute(query, (opponent_team,))
+                result = cur.fetchone()
+                if result and result[0] is not None:
+                    # Position-specific rating (convert Decimal to float first)
+                    return float(result[0]) / 100.0  # Convert to per possession
+                elif result and result[1] is not None:
+                    # Fallback to overall defensive rating
+                    return float(result[1] / 100.0)
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
+            logger.debug(f"Error querying position defense for {opponent_team}: {e}")
+
+        return 1.12  # League average
 
     def get_opponent_def_rating_L3(self, opponent_team, as_of_date):
         """
@@ -1262,11 +1428,12 @@ class LiveFeatureExtractor:
         # Normalize player name
         player_name = self.normalize_player_name(player_name)
 
-        query = """
+        # Use normalized name matching to handle suffixes (Jr./Jr, III, etc.)
+        query = f"""
         SELECT pgl.minutes_played
         FROM player_game_logs pgl
         JOIN player_profile pp ON pgl.player_id = pp.player_id
-        WHERE unaccent(pp.full_name) = unaccent(%s)
+        WHERE {self.sql_name_match('pp.full_name')}
           AND pgl.game_date < %s
           AND pgl.minutes_played IS NOT NULL
         ORDER BY pgl.game_date DESC
@@ -1292,6 +1459,88 @@ class LiveFeatureExtractor:
         except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error calculating starter ratio for {player_name}: {e}")
             return 0.5
+
+    def get_position_encoded(self, player_name):
+        """
+        Get player's position encoded as a numeric value.
+
+        Encoding: 1=PG, 2=SG, 3=SF, 4=PF, 5=C, 0=unknown
+
+        First tries player_profile.position, then infers from stats pattern
+        (guards have higher AST/REB ratio, centers have higher REB/AST ratio).
+
+        Args:
+            player_name: Player's full name
+
+        Returns:
+            Encoded position (1-5) or 3.0 (forward) as default
+        """
+        # Position encoding map
+        position_map = {
+            "PG": 1,
+            "G": 1.5,
+            "SG": 2,
+            "SF": 3,
+            "F": 3.5,
+            "PF": 4,
+            "C": 5,
+            "F-C": 4.5,
+            "G-F": 2.5,
+        }
+
+        # Normalize player name for matching
+        normalized_name = self.normalize_player_name(player_name)
+
+        try:
+            # Try to get position from player_profile
+            query = """
+            SELECT position
+            FROM player_profile
+            WHERE LOWER(full_name) = LOWER(%s)
+            LIMIT 1
+            """
+            with self.conn.cursor() as cur:
+                cur.execute(query, (normalized_name,))
+                result = cur.fetchone()
+
+                if result and result[0]:
+                    pos = result[0].upper().strip()
+                    return position_map.get(pos, 3.0)
+
+            # Fallback: Infer position from recent stats pattern
+            # Guards: Higher AST/REB ratio
+            # Centers: Higher REB/AST ratio
+            stats_query = """
+            SELECT AVG(pgl.assists) as avg_ast, AVG(pgl.rebounds) as avg_reb
+            FROM player_game_logs pgl
+            JOIN player_profile pp ON pgl.player_id = pp.player_id
+            WHERE LOWER(pp.full_name) = LOWER(%s)
+            """
+            with self.conn.cursor() as cur:
+                cur.execute(stats_query, (normalized_name,))
+                result = cur.fetchone()
+
+                if result and result[0] is not None and result[1] is not None:
+                    avg_ast = float(result[0])
+                    avg_reb = float(result[1])
+
+                    # Infer position from AST/REB ratio
+                    if avg_reb == 0:
+                        ratio = 10.0  # High AST, low REB = likely guard
+                    else:
+                        ratio = avg_ast / avg_reb
+
+                    if ratio > 1.2:  # High AST relative to REB
+                        return 1.5  # Guard (PG/SG average)
+                    elif ratio > 0.6:  # Balanced
+                        return 3.0  # Forward (SF)
+                    else:  # Low AST relative to REB
+                        return 4.5  # Big (PF/C average)
+
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
+            logger.debug(f"Error getting position for {player_name}: {e}")
+
+        return 3.0  # Default to forward if unknown
 
     def get_injured_teammates_count(self, player_name, team_abbrev, game_date):
         """
@@ -1393,13 +1642,14 @@ class LiveFeatureExtractor:
 
         try:
             # Step 1: Get player's last N game dates
+            # Use normalized name matching to handle suffixes (Jr./Jr, III, etc.)
             with self.conn.cursor() as cur:
                 cur.execute(
-                    """
+                    f"""
                     SELECT DISTINCT pgl.game_date
                     FROM player_game_logs pgl
                     JOIN player_profile pp ON pgl.player_id = pp.player_id
-                    WHERE unaccent(pp.full_name) = unaccent(%s)
+                    WHERE {self.sql_name_match('pp.full_name')}
                       AND pgl.game_date < %s
                     ORDER BY pgl.game_date DESC
                     LIMIT %s
@@ -1571,13 +1821,14 @@ class LiveFeatureExtractor:
                 game_date = datetime.strptime(game_date, "%Y-%m-%d")
 
             # Query player's recent games vs this opponent
+            # Use normalized name matching to handle suffixes (Jr./Jr, III, etc.)
             with self.conn.cursor() as cur:
                 cur.execute(
-                    """
+                    f"""
                     SELECT COUNT(*) as matchup_count
                     FROM player_game_logs pgl
                     JOIN player_profile pp ON pgl.player_id = pp.player_id
-                    WHERE unaccent(pp.full_name) = unaccent(%s)
+                    WHERE {self.sql_name_match('pp.full_name')}
                       AND pgl.opponent_abbrev = %s
                       AND pgl.game_date < %s
                       AND pgl.game_date >= %s - INTERVAL '30 days'
@@ -1626,23 +1877,29 @@ class LiveFeatureExtractor:
         if isinstance(game_date, str):
             game_date = pd.to_datetime(game_date)
 
-        # Get recent games (with cross-season fallback if needed)
+        # Get recent games (with strict 20-game requirement)
         recent_games = self.get_recent_games(
-            player_name, game_date, n_games=20, min_games_threshold=18
+            player_name, game_date, n_games=20, min_games_threshold=20
         )
+
+        # STRICT POLICY: If None returned, player doesn't have enough history
+        # Return None to signal that this prop should be dropped from training
+        if recent_games is None:
+            logger.warning(
+                f"{player_name}: Insufficient game history (<20 games), "
+                f"returning None to drop from training"
+            )
+            return None
 
         total_games = len(recent_games)
 
-        if total_games == 0:
-            # No history - return defaults (but try to get real team context)
-            return self._get_default_features(is_home, player_name, game_date)
-
-        # Warn if insufficient data but continue
-        if total_games < 18:
+        # This should not happen with the new policy, but keep as safety check
+        if total_games < 20:
             logger.warning(
-                f"{player_name}: Only {total_games} games available, "
-                f"features may be less reliable (target: 20 games)"
+                f"{player_name}: Only {total_games} games available (<20 required), "
+                f"returning None to drop from training"
             )
+            return None
 
         # Calculate EMA features for L3, L5, L10, L20 windows
         features = {}
@@ -1795,7 +2052,13 @@ class LiveFeatureExtractor:
         else:
             features["points_per_minute_L5"] = 0.5
 
-        features["efficiency_vs_context"] = 100.0
+        # efficiency_vs_context: Player's scoring efficiency relative to matchup context
+        # Computed as: (player TS% L10) / (opponent allowed TS% L10) * 100
+        # Values > 100 = player more efficient than opponent typically allows
+        player_ts = features.get("true_shooting_L10", 0.55)
+        opp_def_rating = features.get("opponent_def_rating", 112.0)
+        # Higher opponent def_rating = worse defense = higher efficiency expected
+        features["efficiency_vs_context"] = (player_ts / 0.55) * (opp_def_rating / 112.0) * 100.0
 
         # Calculate resistance-adjusted L3 points based on opponent defensive strength
         # Uses player's raw L3 points and adjusts for opponent's L3 defensive rating
@@ -1817,7 +2080,12 @@ class LiveFeatureExtractor:
         projected_minutes = features["ema_minutes_L5"]  # Use EMA L5 minutes as projection
         shot_volume = fg_attempts_per_min * projected_minutes * (features["team_pace"] / 100.0)
         features["shot_volume_proxy"] = shot_volume
-        features["game_velocity"] = 100.0
+        # game_velocity: Expected game pace relative to league average (100)
+        # Computed as: (team_pace + opponent_pace) / 2 / league_avg_pace * 100
+        league_avg_pace = 100.0
+        features["game_velocity"] = (
+            (features["team_pace"] + features["opponent_pace"]) / 2 / league_avg_pace * 100.0
+        )
         features["days_rest_copy"] = features["days_rest"]
 
         # REAL opponent and venue features
@@ -1844,17 +2112,26 @@ class LiveFeatureExtractor:
             features["pace_diff"] = 0.0
             features["altitude_flag"] = 0.0
 
-        features["expected_possessions"] = 100.0
+        # expected_possessions: Player's expected possessions based on usage and team pace
+        # Computed as: projected_possessions * player_usage_estimate
+        player_usage_estimate = features.get("bench_points_ratio", 0.8)  # Higher for starters
+        features["expected_possessions"] = features["projected_possessions"] * player_usage_estimate
 
         # Season/venue
         features["season_phase"] = self.calculate_season_phase(game_date)
-        features["starter_flag"] = 1.0
+
         # bench_points_ratio: ratio of L10 games where player started (28+ min)
         # Higher = more likely a starter (1.0 = always starts, 0.0 = pure bench)
         features["bench_points_ratio"] = self.get_starter_ratio(
             player_name, game_date, window=10, minutes_threshold=28
         )
-        features["position_encoded"] = 1.0
+        # starter_flag: Use the computed bench_points_ratio (not hardcoded)
+        # 1.0 = always starts, 0.0 = pure bench player
+        features["starter_flag"] = features["bench_points_ratio"]
+
+        # position_encoded: Encode player's primary position
+        # 1=PG, 2=SG, 3=SF, 4=PF, 5=C (0 if unknown)
+        features["position_encoded"] = self.get_position_encoded(player_name)
 
         # Teammate/injury - REAL teammate usage and injury calculation
         if player_team:
@@ -1873,14 +2150,17 @@ class LiveFeatureExtractor:
             features["injured_teammates_count"] = 0.0
             features["teammate_absences_last_3"] = 0.0
 
-        # Matchup - REAL defensive efficiency
+        # Matchup - Position-specific defensive efficiency
+        # Uses opponent's defense rating against player's position (PG/SG/SF/PF/C)
         if opponent_team:
-            features["opponent_allowed_points_per_pos"] = self.get_opponent_defensive_efficiency(
-                opponent_team, game_date, window=10
+            features["opponent_allowed_points_per_pos"] = self.get_opponent_position_defense(
+                opponent_team, features.get("position_encoded", 3.0)
             )
         else:
-            features["opponent_allowed_points_per_pos"] = 1.1
-        features["projected_team_possessions"] = 100.0
+            features["opponent_allowed_points_per_pos"] = 1.12  # League average
+
+        # projected_team_possessions: Same as projected_possessions (team's expected possessions)
+        features["projected_team_possessions"] = features["projected_possessions"]
 
         # H2H - REAL head-to-head statistics
         if opponent_team:
@@ -2048,7 +2328,7 @@ class LiveFeatureExtractor:
                 "avg_teammate_usage": 0.20,  # Default 20% usage rate
                 "injured_teammates_count": 0.0,
                 "teammate_absences_last_3": 0.0,
-                "opponent_allowed_points_per_pos": 1.1,
+                "opponent_allowed_points_per_pos": 1.12,
                 "matchup_advantage_score": 0.0,  # Default neutral matchup
                 "projected_team_possessions": 100.0,
                 "h2h_avg_points": 15.0,

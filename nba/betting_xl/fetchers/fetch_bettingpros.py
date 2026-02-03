@@ -41,17 +41,18 @@ class BettingProsFetcher(BaseFetcher):
         "threes": 162,
     }
 
-    # Priority sportsbooks (7 active books for line shopping)
-    # REMOVED: bet365 (24) - API returns binary/HTML since Jan 2026
-    # REMOVED: fanatics - API consistently errors
+    # Priority sportsbooks (9 active books for line shopping)
+    # NOTE: bet365 (24) tested 2026-01-30 - API works but returns 0 props (they don't offer NBA player props)
     PRIORITY_BOOKS = {
         12: "draftkings",
         10: "fanduel",
         19: "betmgm",
         13: "caesars",
+        14: "fanatics",  # Re-added 2026-01-30 - now working (117 props)
         18: "betrivers",
         33: "espnbet",
         36: "underdog",  # DFS site - typically softer lines
+        37: "prizepicks",  # DFS site - added 2026-02-01, historical data back to Oct 2023
     }
 
     # Markets not supported by certain books (skip to avoid noise)
