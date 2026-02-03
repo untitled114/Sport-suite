@@ -11,6 +11,7 @@ Features: 78 player features + 20 book features = 98 total
 import logging
 import os
 import warnings
+from typing import Any, Dict, Optional
 
 import numpy as np
 import pandas as pd
@@ -78,7 +79,9 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
         # mongo_uri = f"mongodb://{mongo_user}:{mongo_pass}@localhost:27017/"
         logger.debug("MongoDB disabled - using PostgreSQL for all features")
 
-    def extract_book_features_mongo(self, player_name, game_date, stat_type):
+    def extract_book_features_mongo(
+        self, player_name, game_date, stat_type
+    ) -> Optional[Dict[str, float]]:
         """
         Extract book features from MongoDB (pre-computed in line_shopping subdocument).
         This is the preferred method as features are pre-computed during prop loading.
@@ -144,7 +147,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
             logger.debug(f"MongoDB book feature extraction failed: {e}")
             return None
 
-    def extract_book_features(self, player_name, game_date, stat_type):
+    def extract_book_features(self, player_name, game_date, stat_type) -> Dict[str, float]:
         """
         Extract 23 book disagreement features (MongoDB preferred, PostgreSQL fallback).
 
@@ -391,7 +394,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
         }
         return book_map.get(book_name.lower() if book_name else "", 0.0)
 
-    def _get_default_book_features(self):
+    def _get_default_book_features(self) -> Dict[str, float]:
         """
         Return default book features when no multi-book props available.
         Used for historical training data or when line shopping not available.
@@ -497,6 +500,11 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
             player_name, game_date, is_home, opponent_team, line, source, spread_diff, total_diff
         )
 
+        # STRICT POLICY: If None returned, player has insufficient history (<20 games)
+        # Propagate None to caller to signal this player should be dropped
+        if player_features is None:
+            return None
+
         if not include_book_features:
             # Return only player features (for historical training without multi-book data)
             return player_features
@@ -537,11 +545,25 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
         cheatsheet_features = self.extract_cheatsheet_features(player_name, game_date, stat_type)
         player_features.update(cheatsheet_features)
 
-        # Total: 82 (base+new) + 23 (book) + 36 (H2H) + 12 (prop) + 2 (vegas) + 5 (team betting) + 8 (cheatsheet) = ~168 features
+        # Add V3-specific features (33 features for enhanced models)
+        v3_features = self.extract_v3_features(
+            player_name=player_name,
+            game_date=game_date,
+            stat_type=stat_type,
+            opponent_team=opponent_team,
+            is_home=is_home,
+            line=line,
+            existing_features=player_features,
+        )
+        player_features.update(v3_features)
+
+        # Total: ~168+ features (varies by availability)
         # Note: expected_diff (1 feature) will be added by classifier head during training
         return player_features
 
-    def extract_h2h_matchup_features(self, player_name, opponent_team, stat_type, game_date):
+    def extract_h2h_matchup_features(
+        self, player_name, opponent_team, stat_type, game_date
+    ) -> Dict[str, float]:
         """
         Extract 32 head-to-head matchup features from matchup_history table.
 
@@ -632,7 +654,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
             )
             return self._get_default_h2h_features()
 
-    def _get_default_h2h_features(self):
+    def _get_default_h2h_features(self) -> Dict[str, float]:
         """Return zero-filled H2H features when no matchup history exists (36 features)"""
         features = {
             "h2h_games": 0,
@@ -651,7 +673,9 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
 
         return features
 
-    def extract_prop_history_features(self, player_name, stat_type, line, game_date, is_home):
+    def extract_prop_history_features(
+        self, player_name, stat_type, line, game_date, is_home
+    ) -> Dict[str, float]:
         """
         Extract 12 prop performance history features from prop_performance_history table.
 
@@ -738,7 +762,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
             )
             return self._get_default_prop_features()
 
-    def _get_default_prop_features(self):
+    def _get_default_prop_features(self) -> Dict[str, float]:
         """Return neutral prop features when no history exists"""
         return {
             "prop_hit_rate_L20": 0.5,
@@ -755,7 +779,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
             "prop_sample_size_L20": 0,
         }
 
-    def extract_vegas_context(self, player_name, game_date, is_home):
+    def extract_vegas_context(self, player_name, game_date, is_home) -> Dict[str, float]:
         """
         Extract Vegas context features (total, spread) from games table.
 
@@ -817,7 +841,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
             logger.debug(f"Error extracting vegas context for {player_name}: {e}")
             return self._get_default_vegas_features()
 
-    def _get_default_vegas_features(self):
+    def _get_default_vegas_features(self) -> Dict[str, float]:
         """Return neutral vegas features when no data available"""
         return {
             "vegas_total": 220.0,  # League average total
@@ -911,7 +935,9 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
 
         return None
 
-    def extract_team_betting_features(self, player_name, opponent_team, game_date, is_home=None):
+    def extract_team_betting_features(
+        self, player_name, opponent_team, game_date, is_home=None
+    ) -> Dict[str, float]:
         """
         Extract team betting performance features (ATS, O/U).
 
@@ -984,7 +1010,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
             logger.debug(f"Error extracting team betting features for {player_name}: {e}")
             return defaults
 
-    def extract_cheatsheet_features(self, player_name, game_date, stat_type):
+    def extract_cheatsheet_features(self, player_name, game_date, stat_type) -> Dict[str, float]:
         """
         Extract BettingPros cheatsheet features from cheatsheet_data table.
 
@@ -1063,7 +1089,345 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
             logger.debug(f"Error extracting cheatsheet features for {player_name}: {e}")
             return defaults
 
-    def close(self):
+    def extract_v3_features(
+        self,
+        player_name: str,
+        game_date,
+        stat_type: str,
+        opponent_team: str = None,
+        is_home: bool = None,
+        line: float = None,
+        existing_features: dict = None,
+    ) -> Dict[str, float]:
+        """
+        Extract V3-specific features (33 additional features for enhanced models).
+
+        Categories:
+        - Season/temporal features (6)
+        - Volatility features (8)
+        - H2H decay features (5)
+        - Line/book features (9)
+        - Matchup features (4)
+        - Other (1)
+
+        Args:
+            player_name: Player's full name
+            game_date: Game date
+            stat_type: 'POINTS', 'REBOUNDS', etc.
+            opponent_team: Opponent team code
+            is_home: Home/away flag
+            line: Prop line value
+            existing_features: Already extracted features (for deriving some V3 features)
+
+        Returns:
+            dict with 33 V3-specific features
+        """
+        import math
+        from datetime import datetime
+
+        features = {}
+        existing = existing_features or {}
+
+        # Parse game_date
+        if isinstance(game_date, str):
+            game_date_obj = datetime.strptime(game_date, "%Y-%m-%d")
+        else:
+            game_date_obj = game_date
+
+        # =============================================================================
+        # 1. SEASON/TEMPORAL FEATURES (6 features)
+        # =============================================================================
+        # Determine season start (Oct 22 for most NBA seasons)
+        year = game_date_obj.year
+        month = game_date_obj.month
+        if month >= 10:
+            season_start = datetime(year, 10, 22)
+        else:
+            season_start = datetime(year - 1, 10, 22)
+
+        days_into_season = (game_date_obj - season_start).days
+        days_into_season = max(0, min(days_into_season, 250))  # Cap at ~playoff end
+
+        features["days_into_season"] = days_into_season
+        features["is_early_season"] = 1.0 if days_into_season <= 30 else 0.0
+        features["is_mid_season"] = 1.0 if 30 < days_into_season <= 120 else 0.0
+        features["is_late_season"] = 1.0 if 120 < days_into_season <= 180 else 0.0
+        features["is_playoffs"] = 1.0 if days_into_season > 180 else 0.0
+
+        # Encode season phase (0=early, 1=mid, 2=late, 3=playoffs)
+        if days_into_season <= 30:
+            features["season_phase_encoded"] = 0
+        elif days_into_season <= 120:
+            features["season_phase_encoded"] = 1
+        elif days_into_season <= 180:
+            features["season_phase_encoded"] = 2
+        else:
+            features["season_phase_encoded"] = 3
+
+        # =============================================================================
+        # 2. VOLATILITY FEATURES (8 features)
+        # =============================================================================
+        # Derive from existing rolling stats or query player_rolling_stats
+        stat_key = stat_type.lower()
+
+        # Get L5 and L10 values for trend/volatility calculation (convert Decimal to float)
+        ema_L5 = float(
+            existing.get(f"ema_{stat_key}_L5", existing.get(f"ema_points_L5", 15.0)) or 15.0
+        )
+        ema_L10 = float(
+            existing.get(f"ema_{stat_key}_L10", existing.get(f"ema_points_L10", 15.0)) or 15.0
+        )
+        ema_L20 = float(
+            existing.get(f"ema_{stat_key}_L20", existing.get(f"ema_points_L20", 15.0)) or 15.0
+        )
+        minutes_L5 = float(existing.get("ema_minutes_L5", 28.0) or 28.0)
+        minutes_L10 = float(existing.get("ema_minutes_L10", 28.0) or 28.0)
+        minutes_L20 = float(existing.get("ema_minutes_L20", 28.0) or 28.0)
+
+        # Query std values from player_rolling_stats if available
+        try:
+            query = """
+            SELECT
+                points_std_L5, points_std_L10,
+                rebounds_std_L5, rebounds_std_L10,
+                assists_std_L5, assists_std_L10,
+                minutes_std_L5, minutes_std_L10,
+                fga_std_L5
+            FROM player_rolling_stats
+            WHERE player_name = %s
+              AND stat_date <= %s
+            ORDER BY stat_date DESC
+            LIMIT 1
+            """
+            with self.conn.cursor() as cur:
+                cur.execute(query, (player_name, game_date))
+                result = cur.fetchone()
+
+                if result:
+                    # Use actual values
+                    features[f"{stat_key}_std_L5"] = (
+                        float(
+                            result[0]
+                            if stat_key == "points"
+                            else (
+                                result[2]
+                                if stat_key == "rebounds"
+                                else result[4] if stat_key == "assists" else result[0]
+                            )
+                        )
+                        if result[0]
+                        else 4.0
+                    )
+                    features[f"{stat_key}_std_L10"] = (
+                        float(
+                            result[1]
+                            if stat_key == "points"
+                            else (
+                                result[3]
+                                if stat_key == "rebounds"
+                                else result[5] if stat_key == "assists" else result[1]
+                            )
+                        )
+                        if result[1]
+                        else 4.0
+                    )
+                    features["minutes_std_L5"] = float(result[6]) if result[6] else 3.0
+                    features["minutes_std_L10"] = float(result[7]) if result[7] else 3.0
+                    features["fga_std_L5"] = float(result[8]) if result[8] else 2.0
+                else:
+                    # Defaults based on typical NBA volatility
+                    features[f"{stat_key}_std_L5"] = 4.0 if stat_key == "points" else 2.0
+                    features[f"{stat_key}_std_L10"] = 4.0 if stat_key == "points" else 2.0
+                    features["minutes_std_L5"] = 3.0
+                    features["minutes_std_L10"] = 3.0
+                    features["fga_std_L5"] = 2.0
+        except (psycopg2.Error, KeyError, TypeError) as e:
+            logger.debug(f"Could not query std features: {e}")
+            features[f"{stat_key}_std_L5"] = 4.0 if stat_key == "points" else 2.0
+            features[f"{stat_key}_std_L10"] = 4.0 if stat_key == "points" else 2.0
+            features["minutes_std_L5"] = 3.0
+            features["minutes_std_L10"] = 3.0
+            features["fga_std_L5"] = 2.0
+
+        # Trend ratios (L5/L20 momentum)
+        features[f"{stat_key}_trend_ratio"] = ema_L5 / ema_L20 if ema_L20 > 0 else 1.0
+        features["minutes_trend_ratio"] = minutes_L5 / minutes_L20 if minutes_L20 > 0 else 1.0
+
+        # Usage volatility score (combined CV of stat + minutes)
+        stat_std = features.get(f"{stat_key}_std_L5", 4.0)
+        stat_mean = ema_L5 if ema_L5 > 0 else 1.0
+        stat_cv = stat_std / stat_mean
+
+        min_std = features.get("minutes_std_L5", 3.0)
+        min_mean = minutes_L5 if minutes_L5 > 0 else 1.0
+        min_cv = min_std / min_mean
+
+        features["usage_volatility_score"] = 0.6 * stat_cv + 0.4 * min_cv
+
+        # =============================================================================
+        # 3. H2H DECAY FEATURES (5 features)
+        # =============================================================================
+        # Derive from existing H2H features (convert Decimal to float)
+        h2h_avg = float(
+            existing.get(f"h2h_avg_{stat_key}", existing.get("h2h_avg_points", 15.0)) or 15.0
+        )
+        h2h_L3 = float(
+            existing.get(f"h2h_L3_{stat_key}", existing.get("h2h_L3_points", h2h_avg)) or h2h_avg
+        )
+        h2h_L5 = float(
+            existing.get(f"h2h_L5_{stat_key}", existing.get("h2h_L5_points", h2h_avg)) or h2h_avg
+        )
+        h2h_L10 = float(
+            existing.get(f"h2h_L10_{stat_key}", existing.get("h2h_L10_points", h2h_avg)) or h2h_avg
+        )
+        h2h_days = float(existing.get("h2h_days_since_last", 180) or 180)
+        h2h_games = int(existing.get("h2h_games", 0) or 0)
+        h2h_quality = float(existing.get("h2h_sample_quality", 0.2) or 0.2)
+
+        # Time decay factor (tau = 45 days)
+        tau_h2h = 45.0
+        h2h_time_decay = math.exp(-h2h_days / tau_h2h) if h2h_days < 365 else 0.0
+        features["h2h_time_decay_factor"] = h2h_time_decay
+
+        # Decayed average: weight recent games more heavily
+        # Blend: 50% L3 + 30% L5 + 20% L10, scaled by time decay
+        if h2h_games >= 3:
+            h2h_decayed = 0.5 * h2h_L3 + 0.3 * h2h_L5 + 0.2 * h2h_L10
+            h2h_decayed = h2h_decayed * (0.5 + 0.5 * h2h_time_decay)  # Scale by recency
+        else:
+            h2h_decayed = h2h_avg * 0.8  # Lower weight if few games
+        features[f"h2h_decayed_avg_{stat_key}"] = h2h_decayed
+
+        # H2H trend (L3 vs L10 momentum)
+        features[f"h2h_trend_{stat_key}"] = h2h_L3 / h2h_L10 if h2h_L10 > 0 else 1.0
+
+        # Reliability score (function of games + recency)
+        reliability = min(1.0, h2h_games / 10.0) * (0.5 + 0.5 * h2h_time_decay)
+        features["h2h_reliability"] = reliability
+
+        # Recency-adjusted average
+        features[f"h2h_recency_adjusted_{stat_key}"] = h2h_avg * (0.7 + 0.3 * reliability)
+
+        # =============================================================================
+        # 4. LINE/BOOK FEATURES (9 features)
+        # =============================================================================
+        # Query line movement data from props
+        try:
+            query = """
+            SELECT
+                COUNT(DISTINCT fetch_timestamp) as snapshot_count,
+                MAX(over_line) - MIN(over_line) as line_delta,
+                STDDEV(over_line) as line_movement_std
+            FROM nba_props_xl
+            WHERE player_name = %s
+              AND game_date = %s
+              AND stat_type = %s
+            """
+            with self.intelligence_conn.cursor() as cur:
+                cur.execute(query, (player_name, game_date, stat_type))
+                result = cur.fetchone()
+
+                if result:
+                    features["snapshot_count"] = int(result[0]) if result[0] else 1
+                    features["line_delta"] = float(result[1]) if result[1] else 0.0
+                    features["line_movement_std"] = float(result[2]) if result[2] else 0.0
+                else:
+                    features["snapshot_count"] = 1
+                    features["line_delta"] = 0.0
+                    features["line_movement_std"] = 0.0
+        except (psycopg2.Error, KeyError, TypeError) as e:
+            logger.debug(f"Could not query line features: {e}")
+            features["snapshot_count"] = 1
+            features["line_delta"] = 0.0
+            features["line_movement_std"] = 0.0
+
+        # Derive from existing book features
+        num_books = existing.get("num_books", 3)
+        line_spread = existing.get("line_spread", 0.0)
+
+        # Consensus strength (inverse of line_spread normalized)
+        features["consensus_strength"] = 1.0 / (1.0 + line_spread)
+
+        # Volume proxy (num_books * snapshot_count)
+        features["volume_proxy"] = num_books * features.get("snapshot_count", 1)
+
+        # Line source reliability (placeholder - would need historical book accuracy)
+        features["line_source_reliability"] = 0.7  # Default neutral
+
+        # Softest book metrics (placeholders - would need book-level historical tracking)
+        features["softest_book_hit_rate"] = 0.52  # Slightly above 50%
+        features["softest_book_line_bias"] = 0.0  # Neutral
+        features["softest_book_soft_rate"] = 0.15  # 15% soft rate typical
+
+        # =============================================================================
+        # 5. MATCHUP FEATURES (4 features)
+        # =============================================================================
+        # Query opponent defensive metrics
+        try:
+            opp_query = """
+            SELECT
+                def_rating, pace,
+                opp_pts_allowed_rank, opp_reb_allowed_rank
+            FROM team_stats
+            WHERE team_abbr = %s
+            ORDER BY season DESC
+            LIMIT 1
+            """
+            with self.team_conn.cursor() as cur:
+                cur.execute(opp_query, (opponent_team,))
+                result = cur.fetchone()
+
+                if result:
+                    def_rating = float(result[0]) if result[0] else 110.0
+                    # Normalize def_rating to factor (lower = better defense)
+                    # League avg ~110, elite ~105, poor ~115
+                    features["opp_def_factor"] = (def_rating - 110.0) / 10.0  # -0.5 to +0.5
+                    features["opp_positional_def"] = (
+                        float(
+                            result[2]
+                            if stat_type == "POINTS"
+                            else result[3] if stat_type == "REBOUNDS" else result[2]
+                        )
+                        if result[2]
+                        else 15.0
+                    )
+                else:
+                    features["opp_def_factor"] = 0.0
+                    features["opp_positional_def"] = 15.0
+        except (psycopg2.Error, KeyError, TypeError) as e:
+            logger.debug(f"Could not query opponent features: {e}")
+            features["opp_def_factor"] = 0.0
+            features["opp_positional_def"] = 15.0
+
+        # Position matchup advantage (placeholder - would need position tracking)
+        features["position_matchup_advantage"] = 0.0
+
+        # Starter ratio (from existing features if available)
+        features["starter_ratio"] = existing.get("starter_ratio", 0.8)
+
+        # =============================================================================
+        # 6. OTHER FEATURES (1 feature)
+        # =============================================================================
+        # Hours tracked (time since first prop posted)
+        try:
+            hours_query = """
+            SELECT
+                EXTRACT(EPOCH FROM (NOW() - MIN(fetch_timestamp))) / 3600.0 as hours_tracked
+            FROM nba_props_xl
+            WHERE player_name = %s
+              AND game_date = %s
+              AND stat_type = %s
+            """
+            with self.intelligence_conn.cursor() as cur:
+                cur.execute(hours_query, (player_name, game_date, stat_type))
+                result = cur.fetchone()
+                features["hours_tracked"] = float(result[0]) if result and result[0] else 0.0
+        except (psycopg2.Error, KeyError, TypeError):
+            features["hours_tracked"] = 0.0
+
+        return features
+
+    def close(self) -> None:
         """Close all database connections"""
         super().close()
         if hasattr(self, "intelligence_conn") and self.intelligence_conn:
