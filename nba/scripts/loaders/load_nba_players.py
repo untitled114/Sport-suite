@@ -30,14 +30,11 @@ from nba_api_wrapper import NBAApiWrapper
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# Database connection params
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5536,
-    "database": "nba_players",
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
+# Database connection - use centralized config
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+from nba.config.database import get_players_db_config
+
+DB_CONFIG = get_players_db_config()
 
 
 class NBAPlayerLoader:

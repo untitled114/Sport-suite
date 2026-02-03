@@ -84,15 +84,15 @@ def populate_actual_values(days_back=14):
             print(f"\nProcessing {stat_type}...")
 
             # Get game logs with player names (join with player_profile)
-            current_season = get_current_season()
+            # Query ALL seasons when doing historical backfill (days > 365)
             cursor_players.execute(
                 f"""
                 SELECT p.full_name, g.game_date, g.{stat_column}
                 FROM player_game_logs g
                 JOIN player_profile p ON g.player_id = p.player_id
-                WHERE g.game_date >= %s AND g.season = %s
+                WHERE g.game_date >= %s
             """,
-                (start_date, current_season),
+                (start_date,),
             )
 
             game_logs = cursor_players.fetchall()

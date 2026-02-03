@@ -117,9 +117,10 @@ PRO_FILTERS = {
     # ASSISTS FILTERS - Recalibrated Jan 30, 2026 (last 15 days: Jan 14-28)
     # Key insight: EV 10%+ AND Diff 1.5+ now required for consistent performance
     # =========================================================================
-    # ASSISTS: Opp 11+ EV 10%+ Diff 1.5+ = 100% WR (5W/0L, 0.3/day) - RECALIBRATED Jan 30
+    # ASSISTS: Opp 11+ EV 10%+ Diff 1.5+ - DISABLED Feb 3, 2026
+    # 7-day validation (Jan 27 - Feb 2): 0W-2L (0% WR, -100% ROI)
     "assists_opp_ev_diff": {
-        "enabled": True,
+        "enabled": False,  # DISABLED Feb 3 - 0% WR in last 7 days
         "stat_type": "ASSISTS",
         "min_hit_rate_l5": None,
         "min_hit_rate_l15": None,
@@ -194,8 +195,9 @@ PRO_FILTERS = {
     # Key insight: projection_diff (Diff) is critical across all combos
     # =========================================================================
     # PA (Points + Assists): Opp 16-20 Diff 2.0+ = 87.5% WR (7W/1L, 0.5/day) - RECALIBRATED Jan 30
+    # DISABLED Feb 1, 2026 - Combos disabled per user request
     "pa_opp_diff": {
-        "enabled": True,
+        "enabled": False,
         "stat_type": "PA",
         "min_hit_rate_l5": None,
         "min_hit_rate_l15": None,
@@ -207,8 +209,8 @@ PRO_FILTERS = {
         "min_projection_diff": 2.0,
         "expected_wr": 87.5,
         "expected_volume": 0.5,
-        "tier_label": "combo",
-        "description": "PA Opp 16-20 Diff 2.0+ (87.5% WR Jan 14-28)",
+        "tier_label": "disabled",
+        "description": "PA Opp 16-20 Diff 2.0+ (DISABLED - combos disabled)",
     },
     # OLD PA FILTER - DISABLED (poor performance in regime shift)
     "pa_L15_opp": {
@@ -229,8 +231,9 @@ PRO_FILTERS = {
         "description": "PA L15 70%+ Season 60%+ Line 20+ (DISABLED - 33.3% WR)",
     },
     # PR (Points + Rebounds): Season 60%+ Opp 21+ Diff 1.0+ = 85.7% WR (6W/1L, 0.5/day) - RECALIBRATED Jan 30
+    # DISABLED Feb 1, 2026 - Combos disabled per user request
     "pr_szn_opp_diff": {
-        "enabled": True,
+        "enabled": False,
         "stat_type": "PR",
         "min_hit_rate_l5": None,
         "min_hit_rate_l15": None,
@@ -242,8 +245,8 @@ PRO_FILTERS = {
         "min_projection_diff": 1.0,
         "expected_wr": 85.7,
         "expected_volume": 0.5,
-        "tier_label": "combo",
-        "description": "PR Season 60%+ Opp 21+ Diff 1.0+ (85.7% WR Jan 14-28)",
+        "tier_label": "disabled",
+        "description": "PR Season 60%+ Opp 21+ Diff 1.0+ (DISABLED - combos disabled)",
     },
     # OLD PR FILTER - DISABLED (poor performance in regime shift)
     "pr_L15_opp": {
@@ -263,8 +266,9 @@ PRO_FILTERS = {
         "description": "PR L15 70%+ Opp 16-30 (DISABLED - 44.4% WR)",
     },
     # RA (Rebounds + Assists): L15 60%+ Season 55%+ Opp 21+ Rating 4+ = 100% WR (7W/0L, 0.5/day) - RECALIBRATED Jan 30
+    # DISABLED Feb 1, 2026 - Combos disabled per user request
     "ra_L15_szn_opp_rating": {
-        "enabled": True,
+        "enabled": False,
         "stat_type": "RA",
         "min_hit_rate_l5": None,
         "min_hit_rate_l15": 0.60,
@@ -276,8 +280,8 @@ PRO_FILTERS = {
         "min_projection_diff": None,
         "expected_wr": 100.0,
         "expected_volume": 0.5,
-        "tier_label": "combo",
-        "description": "RA L15 60%+ Season 55%+ Opp 21+ Rating 4+ (100% WR Jan 14-28)",
+        "tier_label": "disabled",
+        "description": "RA L15 60%+ Season 55%+ Opp 21+ Rating 4+ (DISABLED - combos disabled)",
     },
     # OLD RA FILTER - DISABLED (poor performance in regime shift)
     "ra_opp_diff": {

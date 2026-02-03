@@ -5,7 +5,7 @@
 ![Coverage](https://img.shields.io/badge/coverage-95.94%25-brightgreen)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 
-End-to-end machine learning pipeline for NBA player prop betting. Ingests live odds from 7 sportsbooks, extracts 102 features per prop, and generates calibrated predictions using stacked LightGBM architectures.
+End-to-end machine learning pipeline for NBA player prop betting. Ingests live odds from 7 sportsbooks, extracts features per prop (102 for XL, 136 for V3), and generates calibrated predictions using stacked LightGBM architectures. Both XL and V3 models run in parallel in production.
 
 ## What This Project Demonstrates
 
@@ -48,18 +48,22 @@ Validation: Rolling 7-day window with temporal split (no future data leakage)
 
 ## Model Architecture
 
-### Production Models (Nov 6, 2025)
+### Production Models
 
-| Market | Features | R² | AUC | Architecture | Status |
-|--------|----------|-----|-----|--------------|--------|
-| **POINTS** | 102 | 0.410 | 0.767 | Two-head stacked | ✅ DEPLOYED |
-| **REBOUNDS** | 102 | 0.403 | 0.749 | Two-head stacked | ✅ DEPLOYED |
-| **ASSISTS** | 102 | 0.058 | 0.587 | Two-head stacked | ⚠️ DISABLED |
-| **THREES** | 102 | 0.178 | 0.713 | Two-head stacked | ⚠️ DISABLED |
+Both XL and V3 models run in parallel in production. Picks include `model_version: "xl"` or `"v3"`.
+
+| Model | Market | Features | R² | AUC | Trained | Status |
+|-------|--------|----------|-----|-----|---------|--------|
+| **XL** | POINTS | 102 | 0.410 | 0.767 | Dec 2025 | ✅ DEPLOYED |
+| **XL** | REBOUNDS | 102 | 0.403 | 0.749 | Dec 2025 | ✅ DEPLOYED |
+| **V3** | POINTS | 136 | 0.548 | 0.740 | Feb 3, 2026 | ✅ DEPLOYED |
+| **V3** | REBOUNDS | 136 | 0.530 | 0.739 | Feb 3, 2026 | ✅ DEPLOYED |
+| - | ASSISTS | 102 | 0.058 | 0.587 | Dec 2025 | ⚠️ DISABLED |
+| - | THREES | 102 | 0.178 | 0.713 | Dec 2025 | ⚠️ DISABLED |
 
 ### Feature Breakdown
 
-**XL Model (102 features) - CURRENT PRODUCTION:**
+**XL Model (102 features):**
 ```
 Player Features (78):
 ├── Rolling stats with EMA: L3/L5/L10/L20 for 9 stats
@@ -82,12 +86,34 @@ Computed (4):
 └── expected_diff: Regressor prediction - line (added by classifier head)
 ```
 
-**V3 Model (166 features) - Available but not deployed:**
+**V3 Model (136 features) - DEPLOYED Feb 3, 2026:**
 ```
-All XL features (102) plus:
-├── Head-to-Head History (36): H2H averages per stat, L3/L5/L10/L20 windows
-├── Prop History (12): Hit rates, Bayesian confidence, streaks
-└── Vegas & BettingPros (16): Vegas total/spread, projections, ratings
+All XL features (102) plus 34 additional features:
+
+Season/Temporal (6):
+├── days_into_season, season_phase_encoded
+└── is_early_season, is_mid_season, is_late_season, is_playoffs
+
+Volatility (8):
+├── {stat}_std_L5, {stat}_std_L10, minutes_std_L5, minutes_std_L10, fga_std_L5
+├── {stat}_trend_ratio, minutes_trend_ratio
+└── usage_volatility_score
+
+H2H Decay (5):
+├── h2h_decayed_avg_{stat}, h2h_trend_{stat}
+├── h2h_recency_adjusted_{stat}, h2h_time_decay_factor
+└── h2h_reliability
+
+Line/Book (9):
+├── line_std, softest_book_hit_rate, softest_book_soft_rate
+├── softest_book_line_bias, line_source_reliability
+├── line_delta, line_movement_std, consensus_strength
+└── snapshot_count, hours_tracked
+
+Matchup/Other (6):
+├── efficiency_vs_context, game_velocity, season_phase
+├── resistance_adjusted_L3, volume_proxy
+└── momentum_short_term
 ```
 
 ### Two-Head Stacked Architecture
@@ -190,14 +216,14 @@ nba/
 │
 ├── models/
 │   ├── saved_xl/                    # Production models
-│   │   ├── {market}_xl_*.pkl        # 102-feature XL models (CURRENT PRODUCTION)
-│   │   ├── {market}_v3_*.pkl        # 166-feature V3 models (available, not deployed)
+│   │   ├── {market}_xl_*.pkl        # 102-feature XL models (DEPLOYED)
+│   │   ├── {market}_v3_*.pkl        # 136-feature V3 models (DEPLOYED Feb 3, 2026)
 │   │   └── {market}_matchup_*.pkl   # 44-feature matchup add-on models
 │   ├── train_market.py              # Model training
 │   └── model_cards/                 # Model documentation
 │
 ├── features/
-│   ├── extract_live_features_xl.py  # 102-feature extraction (XL production)
+│   ├── extract_live_features_xl.py  # Feature extraction (XL: 102, V3: 136)
 │   ├── extractors/                  # Modular feature extractors
 │   │   ├── book_features.py         # Book disagreement features
 │   │   ├── h2h_features.py          # Head-to-head features
@@ -279,23 +305,23 @@ Run `make help` for all available commands.
 
 ## Technical Details
 
-### Training Metrics (Nov 6, 2025)
+### Training Metrics
 
-**POINTS Market (XL - 102 features):**
-| Metric | Train | Test |
-|--------|-------|------|
-| RMSE | 6.13 | 6.84 |
-| MAE | - | 5.23 |
-| R² | - | 0.410 |
-| AUC | 0.96 | 0.767 |
+**XL Models (102 features) - Dec 2025:**
 
-**REBOUNDS Market (XL - 102 features):**
-| Metric | Train | Test |
-|--------|-------|------|
-| RMSE | 2.34 | 2.71 |
-| MAE | - | 2.01 |
-| R² | - | 0.403 |
-| AUC | 0.95 | 0.749 |
+| Market | RMSE (Test) | MAE | R² | AUC |
+|--------|-------------|-----|-----|-----|
+| POINTS | 6.84 | 5.23 | 0.410 | 0.767 |
+| REBOUNDS | 2.71 | 2.01 | 0.403 | 0.749 |
+
+**V3 Models (136 features) - Feb 3, 2026:**
+
+| Market | RMSE (Test) | MAE | R² | AUC |
+|--------|-------------|-----|-----|-----|
+| POINTS | 6.01 | 4.51 | 0.548 | 0.740 |
+| REBOUNDS | 2.36 | 1.78 | 0.530 | 0.739 |
+
+Note: V3 models show improved R² (regressor accuracy) but slightly lower AUC (classifier accuracy). Both model versions run in parallel; performance is monitored to determine optimal ensemble strategy.
 
 ### Data Sources
 
