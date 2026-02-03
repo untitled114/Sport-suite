@@ -28,6 +28,7 @@ from callbacks import on_failure, on_retry, on_success
 
 from airflow.decorators import dag, task
 from airflow.models import Variable
+from airflow.timetables.trigger import CronTriggerTimetable
 from airflow.utils.email import send_email
 
 # ============================================================================
@@ -83,7 +84,7 @@ def send_performance_alert(subject: str, body: str, is_critical: bool = False) -
 @dag(
     dag_id="nba_validation_pipeline",
     description="NBA pick performance validation and tracking",
-    schedule="30 14 * * *",  # 09:30 AM EST daily (14:30 UTC)
+    schedule=CronTriggerTimetable("30 14 * * *", timezone="UTC"),  # 09:30 AM EST daily
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["nba", "validation", "performance", "tracking"],
