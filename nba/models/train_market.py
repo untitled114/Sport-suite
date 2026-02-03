@@ -32,7 +32,7 @@ import json
 import pickle
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
 import lightgbm as lgb
 import numpy as np
@@ -55,6 +55,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.class_weight import compute_class_weight
 
+from nba.config.thresholds import FEATURE_PREPROCESSING, TEMPORAL_DECAY_CONFIG
 from nba.core.logging_config import get_logger, setup_logging
 
 # MLflow integration
@@ -67,6 +68,103 @@ except ImportError:
 
 # Logger will be configured in main()
 logger = get_logger(__name__)
+
+
+def walk_forward_cv(
+    df: pd.DataFrame,
+    n_splits: int = 5,
+    min_train_size: int = 10000,
+    test_size_months: int = 2,
+) -> List[Tuple[pd.DataFrame, pd.DataFrame]]:
+    """
+    Generate walk-forward cross-validation splits.
+
+    Each fold expands the training window and tests on the next period:
+    Fold 1: Train Oct 2023 - Mar 2024, Test Apr-May 2024
+    Fold 2: Train Oct 2023 - May 2024, Test Jun-Jul 2024
+    ...
+
+    This approach is better for time-series data because it:
+    - Tests on multiple future periods (not just one)
+    - Detects concept drift over time
+    - Provides more reliable performance estimates
+
+    Args:
+        df: DataFrame with 'game_date' column, will be sorted by date
+        n_splits: Number of CV folds (default: 5)
+        min_train_size: Minimum training samples required per fold (default: 10000)
+        test_size_months: Months in each test period (default: 2)
+
+    Returns:
+        List of (train_df, test_df) tuples for each valid fold
+    """
+    # Ensure game_date is datetime
+    if "game_date" not in df.columns:
+        raise ValueError("DataFrame must have 'game_date' column for walk-forward CV")
+
+    df = df.copy()
+    df["game_date"] = pd.to_datetime(df["game_date"])
+    df = df.sort_values("game_date").reset_index(drop=True)
+
+    min_date = df["game_date"].min()
+    max_date = df["game_date"].max()
+
+    # Calculate split points
+    total_days = (max_date - min_date).days
+    test_days = test_size_months * 30
+
+    logger.info(
+        "Walk-forward CV setup",
+        extra={
+            "min_date": str(min_date.date()),
+            "max_date": str(max_date.date()),
+            "total_days": total_days,
+            "test_days_per_fold": test_days,
+            "requested_splits": n_splits,
+        },
+    )
+
+    splits = []
+    for i in range(n_splits):
+        # Expanding training window
+        # Each fold adds one test period worth of data to training
+        train_end_offset = total_days - (n_splits - i) * test_days
+        train_end = min_date + pd.Timedelta(days=train_end_offset)
+        test_end = train_end + pd.Timedelta(days=test_days)
+
+        train_df = df[df["game_date"] < train_end].copy()
+        test_df = df[(df["game_date"] >= train_end) & (df["game_date"] < test_end)].copy()
+
+        # Validate split has enough data
+        if len(train_df) >= min_train_size and len(test_df) > 100:
+            splits.append((train_df, test_df))
+            logger.debug(
+                f"Fold {len(splits)} created",
+                extra={
+                    "train_start": str(train_df["game_date"].min().date()),
+                    "train_end": str(train_df["game_date"].max().date()),
+                    "test_start": str(test_df["game_date"].min().date()),
+                    "test_end": str(test_df["game_date"].max().date()),
+                    "train_size": len(train_df),
+                    "test_size": len(test_df),
+                },
+            )
+        else:
+            logger.debug(
+                f"Skipping fold {i + 1}",
+                extra={
+                    "train_size": len(train_df),
+                    "test_size": len(test_df),
+                    "min_train_required": min_train_size,
+                },
+            )
+
+    logger.info(
+        "Walk-forward CV splits generated",
+        extra={"valid_splits": len(splits), "requested_splits": n_splits},
+    )
+
+    return splits
 
 
 # Null context manager for when MLflow is disabled
@@ -162,6 +260,21 @@ class StackedMarketModel:
         if "source" not in df.columns:
             logger.debug("Adding default source", extra={"source": "bettingpros"})
             df["source"] = "bettingpros"
+
+        # Drop constant columns (market-aware: keeps H2H for target market)
+        cols_to_drop = [
+            col for col in FEATURE_PREPROCESSING.get_cols_to_drop(self.market) if col in df.columns
+        ]
+        if cols_to_drop:
+            df = df.drop(columns=cols_to_drop)
+            logger.info(
+                "Dropped constant columns",
+                extra={
+                    "market": self.market,
+                    "dropped": len(cols_to_drop),
+                    "columns": cols_to_drop[:5],
+                },
+            )
 
         # Verify required columns
         required = ["line", "source", target_col]
@@ -298,6 +411,8 @@ class StackedMarketModel:
         y_value_test,
         y_binary_test,
         y_residual_test,
+        game_dates_train=None,
+        game_dates_test=None,
     ):
         """
         Train stacked two-head model
@@ -306,6 +421,10 @@ class StackedMarketModel:
         Step 2: Calculate expected_diff = prediction - line
         Step 3: Augment X_train with expected_diff
         Step 4: Train classifier on augmented features → predict P(actual > line)
+
+        Args:
+            game_dates_train: Optional Series of game dates for temporal weighting
+            game_dates_test: Optional Series of test game dates
         """
         logger.info("Training stacked two-head model", extra={"market": self.market})
 
@@ -342,25 +461,52 @@ class StackedMarketModel:
             index=X_test_imputed.index,
         )
 
-        # Temporal drift modeling (attempt1.md Advanced #4) - emphasize recent games
-        # NOTE: Requires 'game_date' in features (currently excluded). Commented for reference.
-        # if 'game_date' in X_train.columns:
-        #     max_date = X_train['game_date'].max()
-        #     days_ago_train = (max_date - X_train['game_date']).dt.days
-        #     days_ago_test = (max_date - X_test['game_date']).dt.days
-        #
-        #     # Exponential decay: 60-day half-life
-        #     sample_weight_train = np.exp(-days_ago_train / 60.0)
-        #     sample_weight_test = np.exp(-days_ago_test / 60.0)
-        #
-        #     logger.info(f"   Temporal weighting: mean_weight={sample_weight_train.mean():.3f}")
-        #
-        #     # Pass to LightGBM
-        #     lgb_train = lgb.Dataset(X_train_scaled, y_value_train, weight=sample_weight_train)
-        #     lgb_test = lgb.Dataset(X_test_scaled, y_value_test, reference=lgb_train, weight=sample_weight_test)
-        # else:
-        #     sample_weight_train = None
-        #     sample_weight_test = None
+        # ==========================
+        # TEMPORAL DECAY WEIGHTING
+        # ==========================
+        # Recent games weighted more heavily (older data can poison the signal)
+        # POINTS: tau=30 days (usage changes fast)
+        # REBOUNDS: tau=45 days (more stable)
+        temporal_weights_train = None
+        temporal_weights_test = None
+
+        if TEMPORAL_DECAY_CONFIG.enabled and game_dates_train is not None:
+            tau = TEMPORAL_DECAY_CONFIG.get_tau(self.market)
+            max_date = game_dates_train.max()
+
+            # Calculate days ago
+            days_ago_train = (max_date - game_dates_train).dt.days.values
+            days_ago_test = (
+                (max_date - game_dates_test).dt.days.values if game_dates_test is not None else None
+            )
+
+            # Exponential decay with floor
+            temporal_weights_train = np.maximum(
+                np.exp(-days_ago_train / tau), TEMPORAL_DECAY_CONFIG.min_weight
+            )
+
+            if days_ago_test is not None:
+                temporal_weights_test = np.maximum(
+                    np.exp(-days_ago_test / tau), TEMPORAL_DECAY_CONFIG.min_weight
+                )
+
+            logger.info(
+                "Temporal decay weighting enabled",
+                extra={
+                    "market": self.market,
+                    "tau": tau,
+                    "mean_weight": round(temporal_weights_train.mean(), 3),
+                    "min_weight": round(temporal_weights_train.min(), 3),
+                    "max_weight": round(temporal_weights_train.max(), 3),
+                    "oldest_days": int(days_ago_train.max()),
+                    "newest_days": int(days_ago_train.min()),
+                },
+            )
+        else:
+            if not TEMPORAL_DECAY_CONFIG.enabled:
+                logger.info("Temporal decay disabled in config")
+            elif game_dates_train is None:
+                logger.warning("Temporal decay enabled but game_dates not provided - skipping")
 
         # Train regressor using sklearn API
         self.regressor = LGBMRegressor(
@@ -379,6 +525,7 @@ class StackedMarketModel:
         self.regressor.fit(
             X_train_scaled,
             y_value_train,
+            sample_weight=temporal_weights_train,
             eval_set=[(X_test_scaled, y_value_test)],
             eval_metric="rmse",
             callbacks=[lgb.early_stopping(stopping_rounds=50), lgb.log_evaluation(period=100)],
@@ -433,23 +580,36 @@ class StackedMarketModel:
         X_test_augmented["expected_diff"] = expected_diff_test
 
         # ==========================
-        # Enhanced Class Balancing (attempt1.md Step 2)
+        # Enhanced Class Balancing + Temporal Decay
         # ==========================
         class_weights = compute_class_weight("balanced", classes=np.array([0, 1]), y=y_binary_train)
         weight_dict = {0: class_weights[0], 1: class_weights[1]}
 
-        # Create sample weights for LightGBM
-        sample_weights = np.array([weight_dict[int(y)] for y in y_binary_train])
+        # Create sample weights: class balance * temporal decay
+        class_sample_weights = np.array([weight_dict[int(y)] for y in y_binary_train])
 
-        logger.info(
-            "Class balancing",
-            extra={
-                "under_weight": round(weight_dict[0], 3),
-                "over_weight": round(weight_dict[1], 3),
-                "under_count": int(sum(y_binary_train == 0)),
-                "over_count": int(sum(y_binary_train == 1)),
-            },
-        )
+        if temporal_weights_train is not None:
+            # Combine class weights with temporal weights (multiplicative)
+            sample_weights = class_sample_weights * temporal_weights_train
+            logger.info(
+                "Combined class + temporal weighting",
+                extra={
+                    "under_weight": round(weight_dict[0], 3),
+                    "over_weight": round(weight_dict[1], 3),
+                    "mean_combined_weight": round(sample_weights.mean(), 3),
+                },
+            )
+        else:
+            sample_weights = class_sample_weights
+            logger.info(
+                "Class balancing only (no temporal decay)",
+                extra={
+                    "under_weight": round(weight_dict[0], 3),
+                    "over_weight": round(weight_dict[1], 3),
+                    "under_count": int(sum(y_binary_train == 0)),
+                    "over_count": int(sum(y_binary_train == 1)),
+                },
+            )
 
         # ==========================
         # STEP 3: Train Classifier
@@ -776,6 +936,33 @@ def main():
         help="Enable debug logging",
     )
 
+    parser.add_argument(
+        "--walk-forward",
+        action="store_true",
+        help="Use walk-forward cross-validation instead of single split",
+    )
+
+    parser.add_argument(
+        "--cv-folds",
+        type=int,
+        default=5,
+        help="Number of CV folds for walk-forward validation (default: 5)",
+    )
+
+    parser.add_argument(
+        "--cv-test-months",
+        type=int,
+        default=2,
+        help="Months in each test period for walk-forward CV (default: 2)",
+    )
+
+    parser.add_argument(
+        "--cv-min-train",
+        type=int,
+        default=10000,
+        help="Minimum training samples per fold for walk-forward CV (default: 10000)",
+    )
+
     args = parser.parse_args()
 
     # Resolve paths
@@ -812,10 +999,241 @@ def main():
         # Load data
         df = model.load_data(str(data_path))
 
+        # ========================================
+        # WALK-FORWARD CROSS-VALIDATION MODE
+        # ========================================
+        if args.walk_forward:
+            print(f"\n{'=' * 60}")
+            print("WALK-FORWARD CROSS-VALIDATION")
+            print(f"{'=' * 60}")
+
+            # Verify game_date column exists
+            if "game_date" not in df.columns:
+                logger.error("Walk-forward CV requires 'game_date' column in dataset")
+                return 1
+
+            # Generate walk-forward splits
+            splits = walk_forward_cv(
+                df,
+                n_splits=args.cv_folds,
+                min_train_size=args.cv_min_train,
+                test_size_months=args.cv_test_months,
+            )
+
+            if len(splits) == 0:
+                logger.error(
+                    "No valid walk-forward splits generated. "
+                    "Try reducing --cv-min-train or --cv-folds"
+                )
+                return 1
+
+            cv_metrics: List[Dict] = []
+
+            for fold_idx, (train_df, test_df) in enumerate(splits):
+                print(f"\n--- Fold {fold_idx + 1}/{len(splits)} ---")
+                print(
+                    f"Train: {train_df['game_date'].min().date()} to "
+                    f"{train_df['game_date'].max().date()} ({len(train_df):,} rows)"
+                )
+                print(
+                    f"Test:  {test_df['game_date'].min().date()} to "
+                    f"{test_df['game_date'].max().date()} ({len(test_df):,} rows)"
+                )
+
+                # Prepare features for this fold
+                X_train, y_value_train, y_binary_train, y_residual_train, metadata_train = (
+                    model.prepare_features(train_df)
+                )
+                X_test, y_value_test, y_binary_test, y_residual_test, metadata_test = (
+                    model.prepare_features(test_df)
+                )
+
+                # Extract game_dates for temporal weighting
+                game_dates_train = (
+                    metadata_train["game_date"] if "game_date" in metadata_train.columns else None
+                )
+                game_dates_test = (
+                    metadata_test["game_date"] if "game_date" in metadata_test.columns else None
+                )
+
+                # Train model on this fold
+                fold_metrics = model.train(
+                    X_train,
+                    y_value_train,
+                    y_binary_train,
+                    y_residual_train,
+                    X_test,
+                    y_value_test,
+                    y_binary_test,
+                    y_residual_test,
+                    game_dates_train=game_dates_train,
+                    game_dates_test=game_dates_test,
+                )
+
+                # Collect metrics for this fold
+                cv_metrics.append(
+                    {
+                        "fold": fold_idx + 1,
+                        "train_start": str(train_df["game_date"].min().date()),
+                        "train_end": str(train_df["game_date"].max().date()),
+                        "test_start": str(test_df["game_date"].min().date()),
+                        "test_end": str(test_df["game_date"].max().date()),
+                        "train_size": len(train_df),
+                        "test_size": len(test_df),
+                        "rmse_test": fold_metrics["regressor"]["rmse_test"],
+                        "mae_test": fold_metrics["regressor"]["mae_test"],
+                        "r2_test": fold_metrics["regressor"]["r2_test"],
+                        "auc_test": fold_metrics["classifier"]["auc_test"],
+                        "auc_calibrated": fold_metrics["classifier"]["auc_calibrated"],
+                        "auc_blended": fold_metrics["classifier"]["auc_blended"],
+                        "accuracy_test": fold_metrics["classifier"]["acc_test"],
+                        "brier_blended": fold_metrics["classifier"]["brier_blended"],
+                    }
+                )
+
+                print(f"  AUC (blended): {fold_metrics['classifier']['auc_blended']:.4f}")
+                print(f"  Accuracy:      {fold_metrics['classifier']['acc_test']:.4f}")
+                print(f"  RMSE:          {fold_metrics['regressor']['rmse_test']:.3f}")
+
+            # ========================================
+            # WALK-FORWARD CV SUMMARY
+            # ========================================
+            print(f"\n{'=' * 60}")
+            print("WALK-FORWARD CV SUMMARY")
+            print(f"{'=' * 60}")
+
+            # Calculate aggregate statistics
+            aucs = [m["auc_blended"] for m in cv_metrics]
+            accs = [m["accuracy_test"] for m in cv_metrics]
+            rmses = [m["rmse_test"] for m in cv_metrics]
+            r2s = [m["r2_test"] for m in cv_metrics]
+            briers = [m["brier_blended"] for m in cv_metrics]
+
+            print(f"\nMetric               Mean      Std       Min       Max")
+            print(f"-" * 60)
+            print(
+                f"AUC (blended)       {np.mean(aucs):.4f}    {np.std(aucs):.4f}    "
+                f"{np.min(aucs):.4f}    {np.max(aucs):.4f}"
+            )
+            print(
+                f"Accuracy            {np.mean(accs):.4f}    {np.std(accs):.4f}    "
+                f"{np.min(accs):.4f}    {np.max(accs):.4f}"
+            )
+            print(
+                f"RMSE                {np.mean(rmses):.3f}     {np.std(rmses):.3f}     "
+                f"{np.min(rmses):.3f}     {np.max(rmses):.3f}"
+            )
+            print(
+                f"R2                  {np.mean(r2s):.4f}    {np.std(r2s):.4f}    "
+                f"{np.min(r2s):.4f}    {np.max(r2s):.4f}"
+            )
+            print(
+                f"Brier Score         {np.mean(briers):.4f}    {np.std(briers):.4f}    "
+                f"{np.min(briers):.4f}    {np.max(briers):.4f}"
+            )
+
+            # Check for concept drift (significant variance across folds)
+            auc_cv = np.std(aucs) / np.mean(aucs) if np.mean(aucs) > 0 else 0
+            print(f"\nCoefficient of Variation (AUC): {auc_cv:.4f}")
+            if auc_cv > 0.10:
+                print("  WARNING: High variance across folds - possible concept drift detected")
+            elif auc_cv > 0.05:
+                print("  NOTICE: Moderate variance across folds - monitor for drift")
+            else:
+                print("  OK: Low variance - model appears stable over time")
+
+            # Trend analysis (is model getting worse over time?)
+            if len(aucs) >= 3:
+                first_half = np.mean(aucs[: len(aucs) // 2])
+                second_half = np.mean(aucs[len(aucs) // 2 :])
+                trend_diff = second_half - first_half
+                print(f"\nTemporal Trend (AUC):")
+                print(f"  First half avg:  {first_half:.4f}")
+                print(f"  Second half avg: {second_half:.4f}")
+                print(f"  Difference:      {trend_diff:+.4f}")
+                if trend_diff < -0.02:
+                    print("  WARNING: Performance degrading over time - consider retraining")
+                elif trend_diff > 0.02:
+                    print("  OK: Performance improving over time")
+                else:
+                    print("  OK: Performance stable over time")
+
+            # Per-fold details table
+            print(f"\n{'=' * 60}")
+            print("PER-FOLD DETAILS")
+            print(f"{'=' * 60}")
+            print(f"{'Fold':<6}{'Train Period':<25}{'Test Period':<25}{'AUC':<8}{'Acc':<8}")
+            print("-" * 72)
+            for m in cv_metrics:
+                train_period = f"{m['train_start']} to {m['train_end']}"
+                test_period = f"{m['test_start']} to {m['test_end']}"
+                print(
+                    f"{m['fold']:<6}{train_period:<25}{test_period:<25}"
+                    f"{m['auc_blended']:<8.4f}{m['accuracy_test']:<8.4f}"
+                )
+
+            # Log to MLflow if enabled
+            if tracker:
+                mlflow_context = tracker.start_run(
+                    run_name=f"{args.market}_walkforward_cv_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                    tags={
+                        "market": args.market,
+                        "architecture": "stacked_two_head",
+                        "validation": "walk_forward_cv",
+                    },
+                )
+                with mlflow_context if mlflow_context else _null_context():
+                    tracker.log_params(
+                        {
+                            "market": args.market,
+                            "cv_folds": args.cv_folds,
+                            "cv_test_months": args.cv_test_months,
+                            "cv_min_train": args.cv_min_train,
+                            "actual_folds": len(splits),
+                        }
+                    )
+                    tracker.log_metrics(
+                        {
+                            "cv_auc_mean": np.mean(aucs),
+                            "cv_auc_std": np.std(aucs),
+                            "cv_accuracy_mean": np.mean(accs),
+                            "cv_accuracy_std": np.std(accs),
+                            "cv_rmse_mean": np.mean(rmses),
+                            "cv_rmse_std": np.std(rmses),
+                            "cv_r2_mean": np.mean(r2s),
+                            "cv_brier_mean": np.mean(briers),
+                            "cv_auc_cv": auc_cv,
+                        }
+                    )
+
+            logger.info(
+                "Walk-forward CV completed",
+                extra={
+                    "market": args.market,
+                    "folds": len(splits),
+                    "mean_auc": round(np.mean(aucs), 4),
+                    "std_auc": round(np.std(aucs), 4),
+                },
+            )
+
+            # NOTE: Walk-forward CV does NOT save models (it's for validation only)
+            # To train a production model, run without --walk-forward flag
+            print(f"\n{'=' * 60}")
+            print("NOTE: Walk-forward CV is for validation only.")
+            print("No models were saved. To train a production model:")
+            print(f"  python train_market.py --market {args.market} --data {args.data}")
+            print(f"{'=' * 60}\n")
+
+            return 0
+
+        # ========================================
+        # STANDARD SINGLE-SPLIT TRAINING MODE
+        # ========================================
         # Prepare features
         X, y_value, y_binary, y_residual, metadata = model.prepare_features(df)
 
         # Split (temporal or random - temporal recommended)
+        # Also split metadata to preserve game_dates for temporal weighting
         (
             X_train,
             X_test,
@@ -825,14 +1243,25 @@ def main():
             y_binary_test,
             y_residual_train,
             y_residual_test,
+            metadata_train,
+            metadata_test,
         ) = train_test_split(
             X,
             y_value,
             y_binary,
             y_residual,
+            metadata,
             test_size=args.test_size,
             random_state=args.random_state,
             shuffle=False,  # Temporal split (no shuffle)
+        )
+
+        # Extract game_dates for temporal weighting
+        game_dates_train = (
+            metadata_train["game_date"] if "game_date" in metadata_train.columns else None
+        )
+        game_dates_test = (
+            metadata_test["game_date"] if "game_date" in metadata_test.columns else None
         )
 
         logger.info(
@@ -882,6 +1311,8 @@ def main():
                 y_value_test,
                 y_binary_test,
                 y_residual_test,
+                game_dates_train=game_dates_train,
+                game_dates_test=game_dates_test,
             )
 
             # Log metrics to MLflow

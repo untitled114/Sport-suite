@@ -248,64 +248,75 @@ class WalkForwardValidator:
         Returns:
             FoldResult with metrics
         """
-        from nba.models.train_market import StackedTwoHeadModel
+        from nba.models.train_market import StackedMarketModel
 
         # Initialize model
-        model = StackedTwoHeadModel(market=market)
+        model = StackedMarketModel(market=market)
 
-        # Prepare features
-        X_train, y_value_train, y_binary_train, _, _ = model.prepare_features(train_df)
-        X_test, y_value_test, y_binary_test, _, meta_test = model.prepare_features(test_df)
+        # Prepare features for train and test
+        X_train, y_value_train, y_binary_train, y_residual_train, meta_train = (
+            model.prepare_features(train_df)
+        )
+        X_test, y_value_test, y_binary_test, y_residual_test, meta_test = model.prepare_features(
+            test_df
+        )
 
-        # Train regressor
-        model.train_regressor(X_train, y_value_train)
+        # Train the full stacked model
+        metrics = model.train(
+            X_train,
+            y_value_train,
+            y_binary_train,
+            y_residual_train,
+            X_test,
+            y_value_test,
+            y_binary_test,
+            y_residual_test,
+        )
 
-        # Get residuals for classifier training
-        train_preds = model.regressor.predict(X_train)
-        train_residuals = y_value_train - train_preds
+        # Get predictions on test set using trained model
+        # Impute and scale test data
+        X_test_imputed = model.imputer.transform(X_test)
+        X_test_scaled = model.scaler.transform(X_test_imputed)
 
-        # Train classifier
-        model.train_classifier(X_train, train_residuals, y_binary_train)
+        # Get regressor predictions
+        test_value_preds = model.regressor.predict(X_test_scaled)
+
+        # Calculate expected_diff and augment features for classifier
+        expected_diff = test_value_preds - meta_test["line"].values
+        X_test_aug = np.column_stack([X_test_scaled, expected_diff])
+
+        # Get classifier predictions
+        test_probs_raw = model.classifier.predict_proba(X_test_aug)[:, 1]
 
         # Calibrate
-        cal_probs = model.classifier.predict_proba(X_train)[:, 1]
-        model.calibrate(cal_probs, y_binary_train)
-
-        # Predict on test
-        test_value_preds = model.regressor.predict(X_test)
-        test_residuals = y_value_test - test_value_preds
-
-        # Get classifier features (add expected_diff)
-        X_test_clf = np.column_stack([X_test, test_value_preds - meta_test["line"]])
-        test_probs_raw = model.classifier.predict_proba(X_test_clf)[:, 1]
-
-        # Calibrate probabilities
         test_probs = model.calibrator.transform(test_probs_raw)
 
         # Blend
+        test_residuals = y_value_test.values - test_value_preds
         blend_weight = 0.6
-        residual_contrib = (test_residuals / 5.0).clip(-0.3, 0.3)
-        test_probs_blended = (
-            blend_weight * test_probs + (1 - blend_weight) * (0.5 + residual_contrib)
-        ).clip(0.05, 0.95)
+        residual_contrib = np.clip(test_residuals / 5.0, -0.3, 0.3)
+        test_probs_blended = np.clip(
+            blend_weight * test_probs + (1 - blend_weight) * (0.5 + residual_contrib), 0.05, 0.95
+        )
 
         # Calculate metrics
         test_preds_binary = (test_probs_blended > 0.5).astype(int)
+        y_binary_test_arr = y_binary_test.values
 
-        auc = roc_auc_score(y_binary_test, test_probs_blended)
-        accuracy = accuracy_score(y_binary_test, test_preds_binary)
+        auc = roc_auc_score(y_binary_test_arr, test_probs_blended)
+        accuracy = accuracy_score(y_binary_test_arr, test_preds_binary)
 
         # Win rate (for OVER predictions)
         over_mask = test_preds_binary == 1
         if over_mask.sum() > 0:
-            win_rate = y_binary_test[over_mask].mean()
+            win_rate = y_binary_test_arr[over_mask].mean()
         else:
             win_rate = 0.5
 
         # ROI calculation (assuming -110 odds)
-        wins = (test_preds_binary == y_binary_test).sum()
-        losses = len(y_binary_test) - wins
-        roi = (wins * 0.91 - losses) / len(y_binary_test) if len(y_binary_test) > 0 else 0
+        wins = (test_preds_binary == y_binary_test_arr).sum()
+        losses = len(y_binary_test_arr) - wins
+        roi = (wins * 0.91 - losses) / len(y_binary_test_arr) if len(y_binary_test_arr) > 0 else 0
 
         # Edge bets (high confidence)
         edge_mask = (test_probs_blended > 0.5 + self.edge_threshold) | (
@@ -314,7 +325,7 @@ class WalkForwardValidator:
         edge_bets = edge_mask.sum()
         if edge_bets > 0:
             edge_preds = (test_probs_blended[edge_mask] > 0.5).astype(int)
-            edge_actuals = y_binary_test[edge_mask]
+            edge_actuals = y_binary_test_arr[edge_mask]
             edge_win_rate = (edge_preds == edge_actuals).mean()
         else:
             edge_win_rate = 0.0
