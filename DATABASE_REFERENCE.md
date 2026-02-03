@@ -1,5 +1,5 @@
 # DATABASE REFERENCE - NBA Betting System
-**Last Updated:** January 22, 2026
+**Last Updated:** February 3, 2026
 
 ## Quick Start
 

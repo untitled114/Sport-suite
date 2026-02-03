@@ -72,10 +72,10 @@ This document explains how data flows through the system, why architectural deci
 │   │   ├── injuries              → teammate injury impact                │  │
 │   │   └── nba_prop_lines        → multi-book line data                  │  │
 │   │                                                                     │  │
-│   │   Output: 166-dimension feature vector                              │  │
+│   │   Output: XL (102) or V3 (136) feature vector                       │  │
 │   └─────────────────────────────────────────────────────────────────────┘  │
 │                                                                             │
-│   Feature Categories (166 total):                                           │
+│   Feature Categories (XL: 102, V3: 136 total):                              │
 │   ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐           │
 │   │ Player (42)      │ │ Team/Game (28)   │ │ H2H History (36) │           │
 │   │ ema_points_L3/5  │ │ team_pace        │ │ h2h_avg_points   │           │
@@ -103,7 +103,7 @@ This document explains how data flows through the system, why architectural deci
 │   │                     nba/betting_xl/xl_predictor.py                  │  │
 │   │                                                                     │  │
 │   │                                                                     │  │
-│   │   Feature Vector (166)                                              │  │
+│   │   Feature Vector (XL: 102 or V3: 136)                               │  │
 │   │          │                                                          │  │
 │   │          ▼                                                          │  │
 │   │   ┌──────────────┐                                                  │  │
@@ -120,7 +120,7 @@ This document explains how data flows through the system, why architectural deci
 │   │   │  REGRESSOR   │          │  CLASSIFIER  │                        │  │
 │   │   │  (LightGBM)  │          │  (LightGBM)  │                        │  │
 │   │   │              │          │              │                        │  │
-│   │   │  Predicts    │ ───────▶ │  Input: 166  │                        │  │
+│   │   │  Predicts    │ ───────▶ │  Input: N    │                        │  │
 │   │   │  stat value  │ exp_diff │  + exp_diff  │                        │  │
 │   │   │              │          │              │                        │  │
 │   │   │  Output:     │          │  Output:     │                        │  │
