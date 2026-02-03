@@ -294,8 +294,20 @@ print_pick_card() {
         spread_indicator=" ${MUTED}[spread: ${line_spread}]${NC}"
     fi
 
-    # Header: Player + Matchup
-    echo -e "  ${BOLD}${PLAYER_NAME_COLOR}${player}${NC}  ${MUTED}${matchup}${NC}"
+    # Tier color
+    local tier_color="$MUTED"
+    local tier_display="$tier"
+    case "$tier" in
+        X) tier_color="$SUCCESS"; tier_display="X" ;;
+        Goldmine) tier_color="$YELLOW"; tier_display="GOLDMINE" ;;
+        star_tier) tier_color="$LAVENDER"; tier_display="STAR" ;;
+        A) tier_color="$PRIMARY"; tier_display="A" ;;
+        Z) tier_color="$ORANGE"; tier_display="Z" ;;
+        META) tier_color="$SEAFOAM"; tier_display="META" ;;
+    esac
+
+    # Header: Player + Matchup + Tier
+    echo -e "  ${BOLD}${PLAYER_NAME_COLOR}${player}${NC}  ${MUTED}${matchup}${NC}  ${BOLD}${tier_color}[${tier_display}]${NC}"
 
     # Main bet line
     echo -e "  ${MUTED}|${NC} ${market} ${side} ${BOLD}${best_line}${NC} @ ${BOLD}${best_book}${NC}${spread_indicator}"
@@ -344,8 +356,15 @@ print_pro_pick() {
     local opp_rank="$8"       # Opponent defense rank
     local confidence="$9"     # Season hit rate % or probability
     local expected_wr="${10}"
+    local filter_name="${11:-}"
 
-    echo -e "  ${BOLD}${PLAYER_NAME_COLOR}${player}${NC}"
+    # Format filter name for display
+    local filter_display=""
+    if [ -n "$filter_name" ] && [ "$filter_name" != "null" ]; then
+        filter_display="${filter_name}"
+    fi
+
+    echo -e "  ${BOLD}${PLAYER_NAME_COLOR}${player}${NC}  ${BOLD}${ORANGE}[${filter_display}]${NC}"
     echo -e "  ${MUTED}|${NC} ${market} OVER ${BOLD}${line}${NC} @ ${book}"
     printf "  ${MUTED}|${NC}  %-12s %b\n" "Projection:" "${BOLD}${ORANGE}${projection}${NC}"
 
@@ -460,6 +479,24 @@ fetch_and_load_cheatsheet() {
     fi
 }
 
+fetch_and_load_prizepicks() {
+    section "Fetching PrizePicks" "Direct API (standard/goblin/demon)"
+    if [ -f "$SCRIPT_DIR/betting_xl/loaders/load_prizepicks_to_db.py" ]; then
+        if verbose_run python3 "$SCRIPT_DIR/betting_xl/loaders/load_prizepicks_to_db.py" --fetch --quiet; then
+            # Get counts by odds_type
+            local pp_stats=$(PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -t -c \
+                "SELECT odds_type, COUNT(*) FROM nba_props_xl
+                 WHERE game_date = '$DATE_STR' AND book_name LIKE 'prizepicks%'
+                 GROUP BY odds_type ORDER BY odds_type;" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g')
+            success "PrizePicks loaded: ${pp_stats:-no data}"
+        else
+            warning "PrizePicks fetch failed"
+        fi
+    else
+        info "PrizePicks loader not found"
+    fi
+}
+
 fetch_vegas_lines() {
     section "Fetching Vegas Lines" "Spreads & totals"
     if [ -f "$SCRIPT_DIR/betting_xl/fetchers/fetch_vegas_lines.py" ]; then
@@ -570,19 +607,26 @@ display_xl_picks() {
     echo ""
     divider
     echo ""
-    echo -e "  ${BOLD}${PRIMARY}XL Picks${NC} | ${SOFT_WHITE}${DATE_STR}${NC} | ${MUTED}${picks_count} picks${NC}"
+
+    # Show model breakdown (XL vs V3)
+    local xl_count=$(jq '.summary.by_model.xl // 0' "$pick_file")
+    local v3_count=$(jq '.summary.by_model.v3 // 0' "$pick_file")
+    echo -e "  ${BOLD}${PRIMARY}XL + V3 Picks${NC} | ${SOFT_WHITE}${DATE_STR}${NC} | ${MUTED}${picks_count} picks (XL: ${xl_count}, V3: ${v3_count})${NC}"
     echo ""
     divider
 
-    render_pick_section "POINTS" "$POINTS_COLOR" '.picks[] | select(.stat_type == "POINTS")' "$pick_file"
-    render_pick_section "REBOUNDS" "$REBOUNDS_COLOR" '.picks[] | select(.stat_type == "REBOUNDS")' "$pick_file"
+    # Show XL picks first, then V3 picks
+    render_pick_section "POINTS (XL)" "$POINTS_COLOR" '.picks[] | select(.stat_type == "POINTS" and .model_version == "xl")' "$pick_file"
+    render_pick_section "POINTS (V3)" "$LAVENDER" '.picks[] | select(.stat_type == "POINTS" and .model_version == "v3")' "$pick_file"
+    render_pick_section "REBOUNDS (XL)" "$REBOUNDS_COLOR" '.picks[] | select(.stat_type == "REBOUNDS" and .model_version == "xl")' "$pick_file"
+    render_pick_section "REBOUNDS (V3)" "$LAVENDER" '.picks[] | select(.stat_type == "REBOUNDS" and .model_version == "v3")' "$pick_file"
 
     local star_tier=$(jq '.summary.by_tier.star_tier // 0' "$pick_file")
     local goldmine=$(jq '.summary.by_tier.Goldmine // 0' "$pick_file")
 
     divider
     echo ""
-    echo -e "  ${MUTED}Star: ${star_tier} | Goldmine: ${goldmine} | Total: ${picks_count}${NC}"
+    echo -e "  ${MUTED}XL: ${xl_count} | V3: ${v3_count} | Star: ${star_tier} | Goldmine: ${goldmine} | Total: ${picks_count}${NC}"
     echo ""
 }
 
@@ -610,6 +654,7 @@ display_pro_picks() {
         local opp_rank=$(echo "$pick_json" | jq -r '.opp_rank')
         local season_rate=$(echo "$pick_json" | jq -r '.hit_rate_season | tonumber | . * 100 | round')
         local expected_wr=$(echo "$pick_json" | jq -r '.expected_wr')
+        local filter_name=$(echo "$pick_json" | jq -r '.filter_name // "unknown"')
 
         # Expand combo stat names
         case "$market" in
@@ -618,7 +663,7 @@ display_pro_picks() {
             RA) market="REB+AST" ;;
         esac
 
-        print_pro_pick "$player" "$market" "$line" "Underdog" "$projection" "$edge" "$l5_rate" "$opp_rank" "$season_rate" "$expected_wr"
+        print_pro_pick "$player" "$market" "$line" "Underdog" "$projection" "$edge" "$l5_rate" "$opp_rank" "$season_rate" "$expected_wr" "$filter_name"
     done <<< "$all_picks"
 
     divider
@@ -667,6 +712,7 @@ full_workflow() {
 
     # Data collection
     fetch_and_load_props || return 1
+    fetch_and_load_prizepicks
     fetch_and_load_cheatsheet
     enrich_matchups || return 1
 
@@ -739,6 +785,25 @@ full_workflow() {
 }
 
 ################################################################################
+# UPDATE PROPS WORKFLOW (lightweight - just fetch lines, no predictions)
+################################################################################
+
+update_props_workflow() {
+    header "Update Props" "Fetching latest lines for movement tracking"
+
+    # Fetch from all sources - no predictions
+    fetch_and_load_props || return 1
+    fetch_and_load_prizepicks
+
+    # Quick summary of what we captured
+    local count=$(get_props_count)
+    local fetch_num=$(PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -t -c \
+        "SELECT COUNT(DISTINCT fetch_timestamp::date || fetch_timestamp::time(0)) FROM nba_props_xl WHERE game_date = '$DATE_STR';" 2>/dev/null | tr -d ' ')
+
+    complete "Props Updated" "${count} props | Fetch #${fetch_num} today"
+}
+
+################################################################################
 # REFRESH WORKFLOW (run anytime for line movements)
 ################################################################################
 
@@ -766,6 +831,7 @@ refresh_workflow() {
 
     # Refresh data that changes intraday
     fetch_and_load_props || return 1
+    fetch_and_load_prizepicks
     fetch_and_load_cheatsheet
     update_injuries
     fetch_vegas_lines
@@ -790,6 +856,11 @@ step_fetch_props() {
 step_fetch_cheatsheet() {
     header "Step: Fetch Cheatsheet"
     fetch_and_load_cheatsheet
+}
+
+step_fetch_prizepicks() {
+    header "Step: Fetch PrizePicks"
+    fetch_and_load_prizepicks
 }
 
 step_enrich() {
@@ -918,10 +989,11 @@ health_check() {
     local model_count
     model_count=$(ls "$SCRIPT_DIR/models/saved_xl"/*.pkl 2>/dev/null | wc -l)
     model_count="${model_count:-0}"
-    if [ "$model_count" -ge 24 ]; then
-        success "XL models (${model_count}/24 files)"
+    # XL (24) + V3 (14) + matchup (34) = 72 model files
+    if [ "$model_count" -ge 38 ]; then
+        success "XL + V3 models (${model_count} files)"
     else
-        error "XL models incomplete (${model_count}/24)"
+        error "Models incomplete (${model_count}/38+ expected)"
         status=1
     fi
 
@@ -1029,6 +1101,7 @@ main() {
         case "$step_name" in
             fetch_props)     step_fetch_props ;;
             fetch_cheatsheet) step_fetch_cheatsheet ;;
+            fetch_prizepicks) step_fetch_prizepicks ;;
             enrich)          step_enrich ;;
             injuries)        step_injuries ;;
             vegas)           step_vegas ;;
@@ -1038,7 +1111,7 @@ main() {
             team_stats)      step_team_stats ;;
             *)
                 error "Unknown step: $step_name"
-                echo "Available steps: fetch_props, fetch_cheatsheet, enrich, injuries, vegas, predict, game_results, populate_actuals, team_stats"
+                echo "Available steps: fetch_props, fetch_cheatsheet, fetch_prizepicks, enrich, injuries, vegas, predict, game_results, populate_actuals, team_stats"
                 exit 1
                 ;;
         esac
@@ -1059,6 +1132,9 @@ main() {
             ;;
         refresh)
             refresh_workflow
+            ;;
+        update_props|update-props|fetch)
+            update_props_workflow
             ;;
         health)
             health_check
@@ -1138,6 +1214,9 @@ show_help() {
     echo -e "  ${PRIMARY}refresh${NC}    Quick refresh - lines + injuries + predictions"
     echo -e "             ${MUTED}Run anytime to capture line movements${NC}"
     echo ""
+    echo -e "  ${PRIMARY}update_props${NC} Fetch lines only (no predictions)"
+    echo -e "             ${MUTED}Lightweight - for line movement tracking cron${NC}"
+    echo ""
     echo -e "  ${PRIMARY}validate${NC}   Check pick performance"
     echo -e "             ${MUTED}--date YYYY-MM-DD   Single date${NC}"
     echo -e "             ${MUTED}--start/--end       Date range${NC}"
@@ -1152,6 +1231,7 @@ show_help() {
     echo ""
     echo -e "  ${PRIMARY}step:fetch_props${NC}      Fetch props from sportsbooks"
     echo -e "  ${PRIMARY}step:fetch_cheatsheet${NC} Fetch BettingPros data"
+    echo -e "  ${PRIMARY}step:fetch_prizepicks${NC} Fetch PrizePicks direct API"
     echo -e "  ${PRIMARY}step:enrich${NC}           Add matchup context"
     echo -e "  ${PRIMARY}step:injuries${NC}         Update injury reports"
     echo -e "  ${PRIMARY}step:vegas${NC}            Fetch vegas lines"

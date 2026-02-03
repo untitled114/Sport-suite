@@ -71,7 +71,10 @@ def load_all_predictions(date: str, predictions_dir: str = "predictions") -> Dic
                 with open(filepath, "r") as f:
                     data = json.load(f)
                 for pick in data.get("picks", []):
-                    pick["_source"] = "xl"
+                    # Capture model_version (xl or v3)
+                    model_version = pick.get("model_version", "xl")
+                    pick["_source"] = f"xl_{model_version}"  # e.g., "xl_xl" or "xl_v3"
+                    pick["_model_version"] = model_version
                     pick["_game_date"] = date
                     pick["_filter"] = pick.get("filter_tier", "unknown")
                     # Normalize field names
@@ -273,6 +276,11 @@ def validate_date_range(
     # Daily results by system
     daily_by_system: Dict[str, List] = defaultdict(list)
 
+    # Aggregate stats by model version (xl vs v3 for XL picks)
+    by_model_version: Dict[str, Dict] = defaultdict(
+        lambda: {"wins": 0, "losses": 0, "pushes": 0, "profit": 0.0}
+    )
+
     all_picks = []
 
     current = start
@@ -344,6 +352,17 @@ def validate_date_range(
                 by_filter[filter_name]["system"] = system
                 day_profit += profit
 
+                # Track by model version (for XL picks)
+                model_version = pick.get("_model_version", "xl")
+                if system == "xl":
+                    if outcome == "WIN":
+                        by_model_version[model_version]["wins"] += 1
+                    elif outcome == "LOSS":
+                        by_model_version[model_version]["losses"] += 1
+                    else:
+                        by_model_version[model_version]["pushes"] += 1
+                    by_model_version[model_version]["profit"] += profit
+
             if day_wins + day_losses > 0:
                 daily_by_system[system].append(
                     {
@@ -402,6 +421,31 @@ def validate_date_range(
         print(
             f"{'TOTAL':<12} {total_graded:<8} {total_wins:<6} {total_losses:<6} {total_pushes:<4} {total_wr:>6.1f}%    {total_roi:>+6.1f}%    {total_profit:>+.2f}u"
         )
+
+    # Results by model version (XL vs V3)
+    if by_model_version:
+        print("\n" + "-" * 90)
+        print("RESULTS BY MODEL VERSION (XL picks only)")
+        print("-" * 90)
+        print(
+            f"{'Model':<12} {'Graded':<8} {'W':<6} {'L':<6} {'P':<4} {'Win Rate':<10} {'ROI':<10} {'Profit':<10}"
+        )
+        print("-" * 90)
+
+        for version in ["xl", "v3"]:
+            stats = by_model_version.get(
+                version, {"wins": 0, "losses": 0, "pushes": 0, "profit": 0.0}
+            )
+            wins, losses, pushes = stats["wins"], stats["losses"], stats["pushes"]
+            graded = wins + losses + pushes
+            profit = stats["profit"]
+
+            if graded > 0:
+                wr = wins / graded * 100
+                roi = profit / graded * 100
+                print(
+                    f"{version.upper():<12} {graded:<8} {wins:<6} {losses:<6} {pushes:<4} {wr:>6.1f}%    {roi:>+6.1f}%    {profit:>+.2f}u"
+                )
 
     # Results by system + market
     print("\n" + "-" * 90)
