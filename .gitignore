@@ -163,3 +163,5 @@ airflow/airflow.cfg
 airflow/airflow.db
 airflow/logs/
 docs/SERVER_OPERATIONS.md
+airflow/airflow-scheduler.pid
+airflow/airflow-webserver-monitor.pid
