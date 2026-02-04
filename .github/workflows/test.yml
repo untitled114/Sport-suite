@@ -78,5 +78,4 @@ jobs:
 
       - name: Check coverage threshold
         run: |
-          pytest tests/ --cov=nba --cov-fail-under=50 --cov-report=term-missing
-        continue-on-error: true  # Don't fail build yet, just report
+          pytest tests/ --cov=nba --cov-fail-under=70 --cov-report=term-missing

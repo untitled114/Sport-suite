@@ -84,7 +84,7 @@ Paste relevant output here
 
 ### Data Pipeline (if applicable)
 
-- [ ] Feature count unchanged (102) or documented
+- [ ] Feature count unchanged (XL: 102, V3: 136) or documented
 - [ ] No data leakage introduced
 - [ ] Database schema changes documented
 - [ ] Backward compatible with existing models
