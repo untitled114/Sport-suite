@@ -103,6 +103,7 @@ class HistoricalBacktest:
         seed_end: Optional[date] = None,
         no_seed: bool = False,
         model_versions: Optional[List[str]] = None,
+        underdog_only: bool = False,
     ):
         self.start_date = start_date
         self.end_date = end_date
@@ -110,6 +111,7 @@ class HistoricalBacktest:
         self.skip_validation = skip_validation
         self.no_seed = no_seed
         self.model_versions = model_versions or ["xl", "v3"]
+        self.underdog_only = underdog_only
 
         # Seed period for calibrator warmup
         if no_seed:
@@ -284,6 +286,7 @@ class HistoricalBacktest:
                 backtest_mode=True,
                 predictions_dir=str(self.output_dir),
                 model_versions=self.model_versions,
+                underdog_only=self.underdog_only if self.underdog_only else None,
             )
 
             # Run the generator
@@ -358,6 +361,7 @@ class HistoricalBacktest:
                     backtest_mode=True,
                     predictions_dir=str(self.output_dir),
                     model_versions=self.model_versions,
+                    underdog_only=self.underdog_only if self.underdog_only else None,
                 )
 
                 generator.run(output_file=str(output_file), dry_run=self.dry_run)
@@ -398,6 +402,9 @@ class HistoricalBacktest:
             else "Seed period: DISABLED"
         )
         logger.info(f"Output directory: {self.output_dir}")
+        logger.info(
+            f"Underdog only: {self.underdog_only} {'(matches production)' if self.underdog_only else '(all books)'}"
+        )
         logger.info(f"Dry run: {self.dry_run}")
         logger.info(f"Skip validation: {self.skip_validation}")
         logger.info("=" * 80)
@@ -444,6 +451,7 @@ class HistoricalBacktest:
         """Print aggregated backtest results."""
         print("\n" + "=" * 80)
         print(f"BACKTEST SUMMARY: {self.start_date} to {self.end_date}")
+        print(f"Mode: {'Underdog only (production)' if self.underdog_only else 'All books'}")
         print("=" * 80)
 
         # Aggregate results
@@ -525,6 +533,8 @@ class HistoricalBacktest:
         summary = {
             "start_date": self.start_date.strftime("%Y-%m-%d"),
             "end_date": self.end_date.strftime("%Y-%m-%d"),
+            "underdog_only": self.underdog_only,
+            "model_versions": self.model_versions,
             "generated_at": datetime.now().isoformat(),
             "total_days": len(self.results),
             "total_picks": sum(r.picks_generated for r in self.results),
@@ -590,6 +600,11 @@ def main():
         default="xl,v3",
         help="Model versions to test (comma-separated: xl,v3,dfs). Default: xl,v3",
     )
+    parser.add_argument(
+        "--underdog-only",
+        action="store_true",
+        help="Only evaluate Underdog platform lines (matches production behavior)",
+    )
 
     args = parser.parse_args()
 
@@ -619,6 +634,7 @@ def main():
         seed_end=seed_end,
         no_seed=args.no_seed,
         model_versions=model_versions,
+        underdog_only=args.underdog_only,
     )
 
     backtest.run()
