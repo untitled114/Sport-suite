@@ -219,22 +219,40 @@ def show_xl_picks(date_str, compact=False):
             # Confidence and P(over)
             print(f"  {MUTED}│{RESET}  Confidence: {format_confidence(confidence, p_over)}")
 
-            # Stake sizing
+            # Model agreement indicator
+            models_agreeing = pick.get("models_agreeing", [])
+            p_over_by_model = pick.get("p_over_by_model", {})
+            both_agree = (
+                len(models_agreeing) >= 2 and "xl" in models_agreeing and "v3" in models_agreeing
+            )
+            if both_agree:
+                xl_p = p_over_by_model.get("xl", 0)
+                v3_p = p_over_by_model.get("v3", 0)
+                print(
+                    f"  {MUTED}│{RESET}  {GREEN}{BOLD}✓ BOTH MODELS AGREE{RESET}  "
+                    f"{MUTED}XL: {xl_p*100:.0f}% | V3: {v3_p*100:.0f}%{RESET}"
+                )
+
+            # Stake sizing (always show)
             stake = pick.get("recommended_stake", 1.0)
             stake_reason = pick.get("stake_reason", "")
             risk_level = pick.get("risk_level", "")
-            if stake and stake != 1.0:
-                stake_color = GREEN if stake > 1.0 else (RED if stake < 0.5 else CYAN)
-                risk_str = (
-                    f" {MUTED}({risk_level} risk){RESET}"
-                    if risk_level and risk_level != "LOW"
-                    else ""
-                )
-                print(
-                    f"  {MUTED}│{RESET}  {BOLD}Stake:{RESET} {stake_color}{BOLD}{stake}u{RESET}{risk_str}"
-                )
-                if stake_reason:
-                    print(f"  {MUTED}│{RESET}  {MUTED}Reason: {stake_reason}{RESET}")
+            if stake > 1.0:
+                stake_color = GREEN
+            elif stake < 1.0:
+                stake_color = CYAN if stake >= 0.5 else RED
+            else:
+                stake_color = WHITE
+            risk_str = (
+                f" {MUTED}({risk_level} risk){RESET}"
+                if risk_level and risk_level not in ("LOW", "")
+                else ""
+            )
+            print(
+                f"  {MUTED}│{RESET}  {BOLD}Stake:{RESET} {stake_color}{BOLD}{stake}u{RESET}{risk_str}"
+            )
+            if stake_reason and stake != 1.0:
+                print(f"  {MUTED}│{RESET}  {MUTED}Reason: {stake_reason}{RESET}")
 
             if not compact:
                 # Line distribution

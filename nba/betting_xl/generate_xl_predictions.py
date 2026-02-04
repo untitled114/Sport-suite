@@ -94,6 +94,7 @@ class XLPredictionsGenerator:
         predictions_dir: str = None,
         underdog_only: bool = None,
         model_versions: list = None,
+        standard_only: bool = False,
     ):
         self.game_date = game_date or datetime.now().strftime("%Y-%m-%d")
         self.game_date_obj = datetime.strptime(self.game_date, "%Y-%m-%d").date()
@@ -107,6 +108,8 @@ class XLPredictionsGenerator:
         self.underdog_only = underdog_only
         # Model versions to load: ['xl', 'v3', 'dfs']
         self.model_versions = model_versions or ["xl", "v3"]
+        # Standard-only mode: exclude PrizePicks alternate lines (goblin/demon) not in training data
+        self.standard_only = standard_only
 
         # Components
         self.feature_extractor = None
@@ -171,8 +174,13 @@ class XLPredictionsGenerator:
     def initialize_components(self):
         """Initialize feature extractor and line optimizer"""
         self.feature_extractor = LiveFeatureExtractorXL()
-        self.line_optimizer = LineOptimizer()
-        logger.info("[OK] Initialized feature extractor and line optimizer")
+        self.line_optimizer = LineOptimizer(standard_only=self.standard_only)
+        if self.standard_only:
+            logger.info(
+                "[OK] Initialized feature extractor and line optimizer (STANDARD ONLY - no goblin/demon)"
+            )
+        else:
+            logger.info("[OK] Initialized feature extractor and line optimizer")
 
     def initialize_drift_detection(self):
         """Initialize drift detection services for enabled markets."""
@@ -596,6 +604,15 @@ class XLPredictionsGenerator:
         # In production, only use active props
         is_active_filter = "" if self.backtest_mode else "AND is_active = true"
 
+        # Standard-only mode: exclude PrizePicks alternate lines (goblin/demon)
+        # These weren't in training data (added Feb 2026)
+        standard_only_filter = ""
+        if self.standard_only:
+            from nba.betting_xl.line_optimizer import PRIZEPICKS_ALT_BOOKS
+
+            excluded_books = ", ".join([f"'{b}'" for b in PRIZEPICKS_ALT_BOOKS])
+            standard_only_filter = f"AND book_name NOT IN ({excluded_books})"
+
         query = f"""
         WITH latest_props AS (
             SELECT
@@ -618,6 +635,7 @@ class XLPredictionsGenerator:
             WHERE game_date = %s
                 AND stat_type IN ({markets_str})
                 {is_active_filter}
+                {standard_only_filter}
                 AND over_line IS NOT NULL
         ),
         filtered_props AS (

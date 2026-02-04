@@ -1,145 +1,88 @@
 # NBA Betting Pipeline - Apache Airflow
 
-Production-grade orchestration for the NBA betting prediction system using Apache Airflow 2.x.
+Production orchestration for the NBA betting system using Apache Airflow with LocalExecutor and PostgreSQL metadata.
 
-## Overview
+## Production Setup
 
-This Airflow setup replaces the manual bash script orchestration (`nba/nba-predictions.sh`) with automated, monitored DAGs.
+**Server:** Hetzner VPS at `5.161.239.229`
+**Executor:** LocalExecutor (parallel task execution)
+**Metadata DB:** PostgreSQL on port 5539 (shared with nba_intelligence)
 
-### DAGs
+### Current DAGs
 
-| DAG | Schedule | Description |
-|-----|----------|-------------|
-| `nba_morning_pipeline` | 10:00 AM EST | Data collection & enrichment |
-| `nba_evening_pipeline` | 5:00 PM EST | Prediction generation |
-| `nba_health_check` | Every 6 hours | System monitoring |
+| DAG | Schedule (EST) | Description |
+|-----|----------------|-------------|
+| `nba_full_pipeline` | 9:00 AM | Complete data collection + predictions |
+| `nba_validation_pipeline` | 9:30 AM | Validate yesterday's picks |
+| `nba_health_check` | Every 6h | System health monitoring |
 
-## Quick Start
+---
 
-### Prerequisites
+## Quick Start (Production Server)
 
-- Docker and Docker Compose installed
-- NBA databases running (ports 5536-5539)
-- Environment variables configured
-
-### 1. Set Environment Variables
-
-Create a `.env` file in the `airflow/` directory:
+### Check Status
 
 ```bash
-# Database credentials
-DB_USER=mlb_user
-DB_PASSWORD=your_db_password_here
-NBA_DB_HOST=host.docker.internal  # Use 'localhost' on Linux
+ssh sportsuite@5.161.239.229
 
-# API Keys (if needed)
-ODDS_API_KEY=your_api_key_here
+# Check Airflow services
+sudo systemctl status airflow-scheduler airflow-webserver
 
-# SMTP for alerts (optional)
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your_email@gmail.com
-SMTP_PASSWORD=your_app_password
-SMTP_MAIL_FROM=your_email@gmail.com
+# Check DAG status
+source venv/bin/activate
+airflow dags list-runs -d nba_full_pipeline --limit 5
 
-# Airflow UID (Linux only - run: echo $(id -u))
-AIRFLOW_UID=1000
+# View logs
+tail -100 /home/sportsuite/sport-suite/airflow/logs/scheduler/latest/*.log
 ```
 
-### 2. Start Airflow
+### Manual Trigger
 
 ```bash
-cd airflow/
+# On server
+source venv/bin/activate
+airflow dags trigger nba_full_pipeline
 
-# Initialize Airflow (first time only)
-docker-compose -f docker-compose.airflow.yml up airflow-init
-
-# Start all services
-docker-compose -f docker-compose.airflow.yml up -d
-
-# Check status
-docker-compose -f docker-compose.airflow.yml ps
+# Or via Makefile from local
+make server-trigger DAG=nba_full_pipeline
 ```
 
-### 3. Access Airflow UI
+### Access Web UI
 
-Open http://localhost:8080 in your browser.
+http://5.161.239.229:8080
 
-- **Username:** `admin`
-- **Password:** `admin`
+- **Username:** admin
+- **Password:** (set during installation)
 
-### 4. Enable DAGs
-
-DAGs are paused by default. In the Airflow UI:
-
-1. Navigate to DAGs view
-2. Toggle on:
-   - `nba_morning_pipeline`
-   - `nba_evening_pipeline`
-   - `nba_health_check`
-
-## DAG Details
-
-### Morning Pipeline (10:00 AM EST)
-
-Tasks executed in order:
-
-1. **fetch_props** - Multi-source collection from 7 sportsbooks
-2. **load_props_to_db** - Store in PostgreSQL
-3. **fetch_cheatsheet** - BettingPros recommendations
-4. **load_cheatsheet_to_db** - Store cheatsheet data
-5. **enrich_matchups** - Add opponent & home/away context
-6. **fetch_game_results** - Yesterday's game stats
-7. **populate_actual_values** - Update props with results
-8. **update_injuries** - Injury report sync
-9. **load_team_games** - NBA API incremental load
-10. **update_team_stats** - Season pace/ratings
-11. **load_team_advanced_stats** - Advanced metrics
-12. **fetch_vegas_lines** - Game spreads & totals
-13. **update_minutes_projections** - Minutes projections
-14. **update_prop_history** - Bayesian hit rates
-15. **verify_data_freshness** - Final validation
-
-### Evening Pipeline (5:00 PM EST)
-
-Tasks executed in order:
-
-1. **health_check** - System readiness
-2. **validate_data_freshness** - Data quality
-3. **check_performance_thresholds** - Stop-loss monitoring
-4. **refresh_props** - Capture line movements
-5. **load_refreshed_props** - Store refreshed data
-6. **refresh_vegas_lines** - Update spreads/totals
-7. **refresh_cheatsheet** - Latest projections
-8. **enrich_matchups** - Update context
-9. **generate_xl_predictions** - XL model predictions
-10. **generate_pro_picks** - Cheatsheet-based picks
-11. **generate_odds_api_picks** - Pick6 multiplier picks
-12. **output_final_picks** - Combine and output
-
-### Health Check (Every 6 Hours)
-
-Monitors:
-- Database connectivity (4 databases)
-- Model files (24 .pkl files)
-- Data freshness (props, coverage)
-- Disk space utilization
-- API health
+---
 
 ## Configuration
 
+### `airflow.cfg` Key Settings
+
+```ini
+[core]
+executor = LocalExecutor
+dags_folder = /home/sportsuite/sport-suite/airflow/dags
+
+[database]
+sql_alchemy_conn = postgresql+psycopg2://mlb_user:PASSWORD@localhost:5539/airflow_metadata
+
+[webserver]
+web_server_port = 8080
+base_url = http://5.161.239.229:8080
+```
+
 ### Airflow Variables
 
-Set via UI (Admin > Variables) or CLI:
+Set via UI (Admin > Variables):
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `nba_project_root` | Project root path | `/opt/airflow/project` |
-| `alert_email` | Alert recipients | `alerts@example.com` |
+| Variable | Value | Description |
+|----------|-------|-------------|
+| `nba_project_root` | `/home/sportsuite/sport-suite` | Project root on server |
+| `alert_email` | (your email) | Alert recipients |
 
-### Airflow Connections
-
-Pre-configured during initialization:
+### Database Connections
 
 | Connection ID | Database | Port |
 |--------------|----------|------|
@@ -148,153 +91,194 @@ Pre-configured during initialization:
 | `nba_team_db` | nba_team | 5538 |
 | `nba_intelligence_db` | nba_intelligence | 5539 |
 
-To update connections (Admin > Connections):
+---
 
-```bash
-# Via CLI
-docker-compose -f docker-compose.airflow.yml run --rm airflow-cli \
-  airflow connections delete nba_intelligence_db
+## DAG Details
 
-docker-compose -f docker-compose.airflow.yml run --rm airflow-cli \
-  airflow connections add 'nba_intelligence_db' \
-    --conn-type 'postgres' \
-    --conn-host 'your-host' \
-    --conn-schema 'nba_intelligence' \
-    --conn-login 'your-user' \
-    --conn-password 'your-password' \
-    --conn-port '5539'
+### `nba_full_pipeline` (9:00 AM EST)
+
+Complete daily workflow:
+
+```
+fetch_props → load_to_db → enrich_matchups → fetch_cheatsheet
+    ↓
+fetch_game_results → populate_actuals → update_injuries
+    ↓
+load_team_games → update_team_stats → fetch_vegas_lines
+    ↓
+generate_xl_predictions → output_picks
 ```
 
-## Manual Trigger
+**Tasks:**
+1. `fetch_props` - BettingPros + PrizePicks (10 sources)
+2. `load_props_to_db` - Store in nba_props_xl
+3. `enrich_matchups` - Add opponent/is_home context
+4. `fetch_cheatsheet` - BettingPros projections
+5. `fetch_game_results` - Yesterday's box scores
+6. `populate_actual_values` - Mark prop outcomes
+7. `update_injuries` - Injury report sync
+8. `load_team_games` - NBA API incremental
+9. `update_team_stats` - Pace/ratings
+10. `fetch_vegas_lines` - Game spreads/totals
+11. `generate_xl_predictions` - XL + V3 models
+12. `output_picks` - Write JSON + notify Discord
 
-### Via UI
+### `nba_validation_pipeline` (9:30 AM EST)
 
-1. Go to DAGs view
-2. Click on the DAG name
-3. Click "Trigger DAG" (play button)
+Validates yesterday's picks:
+1. `load_yesterday_picks` - Read prediction JSON
+2. `fetch_actual_results` - Get game outcomes
+3. `calculate_performance` - Win rate, ROI
+4. `update_tracking_sheet` - Log results
+5. `send_summary` - Discord notification
 
-### Via CLI
+### `nba_health_check` (Every 6 Hours)
 
-```bash
-# Trigger morning pipeline
-docker-compose -f docker-compose.airflow.yml run --rm airflow-cli \
-  airflow dags trigger nba_morning_pipeline
+Monitors system health:
+- Database connectivity (4 DBs)
+- Model files (24 .pkl files)
+- Data freshness (props within 24h)
+- Disk space (>10% free)
+- Scheduler heartbeat
 
-# Trigger evening pipeline
-docker-compose -f docker-compose.airflow.yml run --rm airflow-cli \
-  airflow dags trigger nba_evening_pipeline
+---
 
-# Trigger health check
-docker-compose -f docker-compose.airflow.yml run --rm airflow-cli \
-  airflow dags trigger nba_health_check
-```
+## Systemd Services
 
-## Monitoring
-
-### Task Logs
-
-Via UI: Click task > Logs
-
-Via CLI:
-```bash
-docker-compose -f docker-compose.airflow.yml logs -f airflow-scheduler
-```
-
-### Health Endpoint
-
-```bash
-curl http://localhost:8080/health
-```
-
-### Database
+### Service Files
 
 ```bash
-# Access Airflow metadata
-docker-compose -f docker-compose.airflow.yml exec postgres \
-  psql -U airflow -d airflow
+# /etc/systemd/system/airflow-scheduler.service
+# /etc/systemd/system/airflow-webserver.service
 ```
 
-## Scaling (CeleryExecutor)
+### Management
 
-For production with multiple workers, enable CeleryExecutor:
+```bash
+# Start/stop/restart
+sudo systemctl start airflow-scheduler airflow-webserver
+sudo systemctl stop airflow-scheduler airflow-webserver
+sudo systemctl restart airflow-scheduler airflow-webserver
 
-1. Uncomment `redis` and `airflow-worker` in `docker-compose.airflow.yml`
-2. Update environment:
-   ```yaml
-   AIRFLOW__CORE__EXECUTOR: CeleryExecutor
-   AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
-   ```
-3. Scale workers:
-   ```bash
-   docker-compose -f docker-compose.airflow.yml up -d --scale airflow-worker=3
-   ```
+# Enable on boot
+sudo systemctl enable airflow-scheduler airflow-webserver
+
+# Check status
+sudo systemctl status airflow-scheduler airflow-webserver
+
+# View logs
+sudo journalctl -u airflow-scheduler -f
+sudo journalctl -u airflow-webserver -f
+```
+
+---
+
+## Local Development
+
+### Setup (Docker-based)
+
+```bash
+cd airflow/
+
+# Initialize
+docker-compose -f docker-compose.airflow.yml up airflow-init
+
+# Start services
+docker-compose -f docker-compose.airflow.yml up -d
+
+# Access at http://localhost:8080
+```
+
+### Mirror Production Config
+
+```bash
+# Copy production airflow.cfg
+scp sportsuite@5.161.239.229:/home/sportsuite/sport-suite/airflow/airflow.cfg ./
+
+# Update for local paths
+sed -i 's|/home/sportsuite/sport-suite|/home/untitled/Sport-suite|g' airflow.cfg
+```
+
+---
 
 ## Troubleshooting
 
-### DAGs Not Appearing
+### Scheduler Not Running
 
 ```bash
-# Check scheduler logs
-docker-compose -f docker-compose.airflow.yml logs airflow-scheduler
+# Check heartbeat
+airflow jobs check --job-type SchedulerJob --hostname $(hostname)
 
-# Force DAG rescan
-docker-compose -f docker-compose.airflow.yml exec airflow-scheduler \
-  airflow dags reserialize
+# Restart
+sudo systemctl restart airflow-scheduler
+```
+
+### Tasks Stuck in Queue
+
+```bash
+# Check executor
+airflow config get-value core executor
+# Should be: LocalExecutor
+
+# Clear stuck tasks
+airflow tasks clear nba_full_pipeline --start-date 2026-02-04
 ```
 
 ### Database Connection Issues
 
 ```bash
-# Test connection from inside container
-docker-compose -f docker-compose.airflow.yml exec airflow-webserver \
-  airflow connections test nba_intelligence_db
+# Test from Airflow
+airflow connections test nba_intelligence_db
+
+# Test directly
+PGPASSWORD=$DB_PASSWORD psql -h localhost -p 5539 -U $DB_USER -d airflow_metadata -c "SELECT 1;"
 ```
 
-### Reset Everything
+### DAGs Not Loading
 
 ```bash
-# Stop and remove all containers
-docker-compose -f docker-compose.airflow.yml down -v
+# Check for syntax errors
+python3 -c "import airflow.dags.nba_full_pipeline"
 
-# Remove logs
-rm -rf logs/*
-
-# Reinitialize
-docker-compose -f docker-compose.airflow.yml up airflow-init
-docker-compose -f docker-compose.airflow.yml up -d
+# Force rescan
+airflow dags reserialize
 ```
+
+---
 
 ## Directory Structure
 
 ```
 airflow/
 ├── dags/
-│   ├── __init__.py
-│   ├── nba_morning_pipeline.py    # Morning data collection
-│   ├── nba_evening_pipeline.py    # Evening predictions
-│   └── nba_health_check.py        # Health monitoring
-├── plugins/
-│   └── __init__.py
-├── logs/                          # Task logs (auto-created)
-├── docker-compose.airflow.yml     # Airflow services
+│   ├── nba_full_pipeline.py      # Main pipeline
+│   ├── nba_validation_pipeline.py # Daily validation
+│   └── nba_health_check.py       # Health monitoring
+├── logs/                          # Task execution logs
+├── airflow.cfg                    # Configuration
+├── docker-compose.airflow.yml     # Local dev setup
 └── README.md                      # This file
 ```
 
-## Comparison with Bash Script
+---
 
-| Feature | Bash Script | Airflow |
-|---------|-------------|---------|
-| Scheduling | Manual cron | Built-in scheduler |
-| Monitoring | Log files | Web UI + metrics |
-| Retries | None | Configurable (3x default) |
-| Alerting | None | Email/Slack on failure |
-| Dependencies | Sequential only | DAG graph |
-| Parallelism | Limited | Full support |
-| History | Log files | Database storage |
-| Backfills | Manual | Built-in support |
+## Discord Integration
 
-## Support
+The bot (`/home/palworld/discord/nba_commands.py`) provides on-demand access:
 
-- **Logs:** `airflow/logs/` or Airflow UI
-- **Predictions:** `nba/betting_xl/predictions/`
-- **Health reports:** Sent via email on issues
+| Command | Description |
+|---------|-------------|
+| `/nba` | Show today's picks |
+| `/nba-run` | Trigger full pipeline |
+| `/nba-refresh` | Quick line refresh |
+| `/nba-status` | Check pipeline status |
+
+Auto-DM: Picks sent to owner at 9:15 AM EST daily.
+
+---
+
+## Related
+
+- [Main README](../README.md) - Project overview
+- [betting_xl README](../nba/betting_xl/README.md) - Prediction system
+- [docker README](../docker/README.md) - Database containers
