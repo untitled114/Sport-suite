@@ -34,6 +34,7 @@ import pandas as pd
 import psycopg2
 
 from nba.betting_xl.line_optimizer import PRODUCTION_CONFIG, LineOptimizer
+from nba.betting_xl.risk_filters import RiskFilter
 from nba.betting_xl.utils.hit_rate_loader import HitRateCache
 from nba.betting_xl.xl_predictor import XLPredictor
 from nba.core.drift_service import DriftService
@@ -92,6 +93,7 @@ class XLPredictionsGenerator:
         backtest_mode: bool = False,
         predictions_dir: str = None,
         underdog_only: bool = None,
+        model_versions: list = None,
     ):
         self.game_date = game_date or datetime.now().strftime("%Y-%m-%d")
         self.game_date_obj = datetime.strptime(self.game_date, "%Y-%m-%d").date()
@@ -103,11 +105,14 @@ class XLPredictionsGenerator:
         self.predictions_dir = predictions_dir
         # Underdog-only mode: only accept props where Underdog is softest
         self.underdog_only = underdog_only
+        # Model versions to load: ['xl', 'v3', 'dfs']
+        self.model_versions = model_versions or ["xl", "v3"]
 
         # Components
         self.feature_extractor = None
         self.predictors = {}  # {market: {version: XLPredictor}}
         self.line_optimizer = None
+        self.risk_filter = RiskFilter()  # Risk assessment for volatility/defense/trend
         self.hit_rate_cache = HitRateCache(self.game_date)
         self.normalizer = NameNormalizer()
         self.player_status: Dict[str, Dict[str, Any]] = {}
@@ -134,14 +139,13 @@ class XLPredictionsGenerator:
 
     def load_models(self):
         """Load XL and V3 predictors for enabled markets"""
-        logger.info("Loading XL and V3 models...")
+        logger.info(f"Loading models: {self.model_versions}...")
 
         enabled_markets = [k for k, v in PRODUCTION_CONFIG.items() if v.get("enabled", False)]
-        model_versions = ["xl", "v3"]  # Load both model versions
 
         for market in enabled_markets:
             self.predictors[market] = {}
-            for version in model_versions:
+            for version in self.model_versions:
                 try:
                     self.predictors[market][version] = XLPredictor(
                         market,
@@ -156,12 +160,13 @@ class XLPredictionsGenerator:
                     logger.warning(f"Failed to load {market} {version.upper()} model: {e}")
 
         # Count successfully loaded models
-        xl_count = sum(1 for m in self.predictors.values() if "xl" in m)
-        v3_count = sum(1 for m in self.predictors.values() if "v3" in m)
+        loaded_counts = {}
+        for ver in self.model_versions:
+            loaded_counts[ver] = sum(1 for m in self.predictors.values() if ver in m)
 
         # NOTE: Odds API picks are now handled by standalone generate_odds_api_picks.py
-
-        logger.info(f"[OK] Loaded {xl_count} XL models + {v3_count} V3 models")
+        counts_str = " + ".join(f"{c} {v.upper()}" for v, c in loaded_counts.items())
+        logger.info(f"[OK] Loaded {counts_str} models")
 
     def initialize_components(self):
         """Initialize feature extractor and line optimizer"""
@@ -874,6 +879,55 @@ class XLPredictionsGenerator:
                         if hit_rates:
                             pick["hit_rates"] = hit_rates
 
+                        # Risk assessment with line softness (POINTS) or strict filtering (REBOUNDS)
+                        opp_rank = self.get_opp_rank(optimized["opponent_team"], stat_type)
+                        risk = self.risk_filter.assess_risk(
+                            player_name=player_name,
+                            stat_type=stat_type,
+                            features=features,
+                            opp_rank=opp_rank,
+                            p_over=optimized["p_over"],
+                            line=optimized["best_line"],
+                            line_spread=optimized["line_spread"],
+                            edge_pct=pick["edge_pct"],
+                            prediction=adjusted_prediction,
+                            consensus_line=optimized["consensus_line"],
+                        )
+
+                        # Add risk info to pick
+                        pick["risk_level"] = risk.risk_level
+                        pick["risk_score"] = round(risk.total_risk_score, 3)
+                        pick["risk_flags"] = []
+                        if risk.high_volatility:
+                            pick["risk_flags"].append("HIGH_VOLATILITY")
+                        if risk.elite_defense:
+                            pick["risk_flags"].append("ELITE_DEFENSE")
+                        if risk.negative_trend:
+                            pick["risk_flags"].append("SLUMP")
+
+                        # POINTS: Add stake sizing info
+                        if stat_type == "POINTS":
+                            pick["recommended_stake"] = risk.recommended_stake
+                            pick["stake_reason"] = risk.stake_reason
+                            pick["line_is_soft"] = risk.line_is_soft
+                            pick["line_softness_score"] = round(risk.line_softness_score, 3)
+
+                        # Skip based on market-specific logic
+                        if risk.should_skip:
+                            skip_reason = (
+                                risk.stake_reason if stat_type == "POINTS" else "high_risk"
+                            )
+                            logger.debug(
+                                f"[RISK] Skipping {player_name} {stat_type}: "
+                                f"{risk.risk_level} ({skip_reason})"
+                            )
+                            skip_reasons["high_risk"] += 1
+                            continue
+
+                        # Flag risky picks
+                        if risk.should_flag:
+                            pick["risk_warning"] = self.risk_filter.format_risk_summary(risk)
+
                         self.picks.append(pick)
 
             except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
@@ -886,6 +940,21 @@ class XLPredictionsGenerator:
             logger.info(
                 f"Skipped {sum(skip_reasons.values())}/{total_props} props due to guards: {dict(skip_reasons)}"
             )
+
+        # Log risk filter summary
+        risk_stats = self.risk_filter.get_stats()
+        if risk_stats["high_risk_skipped"] > 0:
+            logger.info(
+                f"[RISK] Skipped {risk_stats['high_risk_skipped']} EXTREME risk picks "
+                f"({risk_stats['skip_rate']:.1f}% of assessed)"
+            )
+
+        # Log flagged (high-risk but kept) picks
+        flagged = [p for p in self.picks if p.get("risk_warning")]
+        if flagged:
+            logger.info(f"[RISK] {len(flagged)} picks flagged as HIGH risk (kept with warning):")
+            for p in flagged[:5]:  # Show first 5
+                logger.info(f"  - {p['player_name']} {p['stat_type']}: {p.get('risk_warning')}")
 
     def _generate_reasoning(
         self, prediction, line, line_spread, confidence, consensus_offset, side="OVER"
