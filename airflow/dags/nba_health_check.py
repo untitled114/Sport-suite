@@ -95,8 +95,8 @@ def alert_on_health_failure(context: dict[str, Any]) -> None:
 
 @dag(
     dag_id="nba_health_check",
-    description="NBA system health monitoring (every 4 hours)",
-    schedule=CronTriggerTimetable("0 */4 * * *", timezone="UTC"),  # Every 4 hours
+    description="NBA system health monitoring (every 6 hours)",
+    schedule=CronTriggerTimetable("0 */6 * * *", timezone="UTC"),  # Every 6 hours
     start_date=datetime(2025, 11, 7),
     catchup=False,
     tags=["nba", "health", "monitoring"],

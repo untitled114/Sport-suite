@@ -147,7 +147,7 @@ def alert_on_failure(context: dict[str, Any]) -> None:
 @dag(
     dag_id="nba_full_pipeline",
     description="NBA complete data collection + predictions (run once daily)",
-    schedule=CronTriggerTimetable("0 22 * * *", timezone="UTC"),  # 05:00 PM EST daily
+    schedule=CronTriggerTimetable("0 14 * * *", timezone="UTC"),  # 09:00 AM EST daily
     start_date=datetime(2025, 11, 7),
     catchup=False,
     tags=["nba", "predictions", "full", "data-collection"],
