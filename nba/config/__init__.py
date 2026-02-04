@@ -1,4 +1,28 @@
 # NBA Configuration Module
+import os
+
+# =============================================================================
+# Environment Detection
+# =============================================================================
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
+IS_PRODUCTION = ENVIRONMENT == "production"
+IS_DEVELOPMENT = ENVIRONMENT == "development"
+
+
+def get_environment() -> str:
+    """Get current environment name."""
+    return ENVIRONMENT
+
+
+def is_production() -> bool:
+    """Check if running in production."""
+    return IS_PRODUCTION
+
+
+def is_development() -> bool:
+    """Check if running in development."""
+    return IS_DEVELOPMENT
+
 
 # Database configuration
 # Shared constants
@@ -57,3 +81,27 @@ from .thresholds import (  # Core dataclasses; Singleton instances; Market confi
     is_reliable_book,
     is_trap_book,
 )
+
+__all__ = [
+    # Environment
+    "ENVIRONMENT",
+    "IS_PRODUCTION",
+    "IS_DEVELOPMENT",
+    "get_environment",
+    "is_production",
+    "is_development",
+    # Constants
+    "ACTIVE_MARKETS",
+    "ALL_BOOKS",
+    "VALID_STAT_TYPES",
+    # Database
+    "get_db_config",
+    "get_players_db_config",
+    "get_games_db_config",
+    "get_team_db_config",
+    "get_intelligence_db_config",
+    # Thresholds
+    "get_market_config",
+    "get_tier_config",
+    "is_trap_book",
+]
