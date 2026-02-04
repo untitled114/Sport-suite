@@ -63,16 +63,113 @@ else
     CURRENT_SEASON=$current_year
 fi
 
+# =============================================================================
+# DEPENDENCY CHECK
+# =============================================================================
+# Verify required tools are installed
+
+check_dependencies() {
+    local missing=()
+
+    # Required tools
+    command -v python3 >/dev/null 2>&1 || missing+=("python3")
+    command -v psql >/dev/null 2>&1 || missing+=("postgresql-client (psql)")
+    command -v jq >/dev/null 2>&1 || missing+=("jq")
+    command -v bc >/dev/null 2>&1 || missing+=("bc")
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo ""
+        echo -e "\033[38;5;203m[ERROR] Missing required tools:\033[0m"
+        for tool in "${missing[@]}"; do
+            echo -e "  - $tool"
+        done
+        echo ""
+        echo -e "\033[38;5;221m[INSTALL] On Ubuntu/Debian:\033[0m"
+        echo "  sudo apt install python3 postgresql-client jq bc"
+        echo ""
+        echo -e "\033[38;5;221m[INSTALL] On macOS:\033[0m"
+        echo "  brew install python@3.10 postgresql jq"
+        echo ""
+        exit 1
+    fi
+}
+
+# Run dependency check
+check_dependencies
+
+# =============================================================================
+# ENVIRONMENT VALIDATION
+# =============================================================================
+# Check for required environment variables and provide helpful setup instructions
+
+check_env_setup() {
+    local missing=()
+    local warnings=()
+
+    # Required: DB_PASSWORD
+    if [ -z "${DB_PASSWORD:-}" ]; then
+        missing+=("DB_PASSWORD")
+    fi
+
+    # Warn if API keys missing (not fatal, but limits functionality)
+    if [ -z "${BETTINGPROS_API_KEY:-}" ]; then
+        warnings+=("BETTINGPROS_API_KEY (props fetching will fail)")
+    fi
+    if [ -z "${ODDS_API_KEY:-}" ]; then
+        warnings+=("ODDS_API_KEY (Pick6 picks will be unavailable)")
+    fi
+
+    # If missing required vars, show setup instructions
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo ""
+        echo -e "\033[38;5;203m[ERROR] Missing required environment variables:\033[0m"
+        for var in "${missing[@]}"; do
+            echo -e "  - $var"
+        done
+        echo ""
+        echo -e "\033[38;5;221m[SETUP] To fix this:\033[0m"
+        echo ""
+        echo "  1. Create/edit your .env file in the project root:"
+        echo "     cp .env.example .env"
+        echo "     nano .env"
+        echo ""
+        echo "  2. Set the required variables:"
+        echo "     DB_USER=mlb_user"
+        echo "     DB_PASSWORD=your_secure_password"
+        echo "     BETTINGPROS_API_KEY=your_api_key"
+        echo "     ODDS_API_KEY=your_api_key"
+        echo ""
+        echo "  3. Source the file before running:"
+        echo "     source .env"
+        echo "     export DB_USER DB_PASSWORD BETTINGPROS_API_KEY ODDS_API_KEY"
+        echo "     ./nba/nba-predictions.sh"
+        echo ""
+        echo "  See docs/SETUP.md for complete setup instructions."
+        echo ""
+        exit 1
+    fi
+
+    # Show warnings for optional but recommended vars
+    if [ ${#warnings[@]} -gt 0 ] && [ "${1:-}" != "health" ]; then
+        echo -e "\033[38;5;221m[WARN] Missing optional environment variables:\033[0m"
+        for var in "${warnings[@]}"; do
+            echo -e "  - $var"
+        done
+        echo ""
+    fi
+}
+
+# Run environment check (pass command name for context)
+check_env_setup "${1:-}"
+
 # Database - use environment variables with sensible defaults
 DB_HOST="${NBA_DB_HOST:-localhost}"
 DB_PORT="${NBA_INT_DB_PORT:-5539}"
 DB_NAME="${NBA_INT_DB_NAME:-nba_intelligence}"
 DB_USER="${DB_USER:-mlb_user}"
-# Validate DB_PASSWORD is set (used per-command with PGPASSWORD=)
-: "${DB_PASSWORD:?DB_PASSWORD environment variable is required}"
 
 # Export DB credentials and API keys for Python scripts (they read from os.getenv)
-export DB_USER DB_PASSWORD ODDS_API_KEY
+export DB_USER DB_PASSWORD ODDS_API_KEY BETTINGPROS_API_KEY
 
 # Python path for imports
 export PYTHONPATH="$PROJECT_ROOT"
@@ -177,7 +274,7 @@ system_banner() {
     divider
     echo ""
     echo -e "${BOLD}${PRIMARY}  NBA XL Prediction System${NC}"
-    echo -e "  ${MUTED}Star + Goldmine + Standard (Spread-Based)${NC}"
+    echo -e "  ${MUTED}XL + V3 Models | Risk-Adjusted Stake Sizing${NC}"
     echo ""
     echo -e "  ${SOFT_WHITE}${DATE_STR}${NC}  ${MUTED}${TIME_STR}${NC}"
     echo ""
@@ -232,7 +329,12 @@ render_pick_section() {
         line_dist=$(echo "$pick_json" | jq -r '[.line_distribution[] | "\(.line):\(.count)"] | join(" | ")')
         alt_books=$(echo "$pick_json" | jq -r '[.top_3_lines[1:3][] | .book] | join(", ")')
 
-        print_pick_card "$player" "$market" "$side" "$best_line" "$best_book" "$edge" "$edge_pct" "$prediction" "$prob" "$opp_rank" "$expected_wr" "$accent" "$filter_tier" "$opponent" "$is_home" "$consensus_line" "$line_spread" "$num_books" "$confidence" "$line_dist" "$alt_books"
+        # Stake sizing (POINTS only)
+        stake=$(echo "$pick_json" | jq -r '.recommended_stake // 1.0')
+        stake_reason=$(echo "$pick_json" | jq -r '.stake_reason // ""')
+        risk_level=$(echo "$pick_json" | jq -r '.risk_level // ""')
+
+        print_pick_card "$player" "$market" "$side" "$best_line" "$best_book" "$edge" "$edge_pct" "$prediction" "$prob" "$opp_rank" "$expected_wr" "$accent" "$filter_tier" "$opponent" "$is_home" "$consensus_line" "$line_spread" "$num_books" "$confidence" "$line_dist" "$alt_books" "$stake" "$stake_reason" "$risk_level"
     done <<< "$picks"
 }
 
@@ -258,6 +360,9 @@ print_pick_card() {
     local confidence="${19:-STANDARD}"
     local line_dist="${20:-}"
     local alt_books="${21:-}"
+    local stake="${22:-1.0}"
+    local stake_reason="${23:-}"
+    local risk_level="${24:-}"
 
     # Convert probability to percentage
     local prob_pct=$(echo "$prob * 100" | bc -l | xargs printf "%.0f")
@@ -329,6 +434,19 @@ print_pick_card() {
     printf "  ${MUTED}|${NC}  %-14s %b  ${MUTED}|${NC}  %-8s %b\n" \
         "Confidence:" "${BOLD}${conf_color}${confidence}${NC}" \
         "P(over):" "${BOLD}${prob_pct}%${NC}"
+
+    # Stake sizing (POINTS only)
+    if [ "$market" = "POINTS" ] && [ -n "$stake" ] && [ "$stake" != "null" ] && [ "$stake" != "1.0" ]; then
+        local stake_color="$SUCCESS"
+        if (( $(echo "$stake < 1.0" | bc -l) )); then
+            stake_color="$ORANGE"
+        fi
+        local risk_display=""
+        if [ -n "$risk_level" ] && [ "$risk_level" != "null" ] && [ "$risk_level" != "LOW" ]; then
+            risk_display=" ${MUTED}(${risk_level})${NC}"
+        fi
+        echo -e "  ${MUTED}|${NC}  ${BOLD}Stake:${NC} ${stake_color}${stake}u${NC}${risk_display}"
+    fi
 
     # Line distribution (where else to bet)
     if [ -n "$line_dist" ] && [ "$line_dist" != "null" ]; then
