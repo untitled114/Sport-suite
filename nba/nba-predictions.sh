@@ -98,6 +98,17 @@ check_dependencies() {
 check_dependencies
 
 # =============================================================================
+# AUTO-SOURCE .env FILE
+# =============================================================================
+# Automatically load environment variables from .env if it exists
+
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a  # Automatically export all variables
+    source "$PROJECT_ROOT/.env"
+    set +a
+fi
+
+# =============================================================================
 # ENVIRONMENT VALIDATION
 # =============================================================================
 # Check for required environment variables and provide helpful setup instructions
