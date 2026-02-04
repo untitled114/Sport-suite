@@ -102,12 +102,14 @@ class HistoricalBacktest:
         seed_start: Optional[date] = None,
         seed_end: Optional[date] = None,
         no_seed: bool = False,
+        model_versions: Optional[List[str]] = None,
     ):
         self.start_date = start_date
         self.end_date = end_date
         self.dry_run = dry_run
         self.skip_validation = skip_validation
         self.no_seed = no_seed
+        self.model_versions = model_versions or ["xl", "v3"]
 
         # Seed period for calibrator warmup
         if no_seed:
@@ -281,6 +283,7 @@ class HistoricalBacktest:
                 as_of_date=as_of_date,
                 backtest_mode=True,
                 predictions_dir=str(self.output_dir),
+                model_versions=self.model_versions,
             )
 
             # Run the generator
@@ -354,6 +357,7 @@ class HistoricalBacktest:
                     as_of_date=as_of_date,
                     backtest_mode=True,
                     predictions_dir=str(self.output_dir),
+                    model_versions=self.model_versions,
                 )
 
                 generator.run(output_file=str(output_file), dry_run=self.dry_run)
@@ -580,6 +584,12 @@ def main():
         action="store_true",
         help="Skip seed period (not recommended - calibrator needs warmup data)",
     )
+    parser.add_argument(
+        "--models",
+        type=str,
+        default="xl,v3",
+        help="Model versions to test (comma-separated: xl,v3,dfs). Default: xl,v3",
+    )
 
     args = parser.parse_args()
 
@@ -595,6 +605,9 @@ def main():
     seed_start = datetime.strptime(args.seed_start, "%Y-%m-%d").date() if args.seed_start else None
     seed_end = datetime.strptime(args.seed_end, "%Y-%m-%d").date() if args.seed_end else None
 
+    # Parse model versions
+    model_versions = [v.strip() for v in args.models.split(",")]
+
     # Run backtest
     backtest = HistoricalBacktest(
         start_date=start_date,
@@ -605,6 +618,7 @@ def main():
         seed_start=seed_start,
         seed_end=seed_end,
         no_seed=args.no_seed,
+        model_versions=model_versions,
     )
 
     backtest.run()

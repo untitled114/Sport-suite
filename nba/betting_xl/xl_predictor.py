@@ -37,6 +37,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
 logger = logging.getLogger(__name__)
 
 MODELS_DIR = Path(__file__).parent.parent / "models" / "saved_xl"
+MODELS_DIR_DFS = Path(__file__).parent.parent / "models" / "saved_dfs"
 BOOK_INTELLIGENCE_DIR = Path(__file__).parent.parent / "models" / "saved_book_intelligence"
 
 # Import calibrators - prefer JSONCalibrator (uses real predictions from JSON files)
@@ -303,10 +304,14 @@ class XLPredictor:
         try:
             # Determine model prefix based on version
             # 'xl' = XL models (102 features) - CURRENT PRODUCTION
-            # 'v3' = V3 models (166 features) - available but not deployed
-            if self.model_version == "v3":
+            # 'v3' = V3 models (136 features) - deployed Feb 2026
+            # 'dfs' = DFS models (136 features) - trained on DFS data only
+            if self.model_version == "dfs":
+                model_prefix = MODELS_DIR_DFS / f"{self.market_lower}_v3"
+                version_label = "DFS_136"
+            elif self.model_version == "v3":
                 model_prefix = MODELS_DIR / f"{self.market_lower}_v3"
-                version_label = "V3_166"
+                version_label = "V3_136"
             else:
                 model_prefix = MODELS_DIR / f"{self.market_lower}_xl"
                 version_label = "XL_102"
