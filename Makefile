@@ -201,3 +201,35 @@ f: fmt
 r: run
 p: picks
 v: validate
+
+# =============================================================================
+# DEPLOYMENT
+# =============================================================================
+
+.PHONY: deploy deploy-restart server-status server-logs
+
+SERVER := sportsuite@5.161.239.229
+
+## Deploy code to production (no restart)
+deploy:
+	@./deploy.sh
+
+## Deploy and restart Airflow services
+deploy-restart:
+	@./deploy.sh --restart
+
+## Check server status
+server-status:
+	@ssh $(SERVER) "systemctl status airflow-scheduler airflow-webserver --no-pager | head -20"
+
+## Tail server logs
+server-logs:
+	@ssh $(SERVER) "journalctl -u airflow-scheduler -f"
+
+## Run predictions on server
+server-predict:
+	@ssh $(SERVER) "cd /home/sportsuite/sport-suite && source venv/bin/activate && source .env && export DB_USER DB_PASSWORD TERM=xterm && ./nba/nba-predictions.sh"
+
+## SSH to server
+ssh:
+	@ssh $(SERVER)
