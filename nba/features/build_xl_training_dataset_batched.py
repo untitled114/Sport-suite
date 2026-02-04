@@ -77,6 +77,9 @@ TEAM_ABBREV_MAP = {
     "BRK": "BKN",
 }
 
+# DFS platforms (softer lines than traditional sportsbooks)
+DFS_BOOKS = ("prizepicks", "prizepicks_goblin", "prizepicks_alt", "prizepicks_demon", "underdog")
+
 
 @dataclass
 class DataCache:
@@ -125,18 +128,22 @@ class DataCache:
 class BatchedDatasetBuilder:
     """Builds XL training datasets using batched queries (10x faster)"""
 
-    def __init__(self, output_dir: str = "datasets/", verbose: bool = True):
+    def __init__(self, output_dir: str = "datasets/", verbose: bool = True, dfs_only: bool = False):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True, parents=True)
         self.verbose = verbose
+        self.dfs_only = dfs_only
         self.cache = DataCache()
         self.connections: Dict[str, psycopg2.extensions.connection] = {}
 
         if self.verbose:
             print("=" * 80)
-            print("NBA XL TRAINING DATASET BUILDER - BATCHED (10x FASTER)")
+            mode = "DFS ONLY" if dfs_only else "ALL BOOKS"
+            print(f"NBA XL TRAINING DATASET BUILDER - BATCHED (10x FASTER) [{mode}]")
             print("=" * 80)
             print(f"Training period: {TRAIN_START} to {TRAIN_END}")
+            if dfs_only:
+                print(f"DFS Books: {', '.join(DFS_BOOKS)}")
             print("=" * 80)
 
     def connect(self):
@@ -1570,10 +1577,17 @@ class BatchedDatasetBuilder:
     def fetch_props(self, stat_type: str) -> pd.DataFrame:
         """Fetch all props for a stat type, aggregating multi-book data"""
         if self.verbose:
-            print(f"\n📊 Fetching {stat_type} props...")
+            mode = "DFS only" if self.dfs_only else "all books"
+            print(f"\n📊 Fetching {stat_type} props ({mode})...")
+
+        # Build DFS filter if enabled
+        dfs_filter = ""
+        if self.dfs_only:
+            dfs_books_str = ", ".join([f"'{b}'" for b in DFS_BOOKS])
+            dfs_filter = f"AND LOWER(book_name) IN ({dfs_books_str})"
 
         # Aggregate multi-book data per prop (similar to original builder)
-        query = """
+        query = f"""
             SELECT
                 player_name, game_date, stat_type,
                 MAX(opponent_team) as opponent_team,
@@ -1589,6 +1603,7 @@ class BatchedDatasetBuilder:
               AND actual_value IS NOT NULL
               AND over_line IS NOT NULL
               AND game_date >= %s AND game_date <= %s
+              {dfs_filter}
             GROUP BY player_name, game_date, stat_type
             ORDER BY player_name, game_date
         """
@@ -1778,7 +1793,10 @@ class BatchedDatasetBuilder:
                 dataset = self.build_dataset(stat_type)
 
                 if dataset is not None and len(dataset) > 0:
-                    output_file = self.output_dir / f"xl_training_{stat_type}_2023_2025_batched.csv"
+                    suffix = "_dfs" if self.dfs_only else ""
+                    output_file = (
+                        self.output_dir / f"xl_training_{stat_type}{suffix}_2023_2025_batched.csv"
+                    )
                     dataset.to_csv(output_file, index=False)
 
                     print(f"\n✅ Saved: {output_file}")
@@ -1793,10 +1811,17 @@ def main():
     parser.add_argument("--output", type=str, default="datasets/", help="Output directory")
     parser.add_argument("--market", type=str, help="Single market (POINTS, REBOUNDS)")
     parser.add_argument("--quiet", action="store_true", help="Quiet mode")
+    parser.add_argument(
+        "--dfs-only",
+        action="store_true",
+        help="Only use DFS platforms (PrizePicks, Underdog) - softer lines for specialized model",
+    )
 
     args = parser.parse_args()
 
-    builder = BatchedDatasetBuilder(output_dir=args.output, verbose=not args.quiet)
+    builder = BatchedDatasetBuilder(
+        output_dir=args.output, verbose=not args.quiet, dfs_only=args.dfs_only
+    )
     builder.run(market=args.market)
 
 

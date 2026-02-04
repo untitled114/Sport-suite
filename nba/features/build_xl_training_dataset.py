@@ -103,20 +103,26 @@ VAL_END = date(2026, 1, 6)  # Test period end (latest validated data)
 STAT_TYPES = ["POINTS", "REBOUNDS"]
 
 
+# DFS platforms (softer lines)
+DFS_BOOKS = ("prizepicks", "prizepicks_goblin", "prizepicks_alt", "prizepicks_demon", "underdog")
+
+
 class XLDatasetBuilder:
     """Builds leak-proof training dataset for XL models"""
 
-    def __init__(self, output_dir: str = "datasets/", verbose: bool = True):
+    def __init__(self, output_dir: str = "datasets/", verbose: bool = True, dfs_only: bool = False):
         """
         Initialize dataset builder.
 
         Args:
             output_dir: Directory to save output CSV files
             verbose: Enable verbose logging
+            dfs_only: Only use DFS platforms (PrizePicks, Underdog) for training
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True, parents=True)
         self.verbose = verbose
+        self.dfs_only = dfs_only
         self.conn = None
         self.cursor = None
 
@@ -126,6 +132,8 @@ class XLDatasetBuilder:
         if self.verbose:
             print("=" * 80)
             print("NBA XL TRAINING DATASET BUILDER")
+            if dfs_only:
+                print("MODE: DFS-ONLY (PrizePicks + Underdog)")
             print("=" * 80)
             print(f"Training period: {TRAIN_START.isoformat()} to {TRAIN_END.isoformat()}")
             print(f"Validation period: {VAL_START.isoformat()} to {VAL_END.isoformat()}")
@@ -164,7 +172,13 @@ class XLDatasetBuilder:
         Returns:
             DataFrame with all props and multi-book data
         """
-        query = """
+        # Build query with optional DFS filter
+        dfs_filter = ""
+        if self.dfs_only:
+            dfs_books_str = ", ".join([f"'{b}'" for b in DFS_BOOKS])
+            dfs_filter = f"AND LOWER(book_name) IN ({dfs_books_str})"
+
+        query = f"""
         SELECT
             player_id,
             player_name,
@@ -191,11 +205,13 @@ class XLDatasetBuilder:
           AND actual_value IS NOT NULL  -- Only completed games
           AND game_date >= %s
           AND game_date <= %s
+          {dfs_filter}
         ORDER BY game_date ASC, player_name ASC, fetch_timestamp ASC
         """
 
         if self.verbose:
-            print(f"\nFetching {stat_type} props from database...")
+            mode = "DFS-only" if self.dfs_only else "all books"
+            print(f"\nFetching {stat_type} props from database ({mode})...")
 
         # FIXED: Use TRAIN_END not VAL_END - we only want training data
         self.cursor.execute(query, (stat_type, TRAIN_START, TRAIN_END))
@@ -1362,10 +1378,17 @@ def main():
         help="Build single market only (POINTS, REBOUNDS, ASSISTS, or THREES)",
     )
     parser.add_argument("--quiet", action="store_true", help="Quiet mode (no progress bars)")
+    parser.add_argument(
+        "--dfs-only",
+        action="store_true",
+        help="Only use DFS platforms (PrizePicks, Underdog) for training data",
+    )
 
     args = parser.parse_args()
 
-    builder = XLDatasetBuilder(output_dir=args.output, verbose=not args.quiet)
+    builder = XLDatasetBuilder(
+        output_dir=args.output, verbose=not args.quiet, dfs_only=args.dfs_only
+    )
 
     if args.market:
         # Build single market
@@ -1373,8 +1396,11 @@ def main():
         dataset = builder.build_dataset(args.market.upper())
 
         if dataset is not None and len(dataset) > 0:
-            # Save to CSV
-            output_file = builder.output_dir / f"xl_training_{args.market.upper()}_2023_2025.csv"
+            # Save to CSV (include "dfs" suffix if dfs_only mode)
+            suffix = "_dfs" if args.dfs_only else ""
+            output_file = (
+                builder.output_dir / f"xl_training_{args.market.upper()}{suffix}_2023_2025.csv"
+            )
             dataset.to_csv(output_file, index=False)
             print(f"\n✅ Saved: {output_file}")
             print(f"   {len(dataset):,} props, {len(dataset.columns)} columns")
