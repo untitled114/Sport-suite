@@ -905,12 +905,11 @@ class XLPredictionsGenerator:
                         if risk.negative_trend:
                             pick["risk_flags"].append("SLUMP")
 
-                        # POINTS: Add stake sizing info
-                        if stat_type == "POINTS":
-                            pick["recommended_stake"] = risk.recommended_stake
-                            pick["stake_reason"] = risk.stake_reason
-                            pick["line_is_soft"] = risk.line_is_soft
-                            pick["line_softness_score"] = round(risk.line_softness_score, 3)
+                        # Add stake sizing info for all markets
+                        pick["recommended_stake"] = risk.recommended_stake
+                        pick["stake_reason"] = risk.stake_reason
+                        pick["line_is_soft"] = risk.line_is_soft
+                        pick["line_softness_score"] = round(risk.line_softness_score, 3)
 
                         # Skip based on market-specific logic
                         if risk.should_skip:

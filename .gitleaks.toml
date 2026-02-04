@@ -1,0 +1,54 @@
+# Gitleaks configuration
+# https://github.com/gitleaks/gitleaks
+
+title = "Sport-Suite Gitleaks Config"
+
+[extend]
+# Use default rules as baseline
+useDefault = true
+
+# Allowlist paths that don't contain real secrets
+[allowlist]
+paths = [
+    '''\.env\.example$''',
+    '''docker/\.env\.example$''',
+    '''tests/.*''',
+    '''\.md$''',
+    '''pyproject\.toml$''',
+    '''requirements.*\.txt$''',
+    '''nba/betting_xl/loaders/load_props_to_db\.py$''',  # Uses env vars, not real secrets
+]
+
+# Allowlist known false positives
+regexes = [
+    '''(?i)example''',
+    '''(?i)placeholder''',
+    '''(?i)your.*key.*here''',
+    '''(?i)test_password''',
+    '''(?i)dummy''',
+]
+
+# Additional rules for this project
+[[rules]]
+id = "bettingpros-api-key"
+description = "BettingPros API Key"
+regex = '''BETTINGPROS_API_KEY\s*=\s*['\"]?([a-zA-Z0-9]{20,})['\"]?'''
+keywords = ["bettingpros"]
+
+[[rules]]
+id = "odds-api-key"
+description = "The Odds API Key"
+regex = '''ODDS_API_KEY\s*=\s*['\"]?([a-f0-9]{32})['\"]?'''
+keywords = ["odds_api", "theoddsapi"]
+
+[[rules]]
+id = "postgresql-password"
+description = "PostgreSQL Password in Connection String"
+regex = '''postgresql.*:\/\/[^:]+:([^@]+)@'''
+keywords = ["postgresql", "postgres"]
+
+[[rules]]
+id = "mongodb-password"
+description = "MongoDB Password in Connection String"
+regex = '''mongodb.*:\/\/[^:]+:([^@]+)@'''
+keywords = ["mongodb", "mongo"]

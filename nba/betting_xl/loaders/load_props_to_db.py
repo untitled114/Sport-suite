@@ -51,8 +51,18 @@ DB_CONFIG = {
     "connect_timeout": int(os.getenv("NBA_DB_CONNECT_TIMEOUT", 10)),
 }
 
+
+def _build_mongo_uri() -> str:
+    """Build MongoDB URI from environment variables."""
+    if os.getenv("NBA_MONGO_URI"):
+        return os.getenv("NBA_MONGO_URI")
+    user = os.getenv("MONGO_USER", "sports_user")
+    password = os.getenv("MONGO_PASSWORD", "")
+    return f"mongodb://{user}:{password}@localhost:27017/"  # noqa: S105
+
+
 MONGO_CONFIG = {
-    "uri": os.getenv("NBA_MONGO_URI", "mongodb://${MONGO_USER}:${MONGO_PASSWORD}@localhost:27017/"),
+    "uri": _build_mongo_uri(),
     "database": os.getenv("NBA_MONGO_DB", "nba_betting_xl"),
     "collection": os.getenv("NBA_MONGO_COLLECTION", "nba_props_xl"),
     "timeout_ms": int(os.getenv("NBA_MONGO_TIMEOUT_MS", 8000)),
