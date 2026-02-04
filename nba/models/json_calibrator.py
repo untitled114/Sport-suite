@@ -385,18 +385,11 @@ class JSONCalibrator:
                             if pick.get("stat_type") != self.market:
                                 continue
 
-                            # Filter by model version (V3 tier = v3 model, others = xl model)
-                            # FIX Jan 15, 2026: Use startswith() to match V3_ELITE_*, V3_STANDARD_*, etc.
-                            pick_tier = pick.get("filter_tier", "").upper()
-                            is_v3_pick = pick_tier.startswith("V3")
-                            if self.model_version == "v3":
-                                # V3 calibrator only uses V3 tier predictions
-                                if not is_v3_pick:
-                                    continue
-                            else:
-                                # XL calibrator uses all non-V3 predictions
-                                if is_v3_pick:
-                                    continue
+                            # Filter by model version using the model_version field
+                            # FIX Feb 3, 2026: Use model_version field instead of filter_tier prefix
+                            pick_model = pick.get("model_version", "xl").lower()
+                            if pick_model != self.model_version:
+                                continue
 
                             # Extract fields - THE KEY: using actual p_over!
                             predictions.append(
@@ -681,13 +674,21 @@ class JSONCalibrator:
             predictions = self._load_predictions()
 
             if len(predictions) == 0:
-                return self._return_no_data_metrics()
+                metrics = self._return_no_data_metrics()
+                # Cache the "no data" result to avoid repeated loads
+                self._metrics_cache = metrics
+                self._cache_timestamp = datetime.now()
+                return metrics
 
             # Step 2: Get actual values from database
             predictions_with_actuals = self._join_actuals_from_database(predictions)
 
             if len(predictions_with_actuals) == 0:
-                return self._return_no_data_metrics()
+                metrics = self._return_no_data_metrics()
+                # Cache the "no data" result to avoid repeated loads
+                self._metrics_cache = metrics
+                self._cache_timestamp = datetime.now()
+                return metrics
 
             # Step 3: Calculate performance metrics
             metrics = self._calculate_metrics(predictions_with_actuals)
