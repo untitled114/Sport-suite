@@ -158,6 +158,14 @@ DFS_SOFT_BOOKS = {
     "prizepicks_alt",  # PP line variants
 }
 
+# PrizePicks alternate lines (goblin/demon) - not in training data
+# These were added Feb 2026, after XL/V3 models were trained
+PRIZEPICKS_ALT_BOOKS = {
+    "prizepicks_goblin",
+    "prizepicks_demon",
+    "prizepicks_alt",
+}
+
 UNDERDOG_CONFIG = {
     "POINTS": {
         "enabled": True,  # Apply soft-book filter to POINTS
@@ -452,13 +460,18 @@ class LineOptimizer:
     Finds softest lines and calculates edge for each book.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, standard_only: bool = False) -> None:
         """
         Initialize LineOptimizer.
+
+        Args:
+            standard_only: If True, exclude PrizePicks alternate lines (goblin/demon)
+                          that weren't in training data. Use for validation comparison.
 
         Database connection is lazy - call connect() or use methods that auto-connect.
         """
         self.conn: Optional[Any] = None  # psycopg2 connection
+        self.standard_only = standard_only
 
     def connect(self) -> None:
         """
@@ -529,6 +542,12 @@ class LineOptimizer:
             query += "                AND is_home = %s\n"
             # Convert numpy.bool_ to Python bool to avoid psycopg2 adaptation error
             params.append(bool(is_home))
+
+        # Exclude PrizePicks alternate lines (goblin/demon) if standard_only mode
+        # These lines weren't in training data (added Feb 2026)
+        if self.standard_only:
+            excluded_books = ", ".join([f"'{b}'" for b in PRIZEPICKS_ALT_BOOKS])
+            query += f"                AND book_name NOT IN ({excluded_books})\n"
 
         query += """        )
         SELECT

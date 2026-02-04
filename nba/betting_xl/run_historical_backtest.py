@@ -104,6 +104,7 @@ class HistoricalBacktest:
         no_seed: bool = False,
         model_versions: Optional[List[str]] = None,
         underdog_only: bool = False,
+        standard_only: bool = False,
     ):
         self.start_date = start_date
         self.end_date = end_date
@@ -112,6 +113,7 @@ class HistoricalBacktest:
         self.no_seed = no_seed
         self.model_versions = model_versions or ["xl", "v3"]
         self.underdog_only = underdog_only
+        self.standard_only = standard_only
 
         # Seed period for calibrator warmup
         if no_seed:
@@ -287,6 +289,7 @@ class HistoricalBacktest:
                 predictions_dir=str(self.output_dir),
                 model_versions=self.model_versions,
                 underdog_only=self.underdog_only if self.underdog_only else None,
+                standard_only=self.standard_only,
             )
 
             # Run the generator
@@ -362,6 +365,7 @@ class HistoricalBacktest:
                     predictions_dir=str(self.output_dir),
                     model_versions=self.model_versions,
                     underdog_only=self.underdog_only if self.underdog_only else None,
+                    standard_only=self.standard_only,
                 )
 
                 generator.run(output_file=str(output_file), dry_run=self.dry_run)
@@ -404,6 +408,9 @@ class HistoricalBacktest:
         logger.info(f"Output directory: {self.output_dir}")
         logger.info(
             f"Underdog only: {self.underdog_only} {'(matches production)' if self.underdog_only else '(all books)'}"
+        )
+        logger.info(
+            f"Standard only: {self.standard_only} {'(no goblin/demon - matches training data)' if self.standard_only else '(all book types)'}"
         )
         logger.info(f"Dry run: {self.dry_run}")
         logger.info(f"Skip validation: {self.skip_validation}")
@@ -451,7 +458,13 @@ class HistoricalBacktest:
         """Print aggregated backtest results."""
         print("\n" + "=" * 80)
         print(f"BACKTEST SUMMARY: {self.start_date} to {self.end_date}")
-        print(f"Mode: {'Underdog only (production)' if self.underdog_only else 'All books'}")
+        mode_parts = []
+        if self.underdog_only:
+            mode_parts.append("Underdog only")
+        if self.standard_only:
+            mode_parts.append("Standard only (no goblin/demon)")
+        mode_str = " + ".join(mode_parts) if mode_parts else "All books"
+        print(f"Mode: {mode_str}")
         print("=" * 80)
 
         # Aggregate results
@@ -605,6 +618,11 @@ def main():
         action="store_true",
         help="Only evaluate Underdog platform lines (matches production behavior)",
     )
+    parser.add_argument(
+        "--standard-only",
+        action="store_true",
+        help="Exclude PrizePicks alternate lines (goblin/demon) that weren't in training data",
+    )
 
     args = parser.parse_args()
 
@@ -635,6 +653,7 @@ def main():
         no_seed=args.no_seed,
         model_versions=model_versions,
         underdog_only=args.underdog_only,
+        standard_only=args.standard_only,
     )
 
     backtest.run()
