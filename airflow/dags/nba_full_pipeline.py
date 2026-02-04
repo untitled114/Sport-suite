@@ -1,7 +1,7 @@
 """
 NBA Full Pipeline DAG
 
-Scheduled: Daily at 09:00 AM EST (14:00 UTC)
+Scheduled: Daily at 05:00 PM EST (22:00 UTC)
 Purpose: Complete data collection + predictions
 
 This is the main daily workflow that:
@@ -9,7 +9,10 @@ This is the main daily workflow that:
 2. Enriches matchups
 3. Generates predictions (XL, Pro, Odds API)
 
-Run once daily. Use nba_refresh_pipeline for line movement updates.
+Run once daily at 5pm EST when all data sources (including PrizePicks/DFS)
+are available. Earlier runs miss soft lines that create high-spread opportunities.
+
+Use nba_refresh_pipeline for line movement updates during the day.
 
 Author: Claude Code
 """
@@ -62,6 +65,33 @@ def get_current_season() -> int:
     """Calculate NBA season (uses END year: 2024-25 season = 2025)."""
     now = datetime.now()
     return now.year + 1 if now.month >= 10 else now.year
+
+
+def get_prizepicks_count(date_str: str) -> int:
+    """Get count of PrizePicks props for a given date.
+
+    Used by both fetch_prizepicks and generate_xl_predictions to verify
+    DFS data availability for GOLDMINE picks.
+    """
+    import psycopg2
+
+    from nba.config.database import get_intelligence_db_config
+
+    config = get_intelligence_db_config()
+    conn = psycopg2.connect(**config)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT COUNT(*) FROM nba_props_xl
+            WHERE game_date = %s AND book_name LIKE 'prizepicks%%'
+            """,
+            (date_str,),
+        )
+        return cursor.fetchone()[0]
+    finally:
+        cursor.close()
+        conn.close()
 
 
 def run_script(
@@ -117,7 +147,7 @@ def alert_on_failure(context: dict[str, Any]) -> None:
 @dag(
     dag_id="nba_full_pipeline",
     description="NBA complete data collection + predictions (run once daily)",
-    schedule=CronTriggerTimetable("0 14 * * *", timezone="UTC"),  # 09:00 AM EST daily
+    schedule=CronTriggerTimetable("0 22 * * *", timezone="UTC"),  # 05:00 PM EST daily
     start_date=datetime(2025, 11, 7),
     catchup=False,
     tags=["nba", "predictions", "full", "data-collection"],
@@ -188,6 +218,34 @@ def nba_full_pipeline():
 
         return {"status": "success"}
 
+    @task(task_id="fetch_prizepicks")
+    def fetch_prizepicks() -> dict[str, Any]:
+        """Fetch PrizePicks props (standard/goblin/demon lines).
+
+        PrizePicks provides DFS lines that are often softer than sportsbooks,
+        creating high-spread opportunities for GOLDMINE picks.
+        """
+        date_str = datetime.now().strftime("%Y-%m-%d")
+
+        # Fetch and load PrizePicks data
+        run_script(
+            f"{SCRIPT_DIR}/betting_xl/loaders/load_prizepicks_to_db.py",
+            ["--fetch", "--quiet"],
+            timeout=300,
+        )
+
+        # Verify data was loaded (this is critical for GOLDMINE picks)
+        pp_count = get_prizepicks_count(date_str)
+
+        if pp_count == 0:
+            raise Exception(
+                f"PrizePicks data not loaded for {date_str}. "
+                "GOLDMINE picks require PrizePicks goblin/demon lines."
+            )
+
+        print(f"[OK] PrizePicks loaded: {pp_count} props for {date_str}")
+        return {"status": "success", "prizepicks_count": pp_count}
+
     @task(task_id="enrich_matchups")
     def enrich_matchups(load_result: dict[str, Any]) -> dict[str, Any]:
         """Enrich props with matchup context."""
@@ -205,19 +263,21 @@ def nba_full_pipeline():
         min_coverage = float(Variable.get("nba_min_coverage_pct", default_var="90"))
         config = get_intelligence_db_config()
         conn = psycopg2.connect(**config)
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT COUNT(*) as total,
-                   COUNT(CASE WHEN opponent_team <> '' AND opponent_team IS NOT NULL
-                         AND is_home IS NOT NULL THEN 1 END) as enriched
-            FROM nba_props_xl WHERE game_date = %s;
-            """,
-            (date_str,),
-        )
-        row = cursor.fetchone()
-        cursor.close()
-        conn.close()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT COUNT(*) as total,
+                       COUNT(CASE WHEN opponent_team <> '' AND opponent_team IS NOT NULL
+                             AND is_home IS NOT NULL THEN 1 END) as enriched
+                FROM nba_props_xl WHERE game_date = %s;
+                """,
+                (date_str,),
+            )
+            row = cursor.fetchone()
+        finally:
+            cursor.close()
+            conn.close()
 
         total, enriched = row if row else (0, 0)
         coverage = round(100.0 * enriched / total, 1) if total > 0 else 0
@@ -288,6 +348,17 @@ def nba_full_pipeline():
         """Generate XL model predictions."""
         date_str = datetime.now().strftime("%Y-%m-%d")
         output_file = f"{PREDICTIONS_DIR}/xl_picks_{date_str}.json"
+
+        # Pre-flight check: verify we have PrizePicks data for GOLDMINE picks
+        pp_count = get_prizepicks_count(date_str)
+
+        if pp_count == 0:
+            raise Exception(
+                f"Pre-flight failed: No PrizePicks data for {date_str}. "
+                "Cannot generate GOLDMINE picks without soft lines."
+            )
+
+        print(f"[OK] Pre-flight: {pp_count} PrizePicks props available")
 
         result = run_script(
             f"{SCRIPT_DIR}/betting_xl/generate_xl_predictions.py",
@@ -382,6 +453,7 @@ def nba_full_pipeline():
 
     # Parallel data tasks
     cheatsheet = fetch_cheatsheet()
+    prizepicks = fetch_prizepicks()  # DFS soft lines for GOLDMINE picks
     game_results_task = fetch_game_results()
     actuals = populate_actuals(game_results_task)
     injuries = update_injuries()
@@ -391,7 +463,16 @@ def nba_full_pipeline():
     prop_history = update_prop_history()
 
     # All data must complete before predictions
-    [cheatsheet, actuals, injuries, team_stats, vegas, minutes, prop_history] >> enriched
+    [
+        cheatsheet,
+        prizepicks,
+        actuals,
+        injuries,
+        team_stats,
+        vegas,
+        minutes,
+        prop_history,
+    ] >> enriched
 
     # Predictions (parallel)
     xl = generate_xl_predictions(enriched)

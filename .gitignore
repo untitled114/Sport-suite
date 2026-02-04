@@ -157,3 +157,9 @@ coverage_html/
 airflow/airflow-webserver.pid
 airflow/airflow-*.err
 airflow/airflow-*.out
+
+# Airflow config with secrets
+airflow/airflow.cfg
+airflow/airflow.db
+airflow/logs/
+docs/SERVER_OPERATIONS.md

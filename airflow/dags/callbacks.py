@@ -1,32 +1,54 @@
 """
-Airflow DAG Callbacks - Desktop Notifications
-==============================================
-Sends desktop notifications on DAG/task events.
+Airflow DAG Callbacks - Notifications
+=====================================
+Sends notifications on DAG/task events.
+
+Desktop notifications (notify-send) for local development.
+Logging fallback for headless servers.
 """
 
+import logging
+import os
+import shutil
 import subprocess
+
+logger = logging.getLogger("airflow.callbacks")
 
 
 def _notify(title: str, message: str, urgency: str = "normal"):
-    """Send desktop notification."""
-    try:
-        subprocess.run(
-            [
-                "notify-send",
-                "-u",
-                urgency,
-                "-t",
-                "10000",  # 10 seconds
-                "-a",
-                "Airflow",
-                title,
-                message,
-            ],
-            check=False,
-            env={"DISPLAY": ":0", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus"},
-        )
-    except Exception:
-        pass  # Don't fail DAG if notification fails
+    """Send notification via desktop or logging fallback.
+
+    On desktop: Uses notify-send for visual notifications.
+    On server: Logs to Airflow logger (visible in task logs).
+    """
+    # Check if we have a display and notify-send available
+    has_display = os.environ.get("DISPLAY") is not None
+    has_notify_send = shutil.which("notify-send") is not None
+
+    if has_display and has_notify_send:
+        try:
+            subprocess.run(
+                [
+                    "notify-send",
+                    "-u",
+                    urgency,
+                    "-t",
+                    "10000",  # 10 seconds
+                    "-a",
+                    "Airflow",
+                    title,
+                    message,
+                ],
+                check=False,
+                capture_output=True,
+            )
+            return
+        except Exception:
+            pass  # Fall through to logging
+
+    # Fallback: log the notification
+    log_level = logging.WARNING if urgency == "critical" else logging.INFO
+    logger.log(log_level, f"{title}: {message}")
 
 
 def on_success(context):
