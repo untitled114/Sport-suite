@@ -52,14 +52,16 @@ MODELS_DIR = Path(__file__).parent.parent / "models" / "saved_xl"
 OUTPUT_DIR = Path(__file__).parent
 
 MARKETS = ["points", "rebounds", "assists", "threes"]
+MODEL_VERSIONS = ["xl", "v3"]  # Both XL (102 features) and V3 (136 features)
 
 
 class XLMarketValidator:
-    """Validates a single market's XL model"""
+    """Validates a single market's XL or V3 model"""
 
-    def __init__(self, market):
+    def __init__(self, market, model_version="xl"):
         self.market = market
         self.market_key = market.upper()
+        self.model_version = model_version  # "xl" or "v3"
 
         # Model components
         self.regressor = None
@@ -75,16 +77,22 @@ class XLMarketValidator:
         self.load_model()
 
     def load_model(self):
-        """Load XL model components"""
+        """Load XL or V3 model components based on model_version"""
         try:
-            # Try V3 naming convention first (*_v3_*), then fall back to XL (*_xl_*)
-            model_prefix = MODELS_DIR / f"{self.market}_v3"
-            if not (MODELS_DIR / f"{self.market}_v3_regressor.pkl").exists():
-                model_prefix = MODELS_DIR / f"{self.market}_xl"
-                logger.info(
-                    "Using legacy model naming",
-                    extra={"market": self.market_key, "naming": "*_xl_*"},
+            # Load model based on specified version
+            model_prefix = MODELS_DIR / f"{self.market}_{self.model_version}"
+            if not (
+                model_prefix.parent / f"{self.market}_{self.model_version}_regressor.pkl"
+            ).exists():
+                logger.error(
+                    f"Model not found: {self.market}_{self.model_version}",
+                    extra={"market": self.market_key, "version": self.model_version},
                 )
+                return False
+            logger.info(
+                f"Loading {self.model_version.upper()} model",
+                extra={"market": self.market_key, "version": self.model_version},
+            )
 
             with open(f"{model_prefix}_regressor.pkl", "rb") as f:
                 self.regressor = pickle.load(f)
@@ -198,6 +206,10 @@ class XLMarketValidator:
                     line=row["line"],
                 )
 
+                # Skip if no features extracted
+                if features is None:
+                    continue
+
                 # Generate prediction
                 prediction, prob_over, side, edge = self.predict(features, row["line"])
 
@@ -233,17 +245,20 @@ class XLMarketValidator:
 
 
 class XLHistoricalValidator:
-    """Main validator for all markets"""
+    """Main validator for all markets - supports both XL and V3 models"""
 
-    def __init__(self, start_date, end_date):
+    def __init__(self, start_date, end_date, model_versions=None):
         self.start_date = start_date
         self.end_date = end_date
         self.conn = None
-        self.market_validators = {}
+        self.model_versions = model_versions or ["xl", "v3"]  # Run both by default
+        self.market_validators = {}  # {(market, version): validator}
 
-        # Initialize validators for all markets
+        # Initialize validators for all markets AND all model versions
         for market in MARKETS:
-            self.market_validators[market.upper()] = XLMarketValidator(market)
+            for version in self.model_versions:
+                key = (market.upper(), version)
+                self.market_validators[key] = XLMarketValidator(market, model_version=version)
 
     def connect_db(self):
         """Connect to intelligence and players databases"""
@@ -283,23 +298,35 @@ class XLHistoricalValidator:
         return df[["game_date", "player_name", "line", "actual_result", "opponent_team", "is_home"]]
 
     def validate_all_markets(self):
-        """Run validation on all markets"""
+        """Run validation on all markets for both XL and V3 models"""
         logger.info(
-            "Starting XL model validation",
-            extra={"start_date": self.start_date, "end_date": self.end_date},
+            "Starting XL/V3 model validation",
+            extra={
+                "start_date": self.start_date,
+                "end_date": self.end_date,
+                "versions": self.model_versions,
+            },
         )
 
         self.connect_db()
 
-        all_results = {}
+        all_results = {}  # {(market, version): DataFrame}
 
-        for market_key, validator in self.market_validators.items():
-            logger.info("Starting market validation", extra={"market": market_key})
+        for (market_key, version), validator in self.market_validators.items():
+            # Only validate POINTS and REBOUNDS (ASSISTS/THREES disabled)
+            if market_key not in ["POINTS", "REBOUNDS"]:
+                continue
 
-            # Fetch props
+            logger.info(
+                f"Starting {version.upper()} validation",
+                extra={"market": market_key, "version": version},
+            )
+
+            # Fetch props (same for both versions)
             props_df = self.fetch_props(market_key)
             logger.info(
-                "Loaded props with actuals", extra={"market": market_key, "count": len(props_df)}
+                "Loaded props with actuals",
+                extra={"market": market_key, "version": version, "count": len(props_df)},
             )
 
             if len(props_df) == 0:
@@ -309,21 +336,30 @@ class XLHistoricalValidator:
             results_df = validator.validate_props(props_df)
 
             if len(results_df) == 0:
-                logger.warning("No predictions generated for market", extra={"market": market_key})
+                logger.warning(
+                    "No predictions generated",
+                    extra={"market": market_key, "version": version},
+                )
                 continue
 
+            # Add model_version column
+            results_df["model_version"] = version
+
             logger.info(
-                "Generated predictions", extra={"market": market_key, "count": len(results_df)}
+                "Generated predictions",
+                extra={"market": market_key, "version": version, "count": len(results_df)},
             )
 
             # Store results
-            all_results[market_key] = results_df
+            all_results[(market_key, version)] = results_df
 
             # Save to CSV
-            output_file = OUTPUT_DIR / f"validation_{market_key}_oct23_nov4.csv"
+            date_suffix = f"{self.start_date}_to_{self.end_date}".replace("-", "")
+            output_file = OUTPUT_DIR / f"validation_{market_key}_{version}_{date_suffix}.csv"
             results_df.to_csv(output_file, index=False)
             logger.info(
-                "Saved validation results", extra={"market": market_key, "file": str(output_file)}
+                "Saved validation results",
+                extra={"market": market_key, "version": version, "file": str(output_file)},
             )
 
         self.conn_intelligence.close()
@@ -332,62 +368,112 @@ class XLHistoricalValidator:
         return all_results
 
     def generate_reports(self, all_results):
-        """Generate comprehensive validation reports"""
+        """Generate comprehensive validation reports comparing XL vs V3"""
         logger.info("Generating validation reports")
 
         report_lines = []
-        report_lines.append("# NBA XL Models Validation Report")
+        report_lines.append("# NBA XL vs V3 Models Validation Report")
         report_lines.append(f"**Period:** {self.start_date} to {self.end_date}")
         report_lines.append(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         report_lines.append("")
 
-        # Overall summary
-        total_bets = sum(len(df) for df in all_results.values())
-        total_wins = sum(df["won"].sum() for df in all_results.values())
-        overall_wr = (total_wins / total_bets * 100) if total_bets > 0 else 0
-        overall_roi = (
-            ((total_wins * 0.91 - (total_bets - total_wins)) / total_bets * 100)
-            if total_bets > 0
-            else 0
-        )
+        # XL vs V3 Comparison Summary
+        report_lines.append("## XL vs V3 Comparison")
+        report_lines.append("")
+        report_lines.append("| Model | Market | Bets | Wins | Win Rate | ROI | Avg Edge |")
+        report_lines.append("|-------|--------|------|------|----------|-----|----------|")
 
-        report_lines.append("## Overall Performance")
-        report_lines.append(f"- **Total Bets:** {total_bets}")
-        report_lines.append(f"- **Wins:** {total_wins}")
-        report_lines.append(f"- **Losses:** {total_bets - total_wins}")
-        report_lines.append(f"- **Win Rate:** {overall_wr:.1f}%")
-        report_lines.append(f"- **ROI @ -110:** {overall_roi:+.1f}%")
-        report_lines.append(
-            f"- **Status:** {'[OK] PROFITABLE' if overall_wr >= 52.4 else '[ERROR] UNPROFITABLE'}"
-        )
+        for version in self.model_versions:
+            for market in ["POINTS", "REBOUNDS"]:
+                key = (market, version)
+                if key not in all_results:
+                    continue
+                df = all_results[key]
+                total = len(df)
+                wins = int(df["won"].sum())
+                wr = (wins / total * 100) if total > 0 else 0
+                roi = ((wins * 0.91 - (total - wins)) / total * 100) if total > 0 else 0
+                avg_edge = df["edge"].mean() if total > 0 else 0
+                report_lines.append(
+                    f"| {version.upper()} | {market} | {total} | {wins} | {wr:.1f}% | {roi:+.1f}% | {avg_edge:.2f} |"
+                )
+
         report_lines.append("")
 
-        # Per-market detailed analysis
-        for market_key, df in all_results.items():
-            report_lines.extend(self._generate_market_report(market_key, df))
+        # Overall summary by model version
+        report_lines.append("## Overall by Model Version")
+        report_lines.append("")
 
-        # Daily performance matrix
+        for version in self.model_versions:
+            version_results = {k: v for k, v in all_results.items() if k[1] == version}
+            total_bets = sum(len(df) for df in version_results.values())
+            total_wins = sum(df["won"].sum() for df in version_results.values())
+            overall_wr = (total_wins / total_bets * 100) if total_bets > 0 else 0
+            overall_roi = (
+                ((total_wins * 0.91 - (total_bets - total_wins)) / total_bets * 100)
+                if total_bets > 0
+                else 0
+            )
+            status = "[OK] PROFITABLE" if overall_wr >= 52.4 else "[WARN] UNPROFITABLE"
+
+            report_lines.append(
+                f"### {version.upper()} Model ({'102' if version == 'xl' else '136'} features)"
+            )
+            report_lines.append(f"- **Total Bets:** {total_bets}")
+            report_lines.append(f"- **Wins:** {int(total_wins)}")
+            report_lines.append(f"- **Win Rate:** {overall_wr:.1f}%")
+            report_lines.append(f"- **ROI @ -110:** {overall_roi:+.1f}%")
+            report_lines.append(f"- **Status:** {status}")
+            report_lines.append("")
+
+        # Per-market detailed analysis (grouped by market, showing both versions)
+        for market in ["POINTS", "REBOUNDS"]:
+            report_lines.append(f"---")
+            report_lines.append(f"## {market} Market - Detailed Analysis")
+            report_lines.append("")
+            for version in self.model_versions:
+                key = (market, version)
+                if key in all_results:
+                    report_lines.extend(
+                        self._generate_market_report(
+                            f"{market} ({version.upper()})", all_results[key]
+                        )
+                    )
+
+        # Daily performance matrix (combined)
         report_lines.extend(self._generate_daily_matrix(all_results))
 
         # Save report
-        report_file = OUTPUT_DIR / "validation_summary_oct23_nov4.md"
+        date_suffix = f"{self.start_date}_to_{self.end_date}".replace("-", "")
+        report_file = OUTPUT_DIR / f"validation_xl_v3_{date_suffix}.md"
         with open(report_file, "w") as f:
             f.write("\n".join(report_lines))
 
         logger.info("Report saved", extra={"file": str(report_file)})
 
-        # Log key metrics
-        logger.info(
-            "Overall validation results",
-            extra={
-                "total_bets": total_bets,
-                "wins": total_wins,
-                "losses": total_bets - total_wins,
-                "win_rate": round(overall_wr, 1),
-                "roi": round(overall_roi, 1),
-                "profitable": overall_wr >= 52.4,
-            },
-        )
+        # Log key metrics per version
+        for version in self.model_versions:
+            version_results = {k: v for k, v in all_results.items() if k[1] == version}
+            total_bets = sum(len(df) for df in version_results.values())
+            total_wins = sum(df["won"].sum() for df in version_results.values())
+            overall_wr = (total_wins / total_bets * 100) if total_bets > 0 else 0
+            overall_roi = (
+                ((total_wins * 0.91 - (total_bets - total_wins)) / total_bets * 100)
+                if total_bets > 0
+                else 0
+            )
+            logger.info(
+                f"{version.upper()} validation results",
+                extra={
+                    "version": version,
+                    "total_bets": total_bets,
+                    "wins": int(total_wins),
+                    "losses": int(total_bets - total_wins),
+                    "win_rate": round(overall_wr, 1),
+                    "roi": round(overall_roi, 1),
+                    "profitable": overall_wr >= 52.4,
+                },
+            )
 
     def _generate_market_report(self, market_key, df):
         """Generate detailed report for a single market"""
@@ -522,114 +608,128 @@ class XLHistoricalValidator:
         return lines
 
     def _generate_daily_matrix(self, all_results):
-        """Generate daily performance matrix across all markets"""
+        """Generate daily performance matrix comparing XL vs V3"""
         lines = []
 
-        lines.append("## Daily Performance Matrix")
+        lines.append("## Daily Performance Matrix (XL vs V3)")
         lines.append("")
-        lines.append("```")
 
-        # Header
-        header = f"{'Date':<12} |"
-        for market_key in ["POINTS", "REBOUNDS", "ASSISTS", "THREES"]:
-            if market_key in all_results:
-                header += f" {market_key[:8]:<8} |"
-        header += " TOTAL"
+        # Generate matrix for each version
+        for version in self.model_versions:
+            lines.append(f"### {version.upper()} Model Daily Breakdown")
+            lines.append("```")
 
-        lines.append(header)
+            # Header
+            header = f"{'Date':<12} |"
+            for market_key in ["POINTS", "REBOUNDS"]:
+                key = (market_key, version)
+                if key in all_results:
+                    header += f" {market_key[:8]:<8} |"
+            header += " TOTAL"
+            lines.append(header)
 
-        sep = f"{'':<12} |"
-        for market_key in ["POINTS", "REBOUNDS", "ASSISTS", "THREES"]:
-            if market_key in all_results:
-                sep += f" {'Bets | WR':<8} |"
-        sep += " WR"
-        lines.append(sep)
+            lines.append("-" * len(header))
 
-        lines.append("-" * len(header))
+            # Get all unique dates for this version
+            all_dates = set()
+            for (_market, ver), df in all_results.items():
+                if ver == version:
+                    all_dates.update(df["game_date"].unique())
 
-        # Get all unique dates
-        all_dates = set()
-        for df in all_results.values():
-            all_dates.update(df["game_date"].unique())
+            # Per-date rows
+            for date in sorted(all_dates):
+                row = f"{date}  |"
+                total_bets = 0
+                total_wins = 0
 
-        # Per-date rows
-        for date in sorted(all_dates):
-            row = f"{date}  |"
-            total_bets = 0
-            total_wins = 0
+                for market_key in ["POINTS", "REBOUNDS"]:
+                    key = (market_key, version)
+                    if key not in all_results:
+                        row += f" {'':<8} |"
+                        continue
 
-            for market_key in ["POINTS", "REBOUNDS", "ASSISTS", "THREES"]:
-                if market_key not in all_results:
-                    row += f" {'':<8} |"
+                    df = all_results[key]
+                    day_df = df[df["game_date"] == date]
+
+                    if len(day_df) == 0:
+                        row += f" {'':<8} |"
+                        continue
+
+                    day_total = len(day_df)
+                    day_wins = day_df["won"].sum()
+                    day_wr = (day_wins / day_total * 100) if day_total > 0 else 0
+
+                    total_bets += day_total
+                    total_wins += day_wins
+
+                    row += f" {day_total:>3} {day_wr:>4.0f}% |"
+
+                total_wr = (total_wins / total_bets * 100) if total_bets > 0 else 0
+                row += f" {total_wr:>5.1f}%"
+                lines.append(row)
+
+            # Totals
+            lines.append("-" * len(header))
+            total_row = f"{'TOTAL':<12} |"
+            grand_total_bets = 0
+            grand_total_wins = 0
+
+            for market_key in ["POINTS", "REBOUNDS"]:
+                key = (market_key, version)
+                if key not in all_results:
+                    total_row += f" {'':<8} |"
                     continue
 
-                df = all_results[market_key]
-                day_df = df[df["game_date"] == date]
+                df = all_results[key]
+                market_total = len(df)
+                market_wins = df["won"].sum()
+                market_wr = (market_wins / market_total * 100) if market_total > 0 else 0
 
-                if len(day_df) == 0:
-                    row += f" {'':<8} |"
-                    continue
+                grand_total_bets += market_total
+                grand_total_wins += market_wins
 
-                day_total = len(day_df)
-                day_wins = day_df["won"].sum()
-                day_wr = (day_wins / day_total * 100) if day_total > 0 else 0
+                total_row += f" {market_total:>3} {market_wr:>4.0f}% |"
 
-                total_bets += day_total
-                total_wins += day_wins
+            grand_wr = (grand_total_wins / grand_total_bets * 100) if grand_total_bets > 0 else 0
+            total_row += f" {grand_wr:>5.1f}%"
+            lines.append(total_row)
 
-                row += f" {day_total:>3} {day_wr:>4.0f}% |"
-
-            total_wr = (total_wins / total_bets * 100) if total_bets > 0 else 0
-            row += f" {total_wr:>5.1f}%"
-            lines.append(row)
-
-        # Totals
-        lines.append("-" * len(header))
-        total_row = f"{'TOTAL':<12} |"
-        grand_total_bets = 0
-        grand_total_wins = 0
-
-        for market_key in ["POINTS", "REBOUNDS", "ASSISTS", "THREES"]:
-            if market_key not in all_results:
-                total_row += f" {'':<8} |"
-                continue
-
-            df = all_results[market_key]
-            market_total = len(df)
-            market_wins = df["won"].sum()
-            market_wr = (market_wins / market_total * 100) if market_total > 0 else 0
-
-            grand_total_bets += market_total
-            grand_total_wins += market_wins
-
-            total_row += f" {market_total:>3} {market_wr:>4.0f}% |"
-
-        grand_wr = (grand_total_wins / grand_total_bets * 100) if grand_total_bets > 0 else 0
-        total_row += f" {grand_wr:>5.1f}%"
-        lines.append(total_row)
-
-        lines.append("```")
-        lines.append("")
+            lines.append("```")
+            lines.append("")
 
         return lines
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Validate XL models on historical props")
+    parser = argparse.ArgumentParser(description="Validate XL and V3 models on historical props")
     parser.add_argument("--start-date", default="2025-10-23", help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end-date", default="2025-11-04", help="End date (YYYY-MM-DD)")
+    parser.add_argument(
+        "--models",
+        default="xl,v3",
+        help="Model versions to validate (comma-separated: xl,v3 or just xl or just v3)",
+    )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
+
+    # Parse model versions
+    model_versions = [v.strip().lower() for v in args.models.split(",")]
+    valid_versions = [v for v in model_versions if v in ["xl", "v3"]]
+    if not valid_versions:
+        print("Error: No valid model versions specified. Use --models xl,v3")
+        sys.exit(1)
 
     # Setup logging
     import logging
 
     setup_logging(
-        "xl_validation",
+        "xl_v3_validation",
         level=logging.DEBUG if args.debug else logging.INFO,
     )
 
-    validator = XLHistoricalValidator(args.start_date, args.end_date)
+    logger.info(f"Starting validation for models: {', '.join(v.upper() for v in valid_versions)}")
+
+    validator = XLHistoricalValidator(args.start_date, args.end_date, model_versions=valid_versions)
     results = validator.validate_all_markets()
     validator.generate_reports(results)
 
