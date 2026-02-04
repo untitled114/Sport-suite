@@ -1011,35 +1011,61 @@ class XLPredictionsGenerator:
 
     def save_picks(self, output_file: str, dry_run: bool = False):
         """Save picks to JSON file"""
-        # DEDUPLICATION: Remove duplicate (player_name, stat_type, side, model_version) combinations
-        # Keep the pick with highest edge for each unique combination
-        # Note: XL and V3 picks are kept separate (model_version in key)
+        # DEDUPLICATION: Merge XL and V3 picks for same player/stat/side
+        # When both models agree, mark as consensus and use best p_over
+        # FIX Feb 4: Changed from separate picks to consensus-based merging
         original_count = len(self.picks)
 
         if original_count > 0:
-            # Group by (player_name, stat_type, side, model_version) and keep highest edge pick
-            # FIX Jan 15: Include 'side' in key to preserve both OVER and UNDER picks for same player
-            # FIX Feb 3: Include 'model_version' to preserve both XL and V3 picks
-            unique_picks = {}
+            # Group by (player_name, stat_type, side) - WITHOUT model_version
+            # When both models pick the same, merge into consensus pick
+            pick_groups = {}
             for pick in self.picks:
                 key = (
                     pick["player_name"],
                     pick["stat_type"],
                     pick.get("side", "OVER"),
-                    pick.get("model_version", "xl"),
                 )
-                if key not in unique_picks or pick["edge"] > unique_picks[key]["edge"]:
-                    unique_picks[key] = pick
+                if key not in pick_groups:
+                    pick_groups[key] = []
+                pick_groups[key].append(pick)
 
-            self.picks = list(unique_picks.values())
-            duplicates_removed = original_count - len(self.picks)
+            # Merge picks: consensus flag + best p_over
+            merged_picks = []
+            consensus_count = 0
+            for _key, picks in pick_groups.items():
+                if len(picks) == 1:
+                    # Single model pick
+                    pick = picks[0]
+                    pick["consensus"] = False
+                    pick["models_agreeing"] = [pick.get("model_version", "xl")]
+                    merged_picks.append(pick)
+                else:
+                    # Multiple models agree - merge into consensus pick
+                    consensus_count += 1
+                    # Use pick with best p_over
+                    best_pick = max(picks, key=lambda p: p.get("p_over", 0))
+                    best_pick["consensus"] = True
+                    best_pick["models_agreeing"] = sorted(
+                        list(set(p.get("model_version", "xl") for p in picks))
+                    )
+                    # Store both p_over values for reference
+                    best_pick["p_over_by_model"] = {
+                        p.get("model_version", "xl"): p.get("p_over") for p in picks
+                    }
+                    # Use model_version of the best pick but note it's consensus
+                    merged_picks.append(best_pick)
 
-            if duplicates_removed > 0:
-                logger.warning(
-                    f"[WARN]  Removed {duplicates_removed} duplicate picks (same player+market+model)"
+            self.picks = merged_picks
+            duplicates_merged = original_count - len(self.picks)
+
+            if duplicates_merged > 0:
+                logger.info(
+                    f"[OK] Merged {duplicates_merged} duplicate picks into {consensus_count} consensus picks"
                 )
                 logger.info(
-                    f"   Original: {original_count} picks → Deduplicated: {len(self.picks)} picks"
+                    f"   Original: {original_count} picks → Merged: {len(self.picks)} picks "
+                    f"({consensus_count} consensus)"
                 )
 
         tier_counts = Counter([p.get("filter_tier", "unknown") for p in self.picks])
@@ -1050,26 +1076,35 @@ class XLPredictionsGenerator:
         star_picks = [p for p in self.picks if p.get("filter_tier") == "star_tier"]
         star_player_picks = [p for p in self.picks if p.get("player_name") in STAR_PLAYERS]
 
-        # Count picks by model version
-        xl_picks = [p for p in self.picks if p.get("model_version") == "xl"]
-        v3_picks = [p for p in self.picks if p.get("model_version") == "v3"]
+        # Count picks by model version and consensus
+        consensus_picks = [p for p in self.picks if p.get("consensus", False)]
+        xl_only_picks = [
+            p for p in self.picks if not p.get("consensus") and p.get("model_version") == "xl"
+        ]
+        v3_only_picks = [
+            p for p in self.picks if not p.get("consensus") and p.get("model_version") == "v3"
+        ]
 
         output = {
             "generated_at": datetime.now().isoformat(),
             "date": self.game_date,
-            "strategy": "XL + V3 Line Shopping (Softest Line)",
+            "strategy": "XL + V3 Line Shopping (Softest Line, Consensus Merged)",
             "markets_enabled": list(self.predictors.keys()),
             "total_picks": len(self.picks),
             "picks": self.picks,
             "summary": {
                 "total": len(self.picks),
+                "consensus": len(consensus_picks),
+                "xl_only": len(xl_only_picks),
+                "v3_only": len(v3_only_picks),
                 "by_market": {
                     market: len([p for p in self.picks if p["stat_type"] == market])
                     for market in self.predictors.keys()
                 },
                 "by_model": {
-                    "xl": len(xl_picks),
-                    "v3": len(v3_picks),
+                    "consensus": len(consensus_picks),
+                    "xl_only": len(xl_only_picks),
+                    "v3_only": len(v3_only_picks),
                 },
                 "high_confidence": len([p for p in self.picks if p["confidence"] == "HIGH"]),
                 "avg_edge": round(np.mean([p["edge"] for p in self.picks]), 2) if self.picks else 0,
