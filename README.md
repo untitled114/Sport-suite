@@ -271,9 +271,16 @@ notebooks/
 # Clone and configure
 git clone https://github.com/untitled114/Sport-suite.git
 cd Sport-suite
-cp .env.example .env  # Add your credentials
 
-# Install and start (using Makefile)
+# 1. Create environment file with your credentials
+cp .env.example .env
+nano .env  # Set DB_PASSWORD, BETTINGPROS_API_KEY, ODDS_API_KEY
+
+# 2. Load environment variables
+source .env
+export DB_USER DB_PASSWORD BETTINGPROS_API_KEY ODDS_API_KEY
+
+# 3. Install and start (using Makefile)
 make install
 make db-up
 
@@ -281,6 +288,9 @@ make db-up
 pip install -e ".[dev]"
 cd docker && docker-compose up -d
 ```
+
+> **Important**: See [docs/SETUP.md](docs/SETUP.md) for complete setup instructions,
+> including production deployment on Hetzner servers and systemd configuration.
 
 ### Common Commands
 
