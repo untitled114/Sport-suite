@@ -2,7 +2,9 @@
 
 ![Tests](https://github.com/untitled114/Sport-suite/actions/workflows/test.yml/badge.svg)
 ![Lint](https://github.com/untitled114/Sport-suite/actions/workflows/lint.yml/badge.svg)
-![Coverage](https://img.shields.io/badge/coverage-95.94%25-brightgreen)
+![Security](https://github.com/untitled114/Sport-suite/actions/workflows/security.yml/badge.svg)
+![Deploy](https://github.com/untitled114/Sport-suite/actions/workflows/deploy.yml/badge.svg)
+![Coverage](https://img.shields.io/badge/coverage-70%25+-brightgreen)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 
 End-to-end machine learning pipeline for NBA player prop betting. Ingests live odds from 7 sportsbooks, extracts features per prop (102 for XL, 136 for V3), and generates calibrated predictions using stacked LightGBM architectures. Both XL and V3 models run in parallel in production.
@@ -344,9 +346,13 @@ Note: V3 models show improved R² (regressor accuracy) but slightly lower AUC (c
 ## Engineering Practices
 
 ### Testing & CI/CD
-- **512 tests** with pytest (unit + integration), **95.94% coverage**
-- **GitHub Actions CI/CD** - Automated linting, testing, type checking on every push
-- **Pre-commit hooks** - black, isort, flake8, bandit for code quality
+- **pytest** with 70%+ coverage threshold (unit + integration tests)
+- **GitHub Actions CI/CD**:
+  - **Lint**: black, isort, flake8, mypy on every push
+  - **Tests**: pytest with coverage on Python 3.10, 3.11
+  - **Security**: Gitleaks secret scanning, Trivy vulnerability scanning, Bandit code analysis
+  - **Deploy**: Auto-deploy to production on push to main (requires GitHub Secrets)
+- **Pre-commit hooks** - black, isort, flake8, gitleaks, bandit for code quality
 
 ### Data Quality & Observability
 - **Pre-training validation** - Great Expectations-style checks before model training

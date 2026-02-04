@@ -435,15 +435,19 @@ print_pick_card() {
         "Confidence:" "${BOLD}${conf_color}${confidence}${NC}" \
         "P(over):" "${BOLD}${prob_pct}%${NC}"
 
-    # Stake sizing (POINTS only)
-    if [ "$market" = "POINTS" ] && [ -n "$stake" ] && [ "$stake" != "null" ] && [ "$stake" != "1.0" ]; then
+    # Stake sizing (all markets)
+    if [ -n "$stake" ] && [ "$stake" != "null" ]; then
         local stake_color="$SUCCESS"
         if (( $(echo "$stake < 1.0" | bc -l) )); then
             stake_color="$ORANGE"
+        elif (( $(echo "$stake > 1.0" | bc -l) )); then
+            stake_color="$SUCCESS"
+        else
+            stake_color="$NC"  # Standard 1u stake
         fi
         local risk_display=""
         if [ -n "$risk_level" ] && [ "$risk_level" != "null" ] && [ "$risk_level" != "LOW" ]; then
-            risk_display=" ${MUTED}(${risk_level})${NC}"
+            risk_display=" ${MUTED}(${risk_level} risk)${NC}"
         fi
         echo -e "  ${MUTED}|${NC}  ${BOLD}Stake:${NC} ${stake_color}${stake}u${NC}${risk_display}"
     fi
