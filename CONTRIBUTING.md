@@ -98,7 +98,7 @@ pytest -k "test_normalize"
 #### Test Requirements
 
 - All new code should have tests
-- Minimum coverage: 50% (target: 80%)
+- Minimum coverage: 70% (current: 97%)
 - Use pytest fixtures for shared setup
 - Mock external dependencies (APIs, databases)
 
