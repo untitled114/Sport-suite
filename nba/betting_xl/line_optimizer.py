@@ -146,8 +146,17 @@ BLACKLISTED_BOOKS = {
 # =============================================================================
 UNDERDOG_ONLY_MODE = False  # Jan 26, 2026: Disabled for backtest comparison
 
-# DFS platforms with typically softer lines (Underdog + PrizePicks)
-DFS_SOFT_BOOKS = {"underdog", "Underdog", "Underdog Fantasy", "prizepicks", "PrizePicks"}
+# DFS platforms with typically softer lines (Underdog + PrizePicks variants)
+DFS_SOFT_BOOKS = {
+    "underdog",
+    "Underdog",
+    "Underdog Fantasy",
+    "prizepicks",
+    "PrizePicks",
+    "prizepicks_goblin",
+    "prizepicks_demon",
+    "prizepicks_alt",  # PP line variants
+}
 
 UNDERDOG_CONFIG = {
     "POINTS": {
