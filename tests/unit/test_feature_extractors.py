@@ -434,3 +434,160 @@ class TestExtractorConsistency:
         total = sum(len(ext_cls.FEATURE_NAMES) for ext_cls in extractors)
         # Should have 86 features from extractors
         assert total == 86
+
+
+# =============================================================================
+# ADDITIONAL BASE EXTRACTOR TESTS FOR COVERAGE
+# =============================================================================
+
+
+class TestBaseFeatureExtractorAdditional:
+    """Additional tests for BaseFeatureExtractor edge cases."""
+
+    def test_normalize_date_with_timestamp(self):
+        """Test _normalize_date with pandas Timestamp."""
+        import pandas as pd
+
+        class ConcreteExtractor(BaseFeatureExtractor):
+            FEATURE_NAMES = ("test_feature",)
+
+            def extract(self, player_name, game_date, stat_type, **kwargs):
+                return {}
+
+            @classmethod
+            def get_defaults(cls):
+                return {"test_feature": 0.0}
+
+        ext = ConcreteExtractor(conn=None)
+        ts = pd.Timestamp("2024-01-15 10:30:00")
+        assert ext._normalize_date(ts) == "2024-01-15"
+
+    def test_normalize_date_with_integer_fallback(self):
+        """Test _normalize_date with unexpected type (fallback)."""
+
+        class ConcreteExtractor(BaseFeatureExtractor):
+            FEATURE_NAMES = ("test_feature",)
+
+            def extract(self, player_name, game_date, stat_type, **kwargs):
+                return {}
+
+            @classmethod
+            def get_defaults(cls):
+                return {"test_feature": 0.0}
+
+        ext = ConcreteExtractor(conn=None)
+        # Integer has no strftime, should use str() fallback
+        result = ext._normalize_date(20240115)
+        assert len(result) <= 10  # Should be truncated
+
+    def test_safe_query_exception_handling(self):
+        """Test _safe_query returns None on database error."""
+        from unittest.mock import MagicMock, patch
+
+        import pandas as pd
+
+        class ConcreteExtractor(BaseFeatureExtractor):
+            FEATURE_NAMES = ("test_feature",)
+
+            def extract(self, player_name, game_date, stat_type, **kwargs):
+                return {}
+
+            @classmethod
+            def get_defaults(cls):
+                return {"test_feature": 0.0}
+
+        mock_conn = MagicMock()
+        ext = ConcreteExtractor(conn=mock_conn)
+
+        # Mock pd.read_sql_query to raise an error
+        with patch("pandas.read_sql_query") as mock_read:
+            mock_read.side_effect = pd.errors.DatabaseError("Connection error")
+            result = ext._safe_query("SELECT 1", ())
+            assert result is None
+
+    def test_safe_query_empty_result(self):
+        """Test _safe_query returns None for empty results."""
+        from unittest.mock import MagicMock, patch
+
+        import pandas as pd
+
+        class ConcreteExtractor(BaseFeatureExtractor):
+            FEATURE_NAMES = ("test_feature",)
+
+            def extract(self, player_name, game_date, stat_type, **kwargs):
+                return {}
+
+            @classmethod
+            def get_defaults(cls):
+                return {"test_feature": 0.0}
+
+        mock_conn = MagicMock()
+        ext = ConcreteExtractor(conn=mock_conn)
+
+        # Mock pd.read_sql_query to return empty DataFrame
+        with patch("pandas.read_sql_query") as mock_read:
+            mock_read.return_value = pd.DataFrame()  # Empty
+            result = ext._safe_query("SELECT 1", ())
+            assert result is None
+
+    def test_safe_query_success(self):
+        """Test _safe_query returns DataFrame on success."""
+        from unittest.mock import MagicMock, patch
+
+        import pandas as pd
+
+        class ConcreteExtractor(BaseFeatureExtractor):
+            FEATURE_NAMES = ("test_feature",)
+
+            def extract(self, player_name, game_date, stat_type, **kwargs):
+                return {}
+
+            @classmethod
+            def get_defaults(cls):
+                return {"test_feature": 0.0}
+
+        mock_conn = MagicMock()
+        ext = ConcreteExtractor(conn=mock_conn)
+
+        # Mock pd.read_sql_query to return data
+        with patch("pandas.read_sql_query") as mock_read:
+            mock_read.return_value = pd.DataFrame({"col": [1, 2, 3]})
+            result = ext._safe_query("SELECT 1", ())
+            assert result is not None
+            assert len(result) == 3
+
+    def test_validate_features_with_none_value(self):
+        """Test validate_features handles None values."""
+
+        class ConcreteExtractor(BaseFeatureExtractor):
+            FEATURE_NAMES = ("feature_a", "feature_b")
+
+            def extract(self, player_name, game_date, stat_type, **kwargs):
+                return {}
+
+            @classmethod
+            def get_defaults(cls):
+                return {"feature_a": 1.0, "feature_b": 2.0}
+
+        ext = ConcreteExtractor(conn=None)
+        result = ext.validate_features({"feature_a": None})
+        assert result["feature_a"] == 1.0  # Should use default
+        assert result["feature_b"] == 2.0
+
+    def test_validate_features_with_extra_keys(self):
+        """Test validate_features ignores extra keys not in defaults."""
+
+        class ConcreteExtractor(BaseFeatureExtractor):
+            FEATURE_NAMES = ("feature_a",)
+
+            def extract(self, player_name, game_date, stat_type, **kwargs):
+                return {}
+
+            @classmethod
+            def get_defaults(cls):
+                return {"feature_a": 1.0}
+
+        ext = ConcreteExtractor(conn=None)
+        result = ext.validate_features({"feature_a": 5.0, "extra_key": 999.0})
+        assert result["feature_a"] == 5.0
+        assert "extra_key" not in result  # Extra key ignored
