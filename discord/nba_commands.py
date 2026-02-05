@@ -18,7 +18,7 @@ from discord.ext import tasks
 NBA_PROJECT = "/home/sportsuite/sport-suite"
 PREDICTIONS_DIR = f"{NBA_PROJECT}/nba/betting_xl/predictions"
 VENV_ACTIVATE = f"source {NBA_PROJECT}/venv/bin/activate"
-ENV_SETUP = f"source {NBA_PROJECT}/.env && export DB_USER DB_PASSWORD BETTINGPROS_API_KEY ODDS_API_KEY TERM=xterm"
+ENV_SETUP = f"source {NBA_PROJECT}/.env && export DB_USER DB_PASSWORD BETTINGPROS_API_KEY ODDS_API_KEY TERM=dumb"
 
 NBA_OWNER_ID = 759254862423916564
 NBA_ADMIN_IDS = []
