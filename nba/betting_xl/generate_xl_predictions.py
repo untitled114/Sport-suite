@@ -896,6 +896,33 @@ class XLPredictionsGenerator:
                         hit_rates = self._get_hit_rate(player_name, stat_type)
                         if hit_rates:
                             pick["hit_rates"] = hit_rates
+                        else:
+                            # Compute hit rates from features if BettingPros data unavailable
+                            pick["hit_rates"] = self._compute_hit_rates_from_features(
+                                features, stat_type, optimized["best_line"]
+                            )
+
+                        # Add player context for Discord display
+                        stat_key = stat_type.lower()
+                        # Use L20 as proxy for season avg since season_avg feature doesn't exist
+                        avg_L5 = float(features.get(f"ema_{stat_key}_L5") or 0)
+                        avg_L10 = float(features.get(f"ema_{stat_key}_L10") or 0)
+                        avg_L20 = float(features.get(f"ema_{stat_key}_L20") or 0)
+                        minutes_L5 = float(features.get("ema_minutes_L5") or 0)
+                        minutes_L10 = float(features.get("ema_minutes_L10") or 0)
+                        h2h_games = int(features.get("h2h_games") or 0)
+                        h2h_avg = float(features.get(f"h2h_avg_{stat_key}") or 0)
+
+                        pick["player_context"] = {
+                            "avg_L5": round(avg_L5, 1),
+                            "avg_L10": round(avg_L10, 1),
+                            "avg_L20": round(avg_L20, 1),  # Use L20 as season proxy
+                            "minutes_L5": round(minutes_L5, 1),
+                            "minutes_L10": round(minutes_L10, 1),
+                            "h2h_games": h2h_games,
+                            "h2h_avg": round(h2h_avg, 1),  # Head-to-head avg vs opponent
+                            "trend": self._compute_trend(features, stat_key),
+                        }
 
                         # Risk assessment with line softness (POINTS) or strict filtering (REBOUNDS)
                         opp_rank = self.get_opp_rank(optimized["opponent_team"], stat_type)
@@ -1025,6 +1052,90 @@ class XLPredictionsGenerator:
             }
 
         return enriched
+
+    def _compute_hit_rates_from_features(self, features: dict, stat_type: str, line: float) -> dict:
+        """Get hit rates from BettingPros features or compute from rolling averages."""
+        stat_key = stat_type.lower()
+        hit_rates = {}
+
+        # First try BettingPros hit rate features (most accurate)
+        bp_l5 = features.get("bp_hit_rate_l5")
+        bp_l15 = features.get("bp_hit_rate_l15")
+        bp_season = features.get("bp_hit_rate_season")
+
+        if bp_l5 is not None and float(bp_l5) > 0:
+            hit_rates["last_5"] = {
+                "rate": float(bp_l5),
+                "total": 5,
+            }
+
+        if bp_l15 is not None and float(bp_l15) > 0:
+            hit_rates["last_15"] = {
+                "rate": float(bp_l15),
+                "total": 15,
+            }
+
+        if bp_season is not None and float(bp_season) > 0:
+            hit_rates["season"] = {
+                "rate": float(bp_season),
+                "total": 82,  # Approximate
+            }
+
+        # If no BettingPros data, estimate from rolling averages
+        if not hit_rates and line > 0:
+            avg_L5 = float(features.get(f"ema_{stat_key}_L5") or 0)
+            avg_L10 = float(features.get(f"ema_{stat_key}_L10") or 0)
+            avg_L20 = float(features.get(f"ema_{stat_key}_L20") or 0)
+
+            if avg_L5 > 0:
+                margin = (avg_L5 - line) / line
+                hit_rates["last_5"] = {
+                    "rate": min(0.95, max(0.05, 0.5 + margin * 0.5)),
+                    "total": 5,
+                    "estimated": True,
+                }
+
+            if avg_L10 > 0:
+                margin = (avg_L10 - line) / line
+                hit_rates["last_10"] = {
+                    "rate": min(0.95, max(0.05, 0.5 + margin * 0.5)),
+                    "total": 10,
+                    "estimated": True,
+                }
+
+            if avg_L20 > 0:
+                margin = (avg_L20 - line) / line
+                hit_rates["season"] = {
+                    "rate": min(0.95, max(0.05, 0.5 + margin * 0.5)),
+                    "total": 20,
+                    "estimated": True,
+                }
+
+        return hit_rates if hit_rates else None
+
+    def _compute_trend(self, features: dict, stat_key: str) -> str:
+        """Compute trend direction from rolling averages."""
+        avg_L3 = features.get(f"ema_{stat_key}_L3", 0)
+        avg_L5 = features.get(f"ema_{stat_key}_L5", 0)
+        avg_L10 = features.get(f"ema_{stat_key}_L10", 0)
+
+        if avg_L3 <= 0 or avg_L5 <= 0:
+            return "STABLE"
+
+        # Compare short-term to medium-term
+        short_vs_medium = (avg_L3 - avg_L5) / avg_L5 if avg_L5 > 0 else 0
+        medium_vs_long = (avg_L5 - avg_L10) / avg_L10 if avg_L10 > 0 else 0
+
+        if short_vs_medium > 0.08:  # 8% above recent average
+            return "HOT"
+        elif short_vs_medium < -0.08:
+            return "COLD"
+        elif short_vs_medium > 0.03 and medium_vs_long > 0.03:
+            return "RISING"
+        elif short_vs_medium < -0.03 and medium_vs_long < -0.03:
+            return "FALLING"
+        else:
+            return "STABLE"
 
     def save_picks(self, output_file: str, dry_run: bool = False):
         """Save picks to JSON file"""
