@@ -374,6 +374,34 @@ class PrizePicksFetcher(BaseFetcher):
         valid_props = [p for p in all_props if self.validate_prop(p)]
         deduped_props = self.deduplicate_props(valid_props)
 
+        # Classify props as standard/goblin/demon and tag accordingly
+        standard_props = [p for p in deduped_props if not p.get("is_alternate", False)]
+        alt_props = [p for p in deduped_props if p.get("is_alternate", False)]
+
+        # Calculate standard averages per stat_type for classification
+        std_avgs = {}
+        for stat_type in self.MARKETS.values():
+            std_market = [p for p in standard_props if p["stat_type"] == stat_type]
+            std_avgs[stat_type] = (
+                sum(p["line"] for p in std_market) / len(std_market) if std_market else 0
+            )
+
+        # Tag standard props
+        for prop in standard_props:
+            prop["odds_type"] = "standard"
+
+        # Tag alternate props as goblin or demon
+        for prop in alt_props:
+            stat_type = prop["stat_type"]
+            std_avg = std_avgs.get(stat_type, 0)
+
+            if prop["line"] < std_avg:
+                prop["odds_type"] = "goblin"
+                prop["book_name"] = "prizepicks_goblin"
+            else:
+                prop["odds_type"] = "demon"
+                prop["book_name"] = "prizepicks_demon"
+
         # Summary
         print("\n" + "=" * 70)
         print("PRIZEPICKS FETCH SUMMARY")
@@ -383,11 +411,12 @@ class PrizePicksFetcher(BaseFetcher):
         print(f"After deduplication: {len(deduped_props)}")
         print()
 
-        # Count standard vs alternate (goblins + demons)
-        standard_props = [p for p in deduped_props if not p.get("is_alternate", False)]
-        alt_props = [p for p in deduped_props if p.get("is_alternate", False)]
+        # Count by odds_type
+        goblin_count = len([p for p in deduped_props if p.get("odds_type") == "goblin"])
+        demon_count = len([p for p in deduped_props if p.get("odds_type") == "demon"])
         print(f"Standard picks: {len(standard_props)} (normal multiplier)")
-        print(f"Alternate picks: {len(alt_props)} (goblins=less payout, demons=more payout)")
+        print(f"Goblin picks: {goblin_count} (deflated lines - bet OVER)")
+        print(f"Demon picks: {demon_count} (inflated lines - trap)")
         print()
 
         # Breakdown by market (standard lines only)
@@ -400,21 +429,24 @@ class PrizePicksFetcher(BaseFetcher):
                 avg_line = sum(p["line"] for p in market_props) / count
                 print(f"  {stat_type:10s}: {count:4d} props (avg line: {avg_line:.2f})")
 
-        # Breakdown by market (alternate lines - goblins vs demons)
+        # Breakdown by market (goblin vs demon)
         print("\nAlternate lines by market (goblins < standard < demons):")
         for stat_type in self.ALTERNATE_MARKETS.values():
-            # Get standard avg for this stat
-            std_market = [p for p in standard_props if p["stat_type"] == stat_type]
-            std_avg = sum(p["line"] for p in std_market) / len(std_market) if std_market else 0
+            market_goblins = [
+                p
+                for p in alt_props
+                if p["stat_type"] == stat_type and p.get("odds_type") == "goblin"
+            ]
+            market_demons = [
+                p
+                for p in alt_props
+                if p["stat_type"] == stat_type and p.get("odds_type") == "demon"
+            ]
 
-            market_alts = [p for p in alt_props if p["stat_type"] == stat_type]
-            if market_alts:
-                goblins = [p["line"] for p in market_alts if p["line"] < std_avg]
-                demons = [p["line"] for p in market_alts if p["line"] >= std_avg]
-
-                goblin_str = f"{len(goblins)} goblins" if goblins else "0 goblins"
-                demon_str = f"{len(demons)} demons" if demons else "0 demons"
-                print(f"  {stat_type:10s}: {goblin_str}, {demon_str}")
+            if market_goblins or market_demons:
+                print(
+                    f"  {stat_type:10s}: {len(market_goblins)} goblins, {len(market_demons)} demons"
+                )
 
         print("=" * 70 + "\n", flush=True)
 
