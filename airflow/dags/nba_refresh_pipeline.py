@@ -301,22 +301,43 @@ def nba_refresh_pipeline():
 
         return {"total_picks": picks_count, "status": "success"}
 
+    @task(task_id="generate_two_energy_picks")
+    def generate_two_energy_picks(enrichment: dict[str, Any]) -> dict[str, Any]:
+        """Generate Two Energy picks (Goblin OVER + Inflated UNDER)."""
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        output_file = f"{PREDICTIONS_DIR}/two_energy_picks_{date_str}.json"
+
+        run_script(
+            f"{SCRIPT_DIR}/betting_xl/generate_two_energy_picks.py",
+            ["--date", date_str, "--output", output_file],
+        )
+
+        picks_count = 0
+        if Path(output_file).exists():
+            with open(output_file) as f:
+                picks_count = json.load(f).get("total_picks", 0)
+
+        return {"total_picks": picks_count, "status": "success"}
+
     @task(task_id="output_summary")
     def output_summary(
         xl_result: dict[str, Any],
         pro_result: dict[str, Any],
         odds_result: dict[str, Any],
+        energy_result: dict[str, Any],
     ) -> dict[str, Any]:
         """Output refresh summary."""
         total = (
             xl_result.get("total_picks", 0)
             + pro_result.get("total_picks", 0)
             + odds_result.get("total_picks", 0)
+            + energy_result.get("total_picks", 0)
         )
         print(f"Refresh complete: {total} total picks")
         print(f"  XL: {xl_result.get('total_picks', 0)}")
         print(f"  Pro: {pro_result.get('total_picks', 0)}")
         print(f"  Odds API: {odds_result.get('total_picks', 0)}")
+        print(f"  Two Energy: {energy_result.get('total_picks', 0)}")
         return {"total_picks": total, "status": "complete"}
 
     # ========================================================================
@@ -344,9 +365,10 @@ def nba_refresh_pipeline():
     xl = generate_xl_predictions(enriched)
     pro = generate_pro_picks(enriched)
     odds = generate_odds_api_picks(enriched)
+    energy = generate_two_energy_picks(enriched)
 
     # Summary
-    output_summary(xl, pro, odds)
+    output_summary(xl, pro, odds, energy)
 
 
 dag = nba_refresh_pipeline()

@@ -412,11 +412,37 @@ def nba_full_pipeline():
 
         return {"output_file": output_file, "total_picks": picks_count, "status": result["status"]}
 
+    @task(task_id="generate_two_energy_picks")
+    def generate_two_energy_picks(enrichment: dict[str, Any]) -> dict[str, Any]:
+        """Generate Two Energy picks (Goblin OVER + Inflated UNDER).
+
+        Optimized v2 filters:
+        - Goblin POINTS: line < 20 AND deflation >= 3.0 (73.1% WR)
+        - Goblin REBOUNDS: deflation >= 2.0 OR line >= 8.0 (73.8% WR)
+        - FanDuel REBOUNDS UNDER: inflation >= 0.8 (76.7% WR)
+        - DraftKings POINTS UNDER: inflation >= 1.0 (76.7% WR)
+        """
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        output_file = f"{PREDICTIONS_DIR}/two_energy_picks_{date_str}.json"
+
+        result = run_script(
+            f"{SCRIPT_DIR}/betting_xl/generate_two_energy_picks.py",
+            ["--date", date_str, "--output", output_file],
+        )
+
+        picks_count = 0
+        if Path(output_file).exists():
+            with open(output_file) as f:
+                picks_count = json.load(f).get("total_picks", 0)
+
+        return {"output_file": output_file, "total_picks": picks_count, "status": result["status"]}
+
     @task(task_id="output_summary")
     def output_summary(
         xl_result: dict[str, Any],
         pro_result: dict[str, Any],
         odds_result: dict[str, Any],
+        energy_result: dict[str, Any],
     ) -> dict[str, Any]:
         """Output final summary."""
         date_str = datetime.now().strftime("%Y-%m-%d")
@@ -427,10 +453,12 @@ def nba_full_pipeline():
             "xl_picks": xl_result.get("total_picks", 0),
             "pro_picks": pro_result.get("total_picks", 0),
             "odds_api_picks": odds_result.get("total_picks", 0),
+            "two_energy_picks": energy_result.get("total_picks", 0),
             "total": (
                 xl_result.get("total_picks", 0)
                 + pro_result.get("total_picks", 0)
                 + odds_result.get("total_picks", 0)
+                + energy_result.get("total_picks", 0)
             ),
         }
 
@@ -440,6 +468,8 @@ def nba_full_pipeline():
             json.dump(summary, f, indent=2)
 
         print(f"Full pipeline complete: {summary['total']} total picks")
+        print(f"  XL: {summary['xl_picks']}, Pro: {summary['pro_picks']}")
+        print(f"  Odds API: {summary['odds_api_picks']}, Two Energy: {summary['two_energy_picks']}")
         return summary
 
     # ========================================================================
@@ -478,9 +508,10 @@ def nba_full_pipeline():
     xl = generate_xl_predictions(enriched)
     pro = generate_pro_picks(enriched)
     odds = generate_odds_api_picks(enriched)
+    energy = generate_two_energy_picks(enriched)
 
     # Final summary
-    output_summary(xl, pro, odds)
+    output_summary(xl, pro, odds, energy)
 
 
 dag = nba_full_pipeline()
