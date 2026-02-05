@@ -122,6 +122,9 @@ class TwoEnergyGenerator:
     def get_goblin_picks(self, stat_type: str, config: Dict) -> List[Dict]:
         """Get OVER picks from Goblin lines with optimized filters."""
         cursor = self.conn.cursor()
+        # Query supports both data formats:
+        # - odds_type = 'goblin' (live PrizePicks data)
+        # - book_name = 'prizepicks_goblin' (historical data)
         cursor.execute(
             """
             SELECT
@@ -133,7 +136,7 @@ class TwoEnergyGenerator:
                 actual_value
             FROM nba_props_xl
             WHERE game_date = %s
-              AND book_name = 'prizepicks_goblin'
+              AND (odds_type = 'goblin' OR book_name = 'prizepicks_goblin')
               AND stat_type = %s
               AND over_line IS NOT NULL
             ORDER BY player_name
