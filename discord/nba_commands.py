@@ -18,7 +18,7 @@ from discord.ext import tasks
 NBA_PROJECT = "/home/sportsuite/sport-suite"
 PREDICTIONS_DIR = f"{NBA_PROJECT}/nba/betting_xl/predictions"
 VENV_ACTIVATE = f"source {NBA_PROJECT}/venv/bin/activate"
-ENV_SETUP = f"source {NBA_PROJECT}/.env && export DB_USER DB_PASSWORD BETTINGPROS_API_KEY ODDS_API_KEY TERM=dumb"
+ENV_SETUP = f"source {NBA_PROJECT}/.env && export DB_USER DB_PASSWORD BETTINGPROS_API_KEY ODDS_API_KEY TERM=xterm"
 
 NBA_OWNER_ID = 759254862423916564
 NBA_ADMIN_IDS = []
@@ -115,6 +115,15 @@ def _load_picks(date_str: str = None) -> Optional[dict]:
         return {"picks": pro_picks, "total_picks": len(pro_picks)}
 
 
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes from text."""
+    import re
+
+    # Remove all ANSI escape sequences
+    ansi_pattern = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b\[[\?0-9;]*[a-zA-Z]")
+    return ansi_pattern.sub("", text)
+
+
 async def _run_command(command: str, timeout: int = 600) -> tuple[bool, str]:
     try:
         proc = await asyncio.create_subprocess_shell(
@@ -125,7 +134,10 @@ async def _run_command(command: str, timeout: int = 600) -> tuple[bool, str]:
             executable="/bin/bash",
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        return proc.returncode == 0, stdout.decode() if proc.returncode == 0 else stderr.decode()
+        output = stdout.decode() if proc.returncode == 0 else stderr.decode()
+        # Strip ANSI escape codes for clean Discord display
+        output = _strip_ansi(output)
+        return proc.returncode == 0, output
     except asyncio.TimeoutError:
         return False, "Command timed out"
     except Exception as e:
