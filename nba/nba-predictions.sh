@@ -47,6 +47,12 @@ PLAYER_NAME_COLOR="$BRIGHT_WHITE"
 # System Paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Activate virtual environment if it exists
+if [ -f "$PROJECT_ROOT/venv/bin/activate" ]; then
+    source "$PROJECT_ROOT/venv/bin/activate"
+fi
+
 LOG_DIR="$SCRIPT_DIR/betting_xl/logs"
 PREDICTIONS_DIR="$SCRIPT_DIR/betting_xl/predictions"
 DATE_STR=$(date +%Y-%m-%d)
@@ -727,6 +733,24 @@ generate_all_predictions() {
             warning "Odds API picks skipped"
         fi
     fi
+
+    section "Generating Two Energy Picks" "Goblin OVER + Inflated UNDER"
+    if [ -f "$SCRIPT_DIR/betting_xl/generate_two_energy_picks.py" ]; then
+        local energy_file="$PREDICTIONS_DIR/two_energy_picks_${DATE_STR}.json"
+        if python3 -m nba.betting_xl.generate_two_energy_picks --date "$DATE_STR" --output "$energy_file" >> "$LOG_FILE" 2>&1; then
+            if [ -f "$energy_file" ] && command -v jq >/dev/null 2>&1; then
+                local energy_count=$(jq '.total_picks // 0' "$energy_file")
+                if [ "$energy_count" -gt 0 ]; then
+                    display_two_energy_picks "$energy_file"
+                    success "Two Energy picks: ${energy_count}"
+                else
+                    info "No Two Energy picks (no goblin/inflated lines)"
+                fi
+            fi
+        else
+            warning "Two Energy picks skipped"
+        fi
+    fi
 }
 
 ################################################################################
@@ -832,6 +856,54 @@ display_odds_api_picks() {
         echo ""
     done <<< "$odds_picks"
 
+    divider
+    echo ""
+}
+
+display_two_energy_picks() {
+    local energy_file="$1"
+
+    echo ""
+    divider
+    echo ""
+    echo -e "  ${BOLD}${MINT}Two Energy Picks${NC} | ${MUTED}Goblin OVER + Inflated UNDER${NC}"
+    echo ""
+    divider
+
+    # Display POSITIVE energy (OVER) picks
+    echo -e "  ${BOLD}${GREEN}POSITIVE ENERGY (OVER)${NC}"
+    local over_picks
+    over_picks=$(jq -c '.picks[] | select(.side == "OVER")' "$energy_file" 2>/dev/null)
+    while IFS= read -r pick_json; do
+        [ -z "$pick_json" ] && continue
+        local player=$(echo "$pick_json" | jq -r '.player_name')
+        local market=$(echo "$pick_json" | jq -r '.stat_type')
+        local line=$(echo "$pick_json" | jq -r '.line')
+        local deflation=$(echo "$pick_json" | jq -r '.deflation // 0')
+        local expected_wr=$(echo "$pick_json" | jq -r '.expected_wr')
+
+        printf "  ${MUTED}|${NC} ${BOLD}${PLAYER_NAME_COLOR}%-20s${NC} ${market} O${BOLD}%-5s${NC} ${MUTED}(deflated -%.1f)${NC} ${GREEN}${expected_wr}%%${NC}\n" "$player" "$line" "$deflation"
+    done <<< "$over_picks"
+
+    echo ""
+
+    # Display NEGATIVE energy (UNDER) picks
+    echo -e "  ${BOLD}${RED}NEGATIVE ENERGY (UNDER)${NC}"
+    local under_picks
+    under_picks=$(jq -c '.picks[] | select(.side == "UNDER")' "$energy_file" 2>/dev/null)
+    while IFS= read -r pick_json; do
+        [ -z "$pick_json" ] && continue
+        local player=$(echo "$pick_json" | jq -r '.player_name')
+        local market=$(echo "$pick_json" | jq -r '.stat_type')
+        local line=$(echo "$pick_json" | jq -r '.line')
+        local book=$(echo "$pick_json" | jq -r '.book')
+        local inflate=$(echo "$pick_json" | jq -r '.line_inflate // 0')
+        local expected_wr=$(echo "$pick_json" | jq -r '.expected_wr')
+
+        printf "  ${MUTED}|${NC} ${BOLD}${PLAYER_NAME_COLOR}%-20s${NC} ${market} U${BOLD}%-5s${NC} ${MUTED}(${book} +%.1f)${NC} ${GREEN}${expected_wr}%%${NC}\n" "$player" "$line" "$inflate"
+    done <<< "$under_picks"
+
+    echo ""
     divider
     echo ""
 }

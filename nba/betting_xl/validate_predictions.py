@@ -58,7 +58,7 @@ def load_all_predictions(date: str, predictions_dir: str = "predictions") -> Dic
     Returns dict with keys: 'xl', 'pro', 'odds_api', each containing list of picks.
     """
     date_compact = date.replace("-", "")
-    result = {"xl": [], "pro": [], "odds_api": []}
+    result = {"xl": [], "pro": [], "odds_api": [], "two_energy": []}
 
     # XL picks
     xl_files = [
@@ -133,6 +133,32 @@ def load_all_predictions(date: str, predictions_dir: str = "predictions") -> Dic
                     if "side" not in pick:
                         pick["side"] = "OVER"
                     result["odds_api"].append(pick)
+                break
+            except (json.JSONDecodeError, KeyError):
+                continue
+
+    # TWO_ENERGY picks
+    two_energy_files = [
+        Path(predictions_dir) / f"two_energy_picks_{date}.json",
+        Path(predictions_dir) / f"two_energy_picks_{date_compact}.json",
+    ]
+    for filepath in two_energy_files:
+        if filepath.exists():
+            try:
+                with open(filepath, "r") as f:
+                    data = json.load(f)
+                for pick in data.get("picks", []):
+                    pick["_source"] = "two_energy"
+                    pick["_game_date"] = date
+                    pick["_filter"] = pick.get("filter_name", pick.get("filter", "two_energy"))
+                    # Normalize field names
+                    if "best_line" not in pick:
+                        pick["best_line"] = pick.get("line")
+                    if "prediction" not in pick:
+                        pick["prediction"] = pick.get("line", 0)
+                    if "side" not in pick:
+                        pick["side"] = pick.get("side", "OVER")
+                    result["two_energy"].append(pick)
                 break
             except (json.JSONDecodeError, KeyError):
                 continue
@@ -554,7 +580,7 @@ def main():
     )
     parser.add_argument(
         "--system",
-        choices=["xl", "pro", "odds_api"],
+        choices=["xl", "pro", "odds_api", "two_energy"],
         help="Filter to specific system only",
     )
     parser.add_argument(
