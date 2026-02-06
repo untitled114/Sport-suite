@@ -22,11 +22,15 @@ Usage:
 
 import json
 import logging
+import random
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from nba.betting_xl.fetchers.base_fetcher import BaseFetcher
 
@@ -128,21 +132,72 @@ class PrizePicksDirectFetcher(BaseFetcher):
             "state_code": self.state_code,
         }
 
-        try:
-            response = requests.get(
-                self.API_URL,
-                params=params,
-                timeout=self.timeout,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Accept": "application/json",
-                },
-            )
-            response.raise_for_status()
-            return response.json()
-        except requests.RequestException as e:
-            logger.error(f"Failed to fetch PrizePicks projections: {e}")
-            return None
+        # Randomize user agent
+        user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15",
+        ]
+
+        headers = {
+            "User-Agent": random.choice(user_agents),
+            "Accept": "application/json",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Referer": "https://app.prizepicks.com/",
+            "Origin": "https://app.prizepicks.com",
+            "Connection": "keep-alive",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-site",
+            "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+        }
+
+        # Retry with exponential backoff for rate limiting
+        max_retries = 3
+        for attempt in range(max_retries):
+            # Random delay before request
+            delay = random.uniform(1.0, 3.0) * (attempt + 1)
+            time.sleep(delay)
+
+            try:
+                response = requests.get(
+                    self.API_URL,
+                    params=params,
+                    timeout=self.timeout,
+                    headers=headers,
+                )
+
+                # Check for rate limit or block
+                if response.status_code == 403:
+                    logger.warning(
+                        f"PrizePicks 403 (attempt {attempt + 1}/{max_retries}), waiting..."
+                    )
+                    time.sleep(30 * (attempt + 1))  # Wait 30s, 60s, 90s
+                    continue
+
+                response.raise_for_status()
+                data = response.json()
+
+                # Check for API error in response body
+                if isinstance(data, dict) and "error" in data:
+                    logger.warning(f"PrizePicks API error: {data.get('error', 'unknown')}")
+                    time.sleep(30 * (attempt + 1))
+                    continue
+
+                return data
+
+            except requests.RequestException as e:
+                logger.warning(f"Request failed (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(30 * (attempt + 1))
+                continue
+
+        logger.error("Failed to fetch PrizePicks projections after all retries")
+        return None
 
     def _build_lookups(self, included: List[Dict]) -> Dict[str, Dict]:
         """

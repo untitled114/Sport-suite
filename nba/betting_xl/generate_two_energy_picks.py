@@ -296,13 +296,17 @@ class TwoEnergyGenerator:
         # Format for validate_predictions.py compatibility
         return {
             "generated_at": datetime.now().isoformat(),
-            "date": self.game_date,
+            "game_date": self.game_date,
+            "date": self.game_date,  # Alias for compatibility
             "strategy": "Two Energy (Goblin OVER + Inflated UNDER)",
             "tier": "two_energy",
             "total_picks": len(picks),
             "picks": picks,
+            "positive_energy_picks": positive,
+            "negative_energy_picks": negative,
             "summary": {
                 "total": len(picks),
+                "total_picks": len(picks),  # Alias
                 "positive_energy": len(positive),
                 "negative_energy": len(negative),
                 "by_stat_type": {},
