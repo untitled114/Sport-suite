@@ -246,6 +246,30 @@ class PrizePicksLoader:
 
         return self.stats["inserted"] + self.stats["updated"]
 
+    def calculate_consensus_metrics(self):
+        """
+        Calculate consensus metrics for all props.
+
+        Uses database function to calculate consensus_line from all books.
+        This enables deflation/inflation calculations for two-energy strategy.
+        """
+        if self.verbose:
+            print("\nCalculating consensus metrics...")
+
+        try:
+            self.cursor.execute("SELECT update_all_consensus_metrics();")
+            result = self.cursor.fetchone()
+            rows_updated = result[0] if result else 0
+            self.conn.commit()
+
+            if self.verbose:
+                print(f"[OK] Updated consensus metrics ({rows_updated} rows)")
+
+        except Exception as e:
+            self.conn.rollback()
+            if self.verbose:
+                print(f"[WARN] Consensus metrics error: {e}")
+
     def print_summary(self):
         """Print loading summary"""
         print("\n" + "=" * 60)
@@ -302,6 +326,8 @@ def fetch_and_load(
 
     try:
         loaded = loader.load_props(props)
+        # Calculate consensus so deflation works for two-energy strategy
+        loader.calculate_consensus_metrics()
         loader.print_summary()
         return loaded
     finally:
@@ -342,6 +368,8 @@ def load_from_file(filepath: str, verbose: bool = True) -> int:
 
     try:
         loaded = loader.load_props(props)
+        # Calculate consensus so deflation works for two-energy strategy
+        loader.calculate_consensus_metrics()
         loader.print_summary()
         return loaded
     finally:

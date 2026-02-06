@@ -620,19 +620,49 @@ fetch_and_load_cheatsheet() {
 
 fetch_and_load_prizepicks() {
     section "Fetching PrizePicks" "Direct API (standard/goblin/demon)"
+
+    # Count before fetch
+    local before_count=$(PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -t -c \
+        "SELECT COUNT(*) FROM nba_props_xl WHERE game_date = '$DATE_STR' AND book_name LIKE 'prizepicks%';" 2>/dev/null | tr -d ' ')
+
+    # Try Direct API first
     if [ -f "$SCRIPT_DIR/betting_xl/loaders/load_prizepicks_to_db.py" ]; then
-        if verbose_run python3 "$SCRIPT_DIR/betting_xl/loaders/load_prizepicks_to_db.py" --fetch --quiet; then
-            # Get counts by odds_type
-            local pp_stats=$(PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -t -c \
-                "SELECT odds_type, COUNT(*) FROM nba_props_xl
-                 WHERE game_date = '$DATE_STR' AND book_name LIKE 'prizepicks%'
-                 GROUP BY odds_type ORDER BY odds_type;" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g')
-            success "PrizePicks loaded: ${pp_stats:-no data}"
-        else
-            warning "PrizePicks fetch failed"
+        verbose_run python3 "$SCRIPT_DIR/betting_xl/loaders/load_prizepicks_to_db.py" --fetch --quiet 2>/dev/null
+    fi
+
+    # Count after Direct API
+    local after_direct=$(PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -t -c \
+        "SELECT COUNT(*) FROM nba_props_xl WHERE game_date = '$DATE_STR' AND book_name LIKE 'prizepicks%';" 2>/dev/null | tr -d ' ')
+
+    # Fallback to Odds API if Direct didn't add data
+    if [ "$after_direct" = "$before_count" ]; then
+        info "Direct API failed, trying Odds API fallback..."
+        local odds_fetcher="$SCRIPT_DIR/betting_xl/fetchers/fetch_prizepicks.py"
+        local pp_loader="$SCRIPT_DIR/betting_xl/loaders/load_prizepicks_to_db.py"
+
+        if [ -f "$odds_fetcher" ]; then
+            if verbose_run python3 "$odds_fetcher" --date "$DATE_STR"; then
+                # Find the latest prizepicks JSON file for this date
+                local pp_json=$(ls -t "$SCRIPT_DIR/betting_xl/lines/prizepicks_${DATE_STR}"*.json 2>/dev/null | head -1)
+                if [ -n "$pp_json" ] && [ -f "$pp_json" ] && [ -f "$pp_loader" ]; then
+                    verbose_run python3 "$pp_loader" --file "$pp_json"
+                fi
+            else
+                warning "PrizePicks Odds API fallback also failed"
+            fi
         fi
+    fi
+
+    # Get final counts by odds_type
+    local pp_stats=$(PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -t -c \
+        "SELECT odds_type, COUNT(*) FROM nba_props_xl
+         WHERE game_date = '$DATE_STR' AND book_name LIKE 'prizepicks%'
+         GROUP BY odds_type ORDER BY odds_type;" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g')
+
+    if [ -n "$pp_stats" ]; then
+        success "PrizePicks loaded: ${pp_stats}"
     else
-        info "PrizePicks loader not found"
+        warning "No PrizePicks data loaded"
     fi
 }
 
