@@ -402,12 +402,25 @@ def validate_date_range(
         current += timedelta(days=1)
 
     # Print results
-    print("\n" + "=" * 90)
+    # Determine which systems have data
+    active_systems = [
+        s
+        for s in ["xl", "pro", "odds_api", "two_energy"]
+        if by_system[s]["wins"] + by_system[s]["losses"] + by_system[s]["pushes"] > 0
+    ]
+    system_labels = [s.upper() for s in active_systems]
+
+    print()
+    print("  Running Validation")
+    print(f"  Checking {', '.join(system_labels)} picks" if system_labels else "  No picks found")
+    print()
+    print("=" * 90)
     print(f"PICK VALIDATION REPORT: {start_date} to {end_date}")
     print("=" * 90)
 
     # Overall summary by system
-    print("\n" + "-" * 90)
+    print()
+    print("-" * 90)
     print("RESULTS BY SYSTEM")
     print("-" * 90)
     print(
@@ -420,7 +433,7 @@ def validate_date_range(
     total_pushes = 0
     total_profit = 0.0
 
-    for system in ["xl", "pro", "odds_api"]:
+    for system in active_systems:
         stats = by_system[system]
         wins, losses, pushes = stats["wins"], stats["losses"], stats["pushes"]
         graded = wins + losses + pushes
@@ -480,7 +493,7 @@ def validate_date_range(
     print(f"{'System':<10} {'Market':<12} {'W':<5} {'L':<5} {'P':<4} {'Win Rate':<10} {'ROI':<10}")
     print("-" * 90)
 
-    for system in ["xl", "pro", "odds_api"]:
+    for system in active_systems:
         markets = by_system_market[system]
         if not markets:
             continue
@@ -531,7 +544,7 @@ def validate_date_range(
     print("DAILY BREAKDOWN BY SYSTEM")
     print("-" * 90)
 
-    for system in ["xl", "pro", "odds_api"]:
+    for system in active_systems:
         daily = daily_by_system[system]
         if not daily:
             continue
@@ -592,23 +605,24 @@ def main():
     args = parser.parse_args()
 
     if args.start_date and args.end_date:
-        validate_date_range(
-            args.start_date,
-            args.end_date,
-            args.predictions_dir,
-            system_filter=args.system,
-            verbose=args.verbose,
-        )
+        start = args.start_date
+        end = args.end_date
     elif args.date:
-        validate_date_range(
-            args.date,
-            args.date,
-            args.predictions_dir,
-            system_filter=args.system,
-            verbose=args.verbose,
-        )
+        start = args.date
+        end = args.date
     else:
-        parser.error("Either --date or both --start-date and --end-date are required")
+        # Default to last 7 days
+        today = datetime.now().date()
+        end = today.strftime("%Y-%m-%d")
+        start = (today - timedelta(days=7)).strftime("%Y-%m-%d")
+
+    validate_date_range(
+        start,
+        end,
+        args.predictions_dir,
+        system_filter=args.system,
+        verbose=args.verbose,
+    )
 
 
 if __name__ == "__main__":
