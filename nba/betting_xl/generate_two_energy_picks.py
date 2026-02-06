@@ -6,12 +6,12 @@ Implements the two-energy betting strategy with volume-optimized filters:
 
 POSITIVE ENERGY (OVER):
 - PrizePicks Goblin lines (deflated = easy OVER)
-- POINTS: line < 20 AND deflation >= 3.0 → 73.1% WR
-- REBOUNDS: deflation >= 2.0 OR line >= 8.0 → 73.8% WR
+- POINTS: line < 20 AND deflation >= 5.0 → 77.3% WR
+- REBOUNDS: deflation >= 2.5 OR line >= 9.0 → 77.9% WR
 
 NEGATIVE ENERGY (UNDER):
 - FanDuel REBOUNDS: line > consensus + 0.8 → 76.7% WR
-- DraftKings POINTS: line > consensus + 1.0 → 76.7% WR
+- DraftKings POINTS: line > consensus + 1.5 → 92.3% WR
 - DraftKings REBOUNDS: DISABLED (66.7% WR = too much variance)
 
 Usage:
@@ -58,19 +58,19 @@ FILTERS = {
         "stat_type": "POINTS",
         "side": "OVER",
         "max_line": 20.0,  # Exclude high scorers (20+ lines lose at 34-43%)
-        "min_deflate": 3.0,  # Require at least 3 points below consensus
-        "description": "Goblin POINTS OVER (line<20, deflation>=3)",
-        "expected_wr": 73.1,
+        "min_deflate": 5.0,  # 77.3% WR on 185 picks (Jan 1 - Feb 6)
+        "description": "Goblin POINTS OVER (line<20, deflation>=5)",
+        "expected_wr": 77.3,
     },
     "goblin_rebounds_over": {
         "enabled": True,
         "book": "prizepicks_goblin",
         "stat_type": "REBOUNDS",
         "side": "OVER",
-        "min_deflate": 2.0,  # Require 2+ deflation OR elite rebounders
-        "min_line_alt": 8.0,  # OR line >= 8 (elite rebounders hit 93%)
-        "description": "Goblin REBOUNDS OVER (deflation>=2 OR line>=8)",
-        "expected_wr": 73.8,
+        "min_deflate": 2.5,  # 77.9% WR on 249 picks (Jan 1 - Feb 6)
+        "min_line_alt": 9.0,  # OR line >= 9 (91.7% hit rate)
+        "description": "Goblin REBOUNDS OVER (deflation>=2.5 OR line>=9)",
+        "expected_wr": 77.9,
     },
     # NEGATIVE ENERGY - UNDER on inflated lines
     "fd_rebounds_under": {
@@ -96,9 +96,9 @@ FILTERS = {
         "book": "draftkings",
         "stat_type": "POINTS",
         "side": "UNDER",
-        "min_inflate": 1.0,  # line > consensus + 1.0
-        "description": "DraftKings POINTS UNDER (inflated +1.0)",
-        "expected_wr": 76.7,
+        "min_inflate": 1.5,  # 92.3% WR on 13 picks (Jan 1 - Feb 6), was 66.2% at 1.0
+        "description": "DraftKings POINTS UNDER (inflated +1.5)",
+        "expected_wr": 92.3,
     },
 }
 
