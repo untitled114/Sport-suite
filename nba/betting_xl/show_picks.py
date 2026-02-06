@@ -450,6 +450,68 @@ def show_odds_api_picks(date_str, compact=False):
             print()
 
 
+def show_two_energy_picks(date_str, compact=False):
+    """Display Two Energy picks (Goblin OVER + Inflated UNDER)."""
+    filepath = find_picks_file("two_energy_picks", date_str)
+    if not filepath:
+        print(f"\n  {MUTED}No Two Energy picks file for {date_str}.{RESET}")
+        return
+
+    data = load_json(filepath)
+
+    if not data or not data.get("picks"):
+        print(f"\n  {MUTED}No Two Energy picks for {date_str}.{RESET}")
+        return
+
+    picks = data["picks"]
+    print_header(f"TWO ENERGY PICKS ({len(picks)})")
+    print(f"  {MUTED}Strategy:{RESET} Goblin OVER (deflated lines) + Inflated UNDER")
+
+    # Separate by energy type
+    positive = [p for p in picks if p.get("energy") == "POSITIVE"]
+    negative = [p for p in picks if p.get("energy") == "NEGATIVE"]
+
+    if positive:
+        print(f"\n  {GREEN}{BOLD}POSITIVE ENERGY (OVER){RESET} - {len(positive)} picks")
+        print_divider()
+
+        for pick in positive:
+            player = pick.get("player_name", "Unknown")
+            stat = pick.get("stat_type", "?")
+            line = pick.get("line", "?")
+            book = pick.get("book", "prizepicks_goblin")
+            deflation = pick.get("deflation", 0)
+            expected_wr = pick.get("expected_wr", 73)
+
+            print(f"  {BOLD}{WHITE}{player}{RESET}  {MUTED}[{book}]{RESET}")
+            print(
+                f"  {MUTED}│{RESET} {stat} OVER {BOLD}{line}{RESET}  "
+                f"{MUTED}(deflated -{deflation:.1f}){RESET}  "
+                f"{GREEN}{BOLD}{expected_wr}%{RESET} WR"
+            )
+            print()
+
+    if negative:
+        print(f"\n  {RED}{BOLD}NEGATIVE ENERGY (UNDER){RESET} - {len(negative)} picks")
+        print_divider()
+
+        for pick in negative:
+            player = pick.get("player_name", "Unknown")
+            stat = pick.get("stat_type", "?")
+            line = pick.get("line", "?")
+            book = pick.get("book", "fanduel")
+            inflation = pick.get("inflation", 0)
+            expected_wr = pick.get("expected_wr", 77)
+
+            print(f"  {BOLD}{WHITE}{player}{RESET}  {MUTED}[{book}]{RESET}")
+            print(
+                f"  {MUTED}│{RESET} {stat} UNDER {BOLD}{line}{RESET}  "
+                f"{MUTED}(inflated +{inflation:.1f}){RESET}  "
+                f"{GREEN}{BOLD}{expected_wr}%{RESET} WR"
+            )
+            print()
+
+
 def show_summary(date_str):
     """Display daily summary with expected performance."""
     # Check for XL picks
@@ -464,11 +526,16 @@ def show_summary(date_str):
     odds_path = find_picks_file("odds_api_picks", date_str)
     odds_data = load_json(odds_path) if odds_path else None
 
+    # Check for two energy picks
+    two_energy_path = find_picks_file("two_energy_picks", date_str)
+    two_energy_data = load_json(two_energy_path) if two_energy_path else None
+
     xl_count = len(xl_data.get("picks", [])) if xl_data else 0
     pro_count = len(pro_data.get("picks", [])) if pro_data else 0
     odds_count = len(odds_data.get("picks", [])) if odds_data else 0
+    two_energy_count = len(two_energy_data.get("picks", [])) if two_energy_data else 0
 
-    if xl_count == 0 and pro_count == 0 and odds_count == 0:
+    if xl_count == 0 and pro_count == 0 and odds_count == 0 and two_energy_count == 0:
         return
 
     print_header("SUMMARY")
@@ -532,6 +599,18 @@ def show_summary(date_str):
         print(f"  ODDS API         {odds_count:>3}     ~100% (tight filters)")
         total += odds_count
 
+    if two_energy_count > 0:
+        positive = len(
+            [p for p in two_energy_data.get("picks", []) if p.get("energy") == "POSITIVE"]
+        )
+        negative = len(
+            [p for p in two_energy_data.get("picks", []) if p.get("energy") == "NEGATIVE"]
+        )
+        print(
+            f"  TWO ENERGY       {two_energy_count:>3}     ~73-77% ({positive} OVER, {negative} UNDER)"
+        )
+        total += two_energy_count
+
     print(f"  {MUTED}{'─'*45}{RESET}")
     print(f"  {BOLD}TOTAL{RESET}            {BOLD}{total:>3}{RESET}")
     print()
@@ -543,6 +622,7 @@ def main():
     parser.add_argument("--xl-only", action="store_true", help="Show only XL picks")
     parser.add_argument("--pro-only", action="store_true", help="Show only pro picks")
     parser.add_argument("--odds-only", action="store_true", help="Show only Odds API picks")
+    parser.add_argument("--two-energy-only", action="store_true", help="Show only Two Energy picks")
     parser.add_argument("--compact", "-c", action="store_true", help="Compact output (less detail)")
     parser.add_argument(
         "--sort",
@@ -563,10 +643,13 @@ def main():
         show_pro_picks(date_str, compact=args.compact)
     elif args.odds_only:
         show_odds_api_picks(date_str, compact=args.compact)
+    elif args.two_energy_only:
+        show_two_energy_picks(date_str, compact=args.compact)
     else:
         show_xl_picks(date_str, compact=args.compact)
         show_pro_picks(date_str, compact=args.compact)
         show_odds_api_picks(date_str, compact=args.compact)
+        show_two_energy_picks(date_str, compact=args.compact)
         show_summary(date_str)
 
     print(f"{BOLD}{'═'*70}{RESET}")
