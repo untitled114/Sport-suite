@@ -286,7 +286,7 @@ progress() {
 }
 
 system_banner() {
-    clear
+    clear 2>/dev/null || true
     echo ""
     divider
     echo ""
