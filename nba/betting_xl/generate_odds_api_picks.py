@@ -9,11 +9,17 @@ bet rating, opponent rank).
 This mirrors the generate_cheatsheet_picks.py pattern:
   fetch_pick6_live.py -> load to DB -> generate_odds_api_picks.py -> JSON -> validate
 
-RECALIBRATED Jan 30, 2026 (based on last 15 days: Jan 14-28):
-- POINTS:   mult<0.9 + opp>=6 + L5>=40% + L15>=40%
-- REBOUNDS: mult<0.8 + L15>=60%
-- ASSISTS:  mult<1.5 + opp>=11 + szn>=60% + EV>=10% + Diff>=1.0 (NEW)
-- TRAP:     mult > 5.0 = 0% WR (NEVER bet)
+RECALIBRATED Feb 5, 2026 (based on Jan 26 - Feb 4 backtest):
+- 48W-9L (84.2% WR) combined across all filters
+- +60.8% ROI on 57 picks over 10 days
+- Every single day profitable
+
+70%+ WR FILTERS (quality over quantity):
+- REBOUNDS OVER: L5>=60% + L15>=60% + opp>=10 + rating>=4 + diff>=1 (100% WR, 9-0)
+- POINTS OVER: L5>=60% + L15>=60% + opp>=25 + diff>=1 (88.9% WR, 8-1)
+- POINTS OVER: L5>=80% + opp>=25 (85.7% WR, 12-2)
+- REBOUNDS OVER: L15>=80% + opp>=15 (80% WR, 8-2)
+- ASSISTS UNDER: opp>=25 + rating>=5 (73.3% WR, 11-4)
 
 Usage:
     python3 generate_odds_api_picks.py --date 2026-01-30
@@ -24,7 +30,6 @@ Usage:
 import argparse
 import json
 import logging
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -32,36 +37,16 @@ from typing import Any, Dict, List, Optional
 import psycopg2
 import requests
 
+from nba.config.database import get_intelligence_db_config, get_players_db_config
 from nba.utils.name_normalizer import NameNormalizer
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
-# Database configs
-DB_INTELLIGENCE = {
-    "host": os.getenv("NBA_INT_DB_HOST", "localhost"),
-    "port": int(os.getenv("NBA_INT_DB_PORT", 5539)),
-    "user": os.getenv(
-        "NBA_INT_DB_USER", os.getenv("NBA_DB_USER", os.getenv("DB_USER", "nba_user"))
-    ),
-    "password": os.getenv(
-        "NBA_INT_DB_PASSWORD", os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
-    ),
-    "database": os.getenv("NBA_INT_DB_NAME", "nba_intelligence"),
-}
-
-DB_PLAYERS = {
-    "host": os.getenv("NBA_PLAYERS_DB_HOST", "localhost"),
-    "port": int(os.getenv("NBA_PLAYERS_DB_PORT", 5536)),
-    "user": os.getenv(
-        "NBA_PLAYERS_DB_USER", os.getenv("NBA_DB_USER", os.getenv("DB_USER", "nba_user"))
-    ),
-    "password": os.getenv(
-        "NBA_PLAYERS_DB_PASSWORD", os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
-    ),
-    "database": os.getenv("NBA_PLAYERS_DB_NAME", "nba_players"),
-}
+# Database configs (centralized in nba.config.database)
+DB_INTELLIGENCE = get_intelligence_db_config()
+DB_PLAYERS = get_players_db_config()
 
 
 # =============================================================================
@@ -71,82 +56,85 @@ MAX_DAYS_SINCE_LAST_GAME = 5
 
 
 # =============================================================================
-# ODDS API FILTER CONFIGURATIONS
+# ODDS API FILTER CONFIGURATIONS - 70%+ WR FILTERS
 # =============================================================================
-# Conservative starting filters based on clean data analysis.
-# Iterate using validate_odds_api_picks.py.
+# RECALIBRATED Feb 5, 2026 (based on Jan 26 - Feb 4 backtest):
+# - Combined: 48W-9L (84.2% WR), +60.8% ROI, +34.68u profit
+# - Every single day profitable over 10-day backtest
+#
+# Philosophy: QUALITY over QUANTITY
+# - Fewer picks per day (avg 6) but higher win rate
+# - All filters backtested to 70%+ WR with 8+ sample size
 
 ODDS_API_FILTERS = {
-    # POINTS: Low multiplier + floor-level cheatsheet gates
-    # Backtested: 100% WR (10W-0L) Jan 10-24, 0.7 picks/day
-    "points_low_mult": {
-        "enabled": True,
-        "stat_type": "POINTS",
-        "max_multiplier": 0.9,
-        "min_bet_rating": None,
-        "min_opp_rank": 6,
-        "max_opp_rank": None,
-        "min_hit_rate_l5": 0.40,
-        "min_hit_rate_l15": 0.40,
-        "min_hit_rate_season": None,
-        "min_ev_pct": None,
-        "min_projection_diff": None,
-        "expected_wr": 100.0,
-        "description": "POINTS + mult<0.9 + opp>=6 + L5>=40% + L15>=40%",
-    },
-    # ASSISTS: Tighter filter with EV + Diff requirements
-    # RECALIBRATED Jan 30, 2026 - old filter dropped to 63.6% WR (Jan 14-28)
-    # New filter adds EV 10%+ and Diff 1.0+ (matching PRO assists filter pattern)
-    "assists_ev_diff": {
-        "enabled": True,
-        "stat_type": "ASSISTS",
-        "max_multiplier": 1.5,
-        "min_bet_rating": None,
-        "min_opp_rank": 11,
-        "max_opp_rank": None,
-        "min_hit_rate_l5": None,
-        "min_hit_rate_l15": None,
-        "min_hit_rate_season": 0.60,
-        "min_ev_pct": 10.0,
-        "min_projection_diff": 1.0,
-        "expected_wr": 100.0,
-        "description": "ASSISTS + mult<1.5 + opp>=11 + szn>=60% + EV>=10% + Diff>=1.0",
-    },
-    # OLD FILTER - DISABLED (dropped to 63.6% WR Jan 14-28)
-    "assists_season": {
-        "enabled": False,
-        "stat_type": "ASSISTS",
-        "max_multiplier": 1.5,
-        "min_bet_rating": None,
-        "min_opp_rank": 6,
-        "max_opp_rank": None,
-        "min_hit_rate_l5": None,
-        "min_hit_rate_l15": None,
-        "min_hit_rate_season": 0.60,
-        "min_ev_pct": None,
-        "min_projection_diff": None,
-        "expected_wr": 63.6,
-        "description": "ASSISTS + mult<1.5 + opp>=6 + szn>=60% (DISABLED - 63.6% WR)",
-    },
-    # REBOUNDS: Very low multiplier + L15 guard
-    # Backtested: 100% WR (5W-0L) Jan 10-24, 0.4 picks/day
-    "rebounds_low_mult": {
+    # =========================================================================
+    # REBOUNDS OVER - ELITE (100% WR in backtest: 9W-0L)
+    # =========================================================================
+    "rebounds_elite": {
         "enabled": True,
         "stat_type": "REBOUNDS",
-        "max_multiplier": 0.8,
-        "min_bet_rating": None,
-        "min_opp_rank": None,
-        "max_opp_rank": None,
-        "min_hit_rate_l5": None,
+        "side": "OVER",
+        "min_hit_rate_l5": 0.60,
         "min_hit_rate_l15": 0.60,
-        "min_hit_rate_season": None,
-        "min_ev_pct": None,
-        "min_projection_diff": None,
+        "min_opp_rank": 10,
+        "min_bet_rating": 4,
+        "min_projection_diff": 1.0,
         "expected_wr": 100.0,
-        "description": "REBOUNDS + mult<0.8 + L15>=60%",
+        "description": "REBOUNDS OVER: L5>=60% + L15>=60% + opp>=10 + rating>=4 + diff>=1",
     },
-    # TRAP FILTER - always applied regardless of individual filters
-    # Validated: 0% WR on 71 props with mult > 5.0
+    # =========================================================================
+    # POINTS OVER - STRONG (88.9% WR in backtest: 8W-1L)
+    # =========================================================================
+    "points_strong": {
+        "enabled": True,
+        "stat_type": "POINTS",
+        "side": "OVER",
+        "min_hit_rate_l5": 0.60,
+        "min_hit_rate_l15": 0.60,
+        "min_opp_rank": 25,
+        "min_projection_diff": 1.0,
+        "expected_wr": 88.9,
+        "description": "POINTS OVER: L5>=60% + L15>=60% + opp>=25 + diff>=1",
+    },
+    # =========================================================================
+    # POINTS OVER - HIGH (85.7% WR in backtest: 12W-2L)
+    # =========================================================================
+    "points_high": {
+        "enabled": True,
+        "stat_type": "POINTS",
+        "side": "OVER",
+        "min_hit_rate_l5": 0.80,
+        "min_opp_rank": 25,
+        "expected_wr": 85.7,
+        "description": "POINTS OVER: L5>=80% + opp>=25",
+    },
+    # =========================================================================
+    # REBOUNDS OVER - L15 FOCUSED (80% WR in backtest: 8W-2L)
+    # =========================================================================
+    "rebounds_l15": {
+        "enabled": True,
+        "stat_type": "REBOUNDS",
+        "side": "OVER",
+        "min_hit_rate_l15": 0.80,
+        "min_opp_rank": 15,
+        "expected_wr": 80.0,
+        "description": "REBOUNDS OVER: L15>=80% + opp>=15",
+    },
+    # =========================================================================
+    # ASSISTS UNDER - CONTRARIAN (73.3% WR in backtest: 11W-4L)
+    # =========================================================================
+    "assists_under": {
+        "enabled": True,
+        "stat_type": "ASSISTS",
+        "side": "UNDER",
+        "min_opp_rank": 25,
+        "min_bet_rating": 5,
+        "expected_wr": 73.3,
+        "description": "ASSISTS UNDER: opp>=25 + rating>=5",
+    },
+    # =========================================================================
+    # TRAP FILTER - always applied (0% WR on mult > 5.0)
+    # =========================================================================
     "TRAP": {
         "min_multiplier": 5.0,
     },
@@ -273,8 +261,11 @@ class OddsApiPicksGenerator:
         Query cheatsheet_data table for game_date.
 
         Gets hit rates, bet rating, opp rank, projection, etc.
+        Loads BOTH over and under recommendations to support UNDER filters.
         """
         cursor = self.conn_intel.cursor()
+
+        # Load OVER recommendations (for POINTS/REBOUNDS OVER filters)
         cursor.execute(
             """
             SELECT
@@ -296,60 +287,115 @@ class OddsApiPicksGenerator:
 
         rows = cursor.fetchall()
         columns = [desc[0] for desc in cursor.description]
-        cursor.close()
 
         for row in rows:
             data = dict(zip(columns, row))
             normalized = self.normalizer.normalize_name(data["player_name"]).lower()
-            key = (normalized, data["stat_type"])
+            key = (normalized, data["stat_type"], "OVER")
             self.cheatsheet_data[key] = data
 
+        over_count = len(self.cheatsheet_data)
+
+        # For ASSISTS UNDER filter, we use OVER data but will bet UNDER
+        # The BettingPros cheatsheet only has OVER recommendations, but we can
+        # use the features (opp_rank, rating) to identify good UNDER spots.
+        #
+        # Key insight from backtest: ASSISTS UNDER with opp>=25 + rating>=5 = 73.3% WR
+        # opp_rank >= 25 means opponent is ranked 25-30th in allowing assists,
+        # i.e., they're GOOD at preventing assists, so UNDER is profitable.
+        cursor.execute(
+            """
+            SELECT
+                player_name, stat_type, platform,
+                line, projection, projection_diff,
+                bet_rating, ev_pct, probability,
+                hit_rate_l5, hit_rate_l15, hit_rate_season,
+                opp_rank, opp_value,
+                'under' as recommended_side, use_for_betting
+            FROM cheatsheet_data
+            WHERE game_date = %s
+              AND platform IN ('underdog', 'all')
+              AND stat_type = 'ASSISTS'
+            ORDER BY player_name
+        """,
+            (self.game_date,),
+        )
+
+        rows = cursor.fetchall()
+        for row in rows:
+            data = dict(zip(columns, row))
+            normalized = self.normalizer.normalize_name(data["player_name"]).lower()
+            key = (normalized, data["stat_type"], "UNDER")
+            self.cheatsheet_data[key] = data
+
+        cursor.close()
+        under_count = len(self.cheatsheet_data) - over_count
+
         logger.info(
-            f"[DATA] Found {len(self.cheatsheet_data)} cheatsheet props for {self.game_date}"
+            f"[DATA] Found {len(self.cheatsheet_data)} cheatsheet props for {self.game_date} "
+            f"(OVER: {over_count}, UNDER: {under_count})"
         )
 
     def merge_data(self) -> List[Dict]:
         """
-        Join Pick6 + cheatsheet on (normalized_player_name, stat_type).
+        Join Pick6 + cheatsheet on (normalized_player_name, stat_type, side).
 
         Only includes rows that exist in BOTH sources.
+        Creates separate entries for OVER and UNDER when both exist.
         """
         merged = []
 
         for key, pick6_prop in self.pick6_data.items():
-            cheatsheet = self.cheatsheet_data.get(key)
-            if not cheatsheet:
-                continue
+            normalized_name, stat_type = key
 
-            merged_row = {
-                # Player info
-                "player_name": cheatsheet["player_name"],
-                "stat_type": cheatsheet["stat_type"],
-                "platform": cheatsheet.get("platform", "underdog"),
-                # Pick6 data
-                "pick6_multiplier": float(pick6_prop.get("pick6_multiplier", 1.0)),
-                "pick6_line": float(pick6_prop.get("line", 0)),
-                # Cheatsheet data
-                "line": float(cheatsheet.get("line") or 0),
-                "projection": float(cheatsheet.get("projection") or 0),
-                "projection_diff": float(cheatsheet.get("projection_diff") or 0),
-                "bet_rating": cheatsheet.get("bet_rating"),
-                "ev_pct": float(cheatsheet.get("ev_pct") or 0),
-                "probability": float(cheatsheet.get("probability") or 0),
-                "hit_rate_l5": float(cheatsheet.get("hit_rate_l5") or 0),
-                "hit_rate_l15": float(cheatsheet.get("hit_rate_l15") or 0),
-                "hit_rate_season": float(cheatsheet.get("hit_rate_season") or 0),
-                "opp_rank": cheatsheet.get("opp_rank"),
-                "opp_value": cheatsheet.get("opp_value"),
-            }
-            merged.append(merged_row)
+            # Try to match with OVER cheatsheet data
+            over_key = (normalized_name, stat_type, "OVER")
+            over_cheatsheet = self.cheatsheet_data.get(over_key)
+            if over_cheatsheet:
+                merged_row = self._create_merged_row(pick6_prop, over_cheatsheet, "OVER")
+                merged.append(merged_row)
+
+            # Try to match with UNDER cheatsheet data (for ASSISTS)
+            under_key = (normalized_name, stat_type, "UNDER")
+            under_cheatsheet = self.cheatsheet_data.get(under_key)
+            if under_cheatsheet:
+                merged_row = self._create_merged_row(pick6_prop, under_cheatsheet, "UNDER")
+                merged.append(merged_row)
 
         self.merged_data = merged
+        over_count = sum(1 for m in merged if m.get("side") == "OVER")
+        under_count = sum(1 for m in merged if m.get("side") == "UNDER")
         logger.info(
             f"[MERGE] {len(merged)} props matched "
-            f"(Pick6: {len(self.pick6_data)}, Cheatsheet: {len(self.cheatsheet_data)})"
+            f"(OVER: {over_count}, UNDER: {under_count}, "
+            f"Pick6: {len(self.pick6_data)}, Cheatsheet: {len(self.cheatsheet_data)})"
         )
         return merged
+
+    def _create_merged_row(self, pick6_prop: Dict, cheatsheet: Dict, side: str) -> Dict:
+        """Create a merged row from Pick6 and cheatsheet data."""
+        return {
+            # Player info
+            "player_name": cheatsheet["player_name"],
+            "stat_type": cheatsheet["stat_type"],
+            "platform": cheatsheet.get("platform", "underdog"),
+            "side": side,
+            # Pick6 data
+            "pick6_multiplier": float(pick6_prop.get("pick6_multiplier", 1.0)),
+            "pick6_line": float(pick6_prop.get("line", 0)),
+            # Cheatsheet data
+            "line": float(cheatsheet.get("line") or 0),
+            "projection": float(cheatsheet.get("projection") or 0),
+            "projection_diff": float(cheatsheet.get("projection_diff") or 0),
+            "bet_rating": cheatsheet.get("bet_rating"),
+            "ev_pct": float(cheatsheet.get("ev_pct") or 0),
+            "probability": float(cheatsheet.get("probability") or 0),
+            "hit_rate_l5": float(cheatsheet.get("hit_rate_l5") or 0),
+            "hit_rate_l15": float(cheatsheet.get("hit_rate_l15") or 0),
+            "hit_rate_season": float(cheatsheet.get("hit_rate_season") or 0),
+            "opp_rank": cheatsheet.get("opp_rank"),
+            "opp_value": cheatsheet.get("opp_value"),
+        }
 
     def get_days_since_last_game(self, player_name: str) -> Optional[int]:
         """Get days since player's last game before the target game date."""
@@ -391,9 +437,13 @@ class OddsApiPicksGenerator:
             if not filter_config.get("enabled", True):
                 continue
 
+            # Get the required side for this filter (default OVER)
+            required_side = filter_config.get("side", "OVER")
+
             for prop in merged_props:
-                # Dedup key
-                key = (prop["player_name"], prop["stat_type"])
+                # Dedup key (includes side to allow both OVER and UNDER picks)
+                prop_side = prop.get("side", "OVER")
+                key = (prop["player_name"], prop["stat_type"], prop_side)
                 if key in seen_keys:
                     continue
 
@@ -402,14 +452,23 @@ class OddsApiPicksGenerator:
                 if prop["pick6_multiplier"] >= trap_threshold:
                     continue
 
+                # Side filter - must match OVER/UNDER
+                if prop_side != required_side:
+                    continue
+
                 # Stat type filter
                 required_stat = filter_config.get("stat_type")
                 if required_stat and prop["stat_type"] != required_stat:
                     continue
 
-                # Multiplier filter
+                # Multiplier filter (max)
                 max_mult = filter_config.get("max_multiplier")
                 if max_mult is not None and prop["pick6_multiplier"] >= max_mult:
+                    continue
+
+                # Multiplier filter (min) - avoid ultra-low mults that underperform
+                min_mult = filter_config.get("min_multiplier")
+                if min_mult is not None and prop["pick6_multiplier"] < min_mult:
                     continue
 
                 # Bet rating filter
@@ -490,11 +549,12 @@ class OddsApiPicksGenerator:
         """Build a pick record from merged prop data."""
         mult = prop["pick6_multiplier"]
         expected_wr = filter_config.get("expected_wr", 60.0)
+        side = filter_config.get("side", "OVER")
 
         return {
             "player_name": prop["player_name"],
             "stat_type": prop["stat_type"],
-            "side": "OVER",
+            "side": side,
             "line": prop["line"],
             "pick6_multiplier": mult,
             "projection": prop.get("projection", 0),

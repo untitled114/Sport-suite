@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 import psycopg2
 
+from nba.config.thresholds import EDGE_THRESHOLDS
 from nba.core.exceptions import (
     CalibrationDataError,
     CalibrationError,
@@ -559,9 +560,9 @@ class XLPredictor:
             - "MEDIUM": |edge| >= 3.0 (moderate conviction)
             - "LOW": |edge| < 3.0 (weak conviction)
         """
-        if abs(edge) >= 5.0:
+        if abs(edge) >= EDGE_THRESHOLDS.edge_confidence_high:
             return "HIGH"
-        elif abs(edge) >= 3.0:
+        elif abs(edge) >= EDGE_THRESHOLDS.edge_confidence_medium:
             return "MEDIUM"
         else:
             return "LOW"
@@ -691,6 +692,21 @@ class XLPredictor:
                 "confidence": confidence,
             }
 
+            # Validate prediction output bounds
+            if not np.isfinite(result["predicted_value"]):
+                logger.error(
+                    f"Non-finite predicted_value for {self.market}: {result['predicted_value']}"
+                )
+                return None
+            if not (0.0 <= result["p_over"] <= 1.0):
+                logger.error(f"p_over out of range [0,1] for {self.market}: {result['p_over']}")
+                return None
+            if result["predicted_value"] < 0 or result["predicted_value"] > 80:
+                logger.warning(
+                    f"Unusual predicted_value for {self.market}: {result['predicted_value']:.1f} "
+                    f"(line={line})"
+                )
+
             # Add book intelligence prob if available
             if prob_over_book is not None:
                 result["p_over_book"] = float(prob_over_book)
@@ -701,8 +717,11 @@ class XLPredictor:
 
             return result
 
-        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
-            logger.error(f"2-head prediction error for {self.market}: {e}")
+        except psycopg2.Error as e:
+            logger.error(f"Database error in {self.market} prediction: {e}")
+            return None
+        except (KeyError, TypeError, ValueError) as e:
+            logger.error(f"Data error in {self.market} prediction: {e}")
             return None
 
     def _predict_3head(

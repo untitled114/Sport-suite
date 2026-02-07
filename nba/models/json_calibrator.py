@@ -53,18 +53,14 @@ CALIBRATION_LOG_DIR = Path(
     os.getenv("NBA_CALIBRATION_LOG_DIR", PROJECT_ROOT / "nba" / "models" / "calibration_logs")
 )
 
-# Database configuration (use environment variables with fallbacks)
-DB_INTELLIGENCE = {
-    "host": os.getenv("NBA_INT_DB_HOST", "localhost"),
-    "port": int(os.getenv("NBA_INT_DB_PORT", 5539)),
-    "user": os.getenv(
-        "NBA_INT_DB_USER", os.getenv("NBA_DB_USER", os.getenv("DB_USER", "nba_user"))
-    ),
-    "password": os.getenv(
-        "NBA_INT_DB_PASSWORD", os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
-    ),
-    "database": os.getenv("NBA_INT_DB_NAME", "nba_intelligence"),
-}
+# Add project root to path for imports
+import sys
+
+sys.path.insert(0, str(PROJECT_ROOT))
+from nba.config.database import get_intelligence_db_config
+
+# Database configuration (centralized)
+DB_INTELLIGENCE = get_intelligence_db_config()
 
 
 class JSONCalibrator:

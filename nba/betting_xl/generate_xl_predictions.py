@@ -24,7 +24,7 @@ import argparse
 import json
 import os
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -37,6 +37,11 @@ from nba.betting_xl.line_optimizer import PRODUCTION_CONFIG, LineOptimizer
 from nba.betting_xl.risk_filters import RiskFilter
 from nba.betting_xl.utils.hit_rate_loader import HitRateCache
 from nba.betting_xl.xl_predictor import XLPredictor
+from nba.config.database import (
+    get_games_db_config,
+    get_intelligence_db_config,
+    get_players_db_config,
+)
 from nba.core.drift_service import DriftService
 from nba.core.logging_config import add_logging_args, get_logger, setup_logging
 from nba.features.extract_live_features_xl import LiveFeatureExtractorXL
@@ -45,25 +50,10 @@ from nba.utils.name_normalizer import NameNormalizer
 # Logger will be configured in main() - use get_logger for module-level access
 logger = get_logger(__name__)
 
-# Database configs
-DB_DEFAULT_USER = os.getenv("NBA_DB_USER", os.getenv("DB_USER", "nba_user"))
-DB_DEFAULT_PASSWORD = os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
-
-DB_INTELLIGENCE = {
-    "host": os.getenv("NBA_INT_DB_HOST", "localhost"),
-    "port": int(os.getenv("NBA_INT_DB_PORT", 5539)),
-    "user": os.getenv("NBA_INT_DB_USER", DB_DEFAULT_USER),
-    "password": os.getenv("NBA_INT_DB_PASSWORD", DB_DEFAULT_PASSWORD),
-    "database": os.getenv("NBA_INT_DB_NAME", "nba_intelligence"),
-}
-
-DB_PLAYERS = {
-    "host": os.getenv("NBA_PLAYERS_DB_HOST", "localhost"),
-    "port": int(os.getenv("NBA_PLAYERS_DB_PORT", 5536)),
-    "user": os.getenv("NBA_PLAYERS_DB_USER", DB_DEFAULT_USER),
-    "password": os.getenv("NBA_PLAYERS_DB_PASSWORD", DB_DEFAULT_PASSWORD),
-    "database": os.getenv("NBA_PLAYERS_DB_NAME", "nba_players"),
-}
+# Database configs (centralized in nba.config.database)
+DB_INTELLIGENCE = get_intelligence_db_config()
+DB_PLAYERS = get_players_db_config()
+DB_GAMES = get_games_db_config()
 
 # Drift detection configuration
 DRIFT_DETECTION_ENABLED = os.getenv("NBA_DRIFT_DETECTION_ENABLED", "true").lower() == "true"
@@ -122,9 +112,32 @@ class XLPredictionsGenerator:
         self.bias_adjustments: Dict[str, float] = {}
         self.opp_rank_cache: Dict[str, int] = {}  # (opponent_team, stat_type) -> rank
 
+    def __enter__(self):
+        """Support usage as context manager."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Ensure all connections are closed when used as context manager."""
+        self._cleanup()
+        return False
+
+    def _cleanup(self):
+        """Close all database connections and resources."""
+        if hasattr(self, "feature_extractor") and self.feature_extractor:
+            self.feature_extractor.close()
+        if hasattr(self, "line_optimizer") and self.line_optimizer:
+            self.line_optimizer.close()
+        if hasattr(self, "conn_intelligence") and self.conn_intelligence:
+            self.conn_intelligence.close()
+        if hasattr(self, "conn_players") and self.conn_players:
+            self.conn_players.close()
+        if hasattr(self, "conn_games") and self.conn_games:
+            self.conn_games.close()
+
         # Database connections
         self.conn_intelligence = None
         self.conn_players = None
+        self.conn_games = None
 
         # Drift detection
         self.drift_services: Dict[str, DriftService] = {}
@@ -138,6 +151,7 @@ class XLPredictionsGenerator:
         """Connect to NBA databases"""
         self.conn_intelligence = psycopg2.connect(**DB_INTELLIGENCE)
         self.conn_players = psycopg2.connect(**DB_PLAYERS)
+        self.conn_games = psycopg2.connect(**DB_GAMES)
         logger.info("[OK] Connected to databases")
 
     def load_models(self):
@@ -339,6 +353,59 @@ class XLPredictionsGenerator:
             return None
         key = f"{opponent_team}_{stat_type}"
         return self.opp_rank_cache.get(key)
+
+    def load_vegas_spreads(self):
+        """Load vegas spreads for all today's games for blowout risk detection."""
+        self.game_spreads = {}
+        try:
+            cursor = self.conn_games.cursor()
+            cursor.execute(
+                "SELECT home_team, away_team, vegas_spread, vegas_total "
+                "FROM games WHERE game_date = %s",
+                (self.game_date,),
+            )
+            for home, away, spread, total in cursor.fetchall():
+                spread_val = float(spread) if spread else 0.0
+                total_val = float(total) if total else 220.0
+                game_info = {
+                    "spread": spread_val,
+                    "total": total_val,
+                    "home": home,
+                    "away": away,
+                }
+                self.game_spreads[home] = game_info
+                self.game_spreads[away] = game_info
+            cursor.close()
+            logger.info(f"[OK] Loaded vegas spreads for {len(self.game_spreads) // 2} games")
+        except (psycopg2.Error, ValueError, TypeError) as e:
+            logger.warning(f"Could not load vegas spreads for blowout risk: {e}")
+            self.game_spreads = {}
+
+    def get_blowout_risk(self, opponent_team, is_home):
+        """Classify blowout risk based on vegas spread.
+
+        Returns None if no risk, otherwise a dict with level/spread/abs_spread.
+        Thresholds:
+            >= 13: EXTREME (starters likely pulled in Q3)
+            >= 10: HIGH (starters at risk in Q4)
+            >= 8:  MODERATE (possible garbage time)
+        """
+        game = self.game_spreads.get(opponent_team)
+        if not game:
+            return None
+
+        abs_spread = abs(game["spread"])
+        if abs_spread < 8:
+            return None
+
+        if abs_spread >= 13:
+            level = "EXTREME"
+        elif abs_spread >= 10:
+            level = "HIGH"
+        else:
+            level = "MODERATE"
+
+        return {"level": level, "spread": game["spread"], "abs_spread": abs_spread}
 
     # Minutes/availability guard configuration
     MIN_MINUTES_FLOOR = 25.0
@@ -598,11 +665,14 @@ class XLPredictionsGenerator:
         logger.info(f"Querying props for {self.game_date}...")
 
         enabled_markets = [k for k, v in PRODUCTION_CONFIG.items() if v.get("enabled", False)]
-        markets_str = ", ".join([f"'{m}'" for m in enabled_markets])
+        markets_placeholders = ", ".join(["%s"] * len(enabled_markets))
 
         # In backtest mode, include inactive props (historical data)
         # In production, only use active props
         is_active_filter = "" if self.backtest_mode else "AND is_active = true"
+
+        # Build params list: game_date first, then markets
+        params = [self.game_date] + enabled_markets
 
         # Standard-only mode: exclude PrizePicks alternate lines (goblin/demon)
         # These weren't in training data (added Feb 2026)
@@ -610,8 +680,9 @@ class XLPredictionsGenerator:
         if self.standard_only:
             from nba.betting_xl.line_optimizer import PRIZEPICKS_ALT_BOOKS
 
-            excluded_books = ", ".join([f"'{b}'" for b in PRIZEPICKS_ALT_BOOKS])
-            standard_only_filter = f"AND book_name NOT IN ({excluded_books})"
+            excluded_placeholders = ", ".join(["%s"] * len(PRIZEPICKS_ALT_BOOKS))
+            standard_only_filter = f"AND book_name NOT IN ({excluded_placeholders})"
+            params.extend(PRIZEPICKS_ALT_BOOKS)
 
         query = f"""
         WITH latest_props AS (
@@ -633,7 +704,7 @@ class XLPredictionsGenerator:
                 ) as rn
             FROM nba_props_xl
             WHERE game_date = %s
-                AND stat_type IN ({markets_str})
+                AND stat_type IN ({markets_placeholders})
                 {is_active_filter}
                 {standard_only_filter}
                 AND over_line IS NOT NULL
@@ -666,7 +737,7 @@ class XLPredictionsGenerator:
         ORDER BY stat_type, player_name;
         """
 
-        df = pd.read_sql_query(query, self.conn_intelligence, params=(self.game_date,))
+        df = pd.read_sql_query(query, self.conn_intelligence, params=params)
         logger.info(f"[DATA] Found {len(df)} props for {self.game_date}")
 
         # CRITICAL DATE VALIDATION: Verify props are for correct date
@@ -972,6 +1043,15 @@ class XLPredictionsGenerator:
                         if risk.should_flag:
                             pick["risk_warning"] = self.risk_filter.format_risk_summary(risk)
 
+                        # Blowout risk detection
+                        blowout = self.get_blowout_risk(opp_team, home_flag)
+                        if blowout:
+                            pick["blowout_risk"] = blowout
+                            pick["risk_flags"].append(f"BLOWOUT_{blowout['level']}")
+
+                        # Game key for correlation grouping
+                        pick["game_key"] = opp_team
+
                         self.picks.append(pick)
 
             except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
@@ -1185,6 +1265,37 @@ class XLPredictionsGenerator:
                     merged_picks.append(best_pick)
 
             self.picks = merged_picks
+
+            # Correlation detection: group picks by game for parlay awareness
+            game_groups = defaultdict(list)
+            for pick in self.picks:
+                gk = pick.get("game_key")
+                if gk:
+                    game_groups[gk].append(pick["player_name"])
+            for pick in self.picks:
+                gk = pick.get("game_key")
+                if gk and len(game_groups.get(gk, [])) > 1:
+                    pick["same_game_players"] = [
+                        p for p in game_groups[gk] if p != pick["player_name"]
+                    ]
+
+            # Log blowout risks and game groups
+            blowout_picks = [p for p in self.picks if p.get("blowout_risk")]
+            if blowout_picks:
+                logger.info(
+                    f"[BLOWOUT] {len(blowout_picks)} picks have blowout risk: "
+                    + ", ".join(
+                        f"{p['player_name']} ({p['blowout_risk']['level']})"
+                        for p in blowout_picks[:5]
+                    )
+                )
+            multi_groups = {k: v for k, v in game_groups.items() if len(v) > 1}
+            if multi_groups:
+                logger.info(
+                    f"[CORR] {len(multi_groups)} games have multiple picks: "
+                    + ", ".join(f"{k}: {len(v)} picks" for k, v in list(multi_groups.items())[:5])
+                )
+
             duplicates_merged = original_count - len(self.picks)
 
             if duplicates_merged > 0:
@@ -1415,6 +1526,7 @@ class XLPredictionsGenerator:
             self.initialize_components()
             self.initialize_drift_detection()
             self.load_opponent_defense_ranks()
+            self.load_vegas_spreads()
             # NOTE: Odds API picks are now standalone (generate_odds_api_picks.py)
             self.generate_picks()
             self.aggregate_drift_results()
@@ -1432,15 +1544,7 @@ class XLPredictionsGenerator:
             logger.info("\n[OK] XL predictions complete!")
 
         finally:
-            # Cleanup
-            if self.feature_extractor:
-                self.feature_extractor.close()
-            if self.line_optimizer:
-                self.line_optimizer.close()
-            if self.conn_intelligence:
-                self.conn_intelligence.close()
-            if self.conn_players:
-                self.conn_players.close()
+            self._cleanup()
 
 
 def main():

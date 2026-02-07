@@ -24,9 +24,9 @@ Usage:
 
 import argparse
 import logging
-import os
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -34,17 +34,16 @@ import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
 
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from nba.config.database import get_players_db_config
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Database connection params
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5536,
-    "database": "nba_players",
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
+DB_CONFIG = get_players_db_config()
 
 
 class MinutesProjector:

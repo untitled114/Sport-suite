@@ -14,7 +14,6 @@ Usage:
 """
 
 import argparse
-import os
 import re
 import sys
 import time
@@ -50,16 +49,12 @@ def normalize_name(name: str) -> str:
 
 
 # Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from nba.config.database import get_players_db_config
 
 # Database configuration
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5536,
-    "database": "nba_players",
-    "user": os.getenv("DB_USER", "mlb_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
+DB_CONFIG = get_players_db_config()
 
 # NBA Stats API endpoint
 NBA_API_URL = "https://stats.nba.com/stats/commonplayerinfo"
@@ -98,7 +93,8 @@ def get_nba_player_position(player_id: int) -> str | None:
                     pos_idx = headers.index("POSITION")
                     return rows[0][pos_idx]
         return None
-    except Exception:
+    except (requests.RequestException, KeyError, IndexError, ValueError) as e:
+        print(f"  Warning: Failed to fetch position for player {player_id}: {e}")
         return None
 
 
@@ -122,7 +118,8 @@ def get_espn_roster() -> dict[str, str]:
                     positions[name] = position
 
             time.sleep(0.3)  # Rate limit
-        except Exception:
+        except (requests.RequestException, KeyError, ValueError) as e:
+            print(f"  Warning: Failed to fetch ESPN roster for team {team_id}: {e}")
             continue
 
     return positions

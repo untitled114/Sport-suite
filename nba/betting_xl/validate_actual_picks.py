@@ -15,20 +15,18 @@ Usage:
 
 import argparse
 import json
-import os
+import sys
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import psycopg2
 
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5539,
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-    "database": "nba_intelligence",
-}
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from nba.config.database import get_intelligence_db_config
+
+DB_CONFIG = get_intelligence_db_config()
 
 
 def load_picks_for_date(date_str: str) -> dict:

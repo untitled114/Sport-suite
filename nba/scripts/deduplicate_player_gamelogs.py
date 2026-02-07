@@ -14,23 +14,21 @@ Strategy:
 """
 
 import logging
-import os
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import psycopg2
+
+from nba.config.database import get_players_db_config
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Database config
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5536,
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-    "database": "nba_players",
-}
+DB_CONFIG = get_players_db_config()
 
 
 def analyze_duplicates(conn):

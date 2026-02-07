@@ -15,30 +15,22 @@ Usage:
 
 import argparse
 import logging
-import os
+import sys
 from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import psycopg2
+
+from nba.config.database import get_intelligence_db_config, get_players_db_config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Database configs
-PLAYERS_DB = {
-    "host": "localhost",
-    "port": 5536,
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-    "database": "nba_players",
-}
-
-INTEL_DB = {
-    "host": "localhost",
-    "port": 5539,
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-    "database": "nba_intelligence",
-}
+PLAYERS_DB = get_players_db_config()
+INTEL_DB = get_intelligence_db_config()
 
 # Stat type mapping from nba_props_xl to player_game_logs columns
 STAT_MAP = {
@@ -83,15 +75,18 @@ def backfill_results(start_date=None, end_date=None, specific_date=None):
     conn_players = psycopg2.connect(**PLAYERS_DB)
     conn_intel = psycopg2.connect(**INTEL_DB)
 
-    # Build date filter
+    # Build date filter with parameterized queries
+    date_filter = ""
+    date_params = []
     if specific_date:
-        date_filter = f"AND game_date = '{specific_date}'"
+        date_filter = "AND game_date = %s"
+        date_params.append(specific_date)
     elif start_date and end_date:
-        date_filter = f"AND game_date BETWEEN '{start_date}' AND '{end_date}'"
+        date_filter = "AND game_date BETWEEN %s AND %s"
+        date_params.extend([start_date, end_date])
     elif start_date:
-        date_filter = f"AND game_date >= '{start_date}'"
-    else:
-        date_filter = ""
+        date_filter = "AND game_date >= %s"
+        date_params.append(start_date)
 
     # Get props that need backfilling from nba_props_xl
     query_props = f"""
@@ -104,7 +99,7 @@ def backfill_results(start_date=None, end_date=None, specific_date=None):
     """
 
     cursor_intel = conn_intel.cursor()
-    cursor_intel.execute(query_props)
+    cursor_intel.execute(query_props, date_params or None)
     props_to_fill = cursor_intel.fetchall()
     cursor_intel.close()
 

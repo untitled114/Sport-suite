@@ -392,8 +392,8 @@ class Pick6Fetcher(BaseFetcher):
                     event_date = est_time.strftime("%Y-%m-%d")
                     if event_date == today:
                         today_events.append(event)
-                except ValueError:
-                    pass
+                except ValueError as e:
+                    logger.debug(f"Skipping event with unparseable date '{commence_time}': {e}")
 
         if self.verbose:
             logger.info(f"Fetching Pick6 props for {len(today_events)} games on {today}")
@@ -461,8 +461,8 @@ class Pick6Fetcher(BaseFetcher):
                     event_date = est_time.strftime("%Y-%m-%d")
                     if event_date == target_date:
                         target_events.append(event)
-                except ValueError:
-                    pass
+                except ValueError as e:
+                    logger.debug(f"Skipping event with unparseable date '{commence_time}': {e}")
 
         if self.verbose:
             logger.info(f"Fetching Pick6 props for {len(target_events)} games on {target_date}")

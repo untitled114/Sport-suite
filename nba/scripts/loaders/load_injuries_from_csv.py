@@ -13,23 +13,21 @@ LeBron James,Questionable,Ankle soreness
 """
 
 import csv
-import os
 import sys
 from datetime import datetime
+from pathlib import Path
 
 import psycopg2
+
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from nba.config.database import get_players_db_config
 
 
 def load_injuries_from_csv(csv_path):
     """Load injuries from CSV file"""
 
-    conn = psycopg2.connect(
-        host="localhost",
-        port=5536,
-        user=os.getenv("DB_USER", "nba_user"),
-        password=os.getenv("DB_PASSWORD"),
-        database="nba_players",
-    )
+    conn = psycopg2.connect(**get_players_db_config())
 
     cursor = conn.cursor()
 

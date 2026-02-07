@@ -32,6 +32,13 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+try:
+    from curl_cffi import requests as cffi_requests
+
+    HAS_CURL_CFFI = True
+except ImportError:
+    HAS_CURL_CFFI = False
+
 from nba.betting_xl.fetchers.base_fetcher import BaseFetcher
 
 logger = logging.getLogger(__name__)
@@ -123,6 +130,10 @@ class PrizePicksDirectFetcher(BaseFetcher):
         """
         Fetch projections from PrizePicks API.
 
+        Uses curl_cffi with browser TLS fingerprint impersonation to bypass
+        Cloudflare bot protection. Falls back to standard requests if curl_cffi
+        is not available.
+
         Returns:
             Raw API response dict or None on error
         """
@@ -132,72 +143,93 @@ class PrizePicksDirectFetcher(BaseFetcher):
             "state_code": self.state_code,
         }
 
-        # Randomize user agent
-        user_agents = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15",
-        ]
+        # Try curl_cffi first (bypasses Cloudflare)
+        if HAS_CURL_CFFI:
+            return self._fetch_with_curl_cffi(params)
 
-        headers = {
-            "User-Agent": random.choice(user_agents),
-            "Accept": "application/json",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Referer": "https://app.prizepicks.com/",
-            "Origin": "https://app.prizepicks.com",
-            "Connection": "keep-alive",
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-site",
-            "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-            "Sec-Ch-Ua-Mobile": "?0",
-            "Sec-Ch-Ua-Platform": '"Windows"',
-        }
+        # Fallback to standard requests
+        logger.warning("curl_cffi not available, falling back to requests (may get 403)")
+        return self._fetch_with_requests(params)
 
-        # Retry with exponential backoff for rate limiting
+    def _fetch_with_curl_cffi(self, params: Dict) -> Optional[Dict]:
+        """Fetch using curl_cffi with browser impersonation."""
         max_retries = 3
         for attempt in range(max_retries):
-            # Random delay before request
-            delay = random.uniform(1.0, 3.0) * (attempt + 1)
+            delay = random.uniform(0.5, 1.5)
             time.sleep(delay)
 
             try:
-                response = requests.get(
+                response = cffi_requests.get(
                     self.API_URL,
                     params=params,
+                    impersonate="chrome",
                     timeout=self.timeout,
-                    headers=headers,
                 )
 
-                # Check for rate limit or block
                 if response.status_code == 403:
                     logger.warning(
-                        f"PrizePicks 403 (attempt {attempt + 1}/{max_retries}), waiting..."
+                        f"PrizePicks 403 even with curl_cffi (attempt {attempt + 1}/{max_retries})"
                     )
-                    time.sleep(30 * (attempt + 1))  # Wait 30s, 60s, 90s
+                    if attempt < max_retries - 1:
+                        time.sleep(5 * (attempt + 1))
+                    continue
+
+                if response.status_code == 429:
+                    wait = 10 * (attempt + 1)
+                    logger.warning(f"PrizePicks rate limited, waiting {wait}s...")
+                    time.sleep(wait)
                     continue
 
                 response.raise_for_status()
                 data = response.json()
 
-                # Check for API error in response body
                 if isinstance(data, dict) and "error" in data:
                     logger.warning(f"PrizePicks API error: {data.get('error', 'unknown')}")
-                    time.sleep(30 * (attempt + 1))
                     continue
 
                 return data
 
-            except requests.RequestException as e:
-                logger.warning(f"Request failed (attempt {attempt + 1}/{max_retries}): {e}")
+            except Exception as e:
+                logger.warning(
+                    f"curl_cffi request failed (attempt {attempt + 1}/{max_retries}): {e}"
+                )
                 if attempt < max_retries - 1:
-                    time.sleep(30 * (attempt + 1))
-                continue
+                    time.sleep(3 * (attempt + 1))
 
         logger.error("Failed to fetch PrizePicks projections after all retries")
         return None
+
+    def _fetch_with_requests(self, params: Dict) -> Optional[Dict]:
+        """Fallback fetch using standard requests (likely blocked by Cloudflare)."""
+        headers = {
+            "User-Agent": random.choice(self.USER_AGENTS),
+            "Accept": "application/json",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://app.prizepicks.com/",
+            "Origin": "https://app.prizepicks.com",
+        }
+
+        try:
+            response = requests.get(
+                self.API_URL,
+                params=params,
+                timeout=self.timeout,
+                headers=headers,
+            )
+
+            if response.status_code == 403:
+                logger.warning(
+                    "PrizePicks 403 Forbidden (Cloudflare). "
+                    "Install curl_cffi: pip install curl_cffi"
+                )
+                return None
+
+            response.raise_for_status()
+            return response.json()
+
+        except requests.RequestException as e:
+            logger.warning(f"PrizePicks request failed: {e}")
+            return None
 
     def _build_lookups(self, included: List[Dict]) -> Dict[str, Dict]:
         """

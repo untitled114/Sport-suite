@@ -3,10 +3,15 @@
 Check current season data status for 2025-2026 NBA season
 """
 
-import os
+import sys
 from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import psycopg2
+
+from nba.config.database import get_games_db_config, get_players_db_config, get_team_db_config
 
 print("=" * 80)
 print("NBA 2025-2026 SEASON DATA STATUS CHECK")
@@ -17,29 +22,9 @@ print(f"Current date: {datetime.now().strftime('%Y-%m-%d')}")
 print()
 
 # Database connections
-DB_PLAYERS = {
-    "host": "localhost",
-    "port": 5536,
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-    "database": "nba_players",
-}
-
-DB_GAMES = {
-    "host": "localhost",
-    "port": 5537,
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-    "database": "nba_games",
-}
-
-DB_TEAM = {
-    "host": "localhost",
-    "port": 5538,
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-    "database": "nba_team",
-}
+DB_PLAYERS = get_players_db_config()
+DB_GAMES = get_games_db_config()
+DB_TEAM = get_team_db_config()
 
 # Check player data
 print("=" * 80)

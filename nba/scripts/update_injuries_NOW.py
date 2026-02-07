@@ -8,19 +8,18 @@ Usage:
     python3 nba/scripts/update_injuries_NOW.py
 """
 
-import os
+import sys
 from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import psycopg2
 import requests
 
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5539,  # nba_intelligence database (has injuries table)
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-    "database": "nba_intelligence",
-}
+from nba.config.database import get_intelligence_db_config, get_players_db_config
+
+DB_CONFIG = get_intelligence_db_config()
 
 
 def fetch_injuries():
@@ -79,14 +78,7 @@ def load_to_database(injuries):
         print(f"🗑️  Cleared today's injury data\n")
 
         # Connect to nba_players (port 5536) to get player_profile
-        player_db_config = {
-            "host": "localhost",
-            "port": 5536,
-            "user": os.getenv("DB_USER", "nba_user"),
-            "password": os.getenv("DB_PASSWORD"),
-            "database": "nba_players",
-        }
-        player_conn = psycopg2.connect(**player_db_config)
+        player_conn = psycopg2.connect(**get_players_db_config())
         player_cursor = player_conn.cursor()
 
         # Get all players for name matching (use DISTINCT ON to handle duplicates)

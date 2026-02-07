@@ -95,9 +95,15 @@ class JSONFormatter(logging.Formatter):
         }
 
         # Extract extra fields (anything not in reserved attrs)
+        # Redact fields that may contain sensitive data
+        _SENSITIVE_KEYWORDS = {"password", "secret", "token", "key", "credential", "api_key"}
         extra_fields = {}
         for key, value in record.__dict__.items():
             if key not in self.RESERVED_ATTRS and not key.startswith("_"):
+                # Redact sensitive fields
+                if any(s in key.lower() for s in _SENSITIVE_KEYWORDS):
+                    extra_fields[key] = "***REDACTED***"
+                    continue
                 # Ensure value is JSON serializable
                 try:
                     json.dumps(value)

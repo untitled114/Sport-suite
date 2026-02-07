@@ -55,7 +55,12 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.class_weight import compute_class_weight
 
-from nba.config.thresholds import FEATURE_PREPROCESSING, TEMPORAL_DECAY_CONFIG
+from nba.config.thresholds import (
+    BLEND_WEIGHTS,
+    FEATURE_PREPROCESSING,
+    TEMPORAL_DECAY_CONFIG,
+    TRAINING_HYPERPARAMETERS,
+)
 from nba.core.logging_config import get_logger, setup_logging
 
 # MLflow integration
@@ -508,18 +513,19 @@ class StackedMarketModel:
             elif game_dates_train is None:
                 logger.warning("Temporal decay enabled but game_dates not provided - skipping")
 
-        # Train regressor using sklearn API
+        # Train regressor using sklearn API (hyperparameters from centralized config)
+        hp = TRAINING_HYPERPARAMETERS
         self.regressor = LGBMRegressor(
             objective="regression",
             boosting_type="gbdt",
-            num_leaves=63,
-            learning_rate=0.02,
-            n_estimators=2000,
-            feature_fraction=0.8,
-            bagging_fraction=0.8,
-            bagging_freq=5,
+            num_leaves=hp.num_leaves,
+            learning_rate=hp.learning_rate,
+            n_estimators=hp.n_estimators,
+            feature_fraction=hp.feature_fraction,
+            bagging_fraction=hp.bagging_fraction,
+            bagging_freq=hp.bagging_freq,
             verbose=-1,
-            random_state=42,
+            random_state=hp.random_state,
         )
 
         self.regressor.fit(
@@ -616,18 +622,18 @@ class StackedMarketModel:
         # ==========================
         logger.info("HEAD 2: Training Classifier (P(actual > line) prediction)")
 
-        # Train classifier using sklearn API
+        # Train classifier using sklearn API (hyperparameters from centralized config)
         self.classifier = LGBMClassifier(
             objective="binary",
             boosting_type="gbdt",
-            num_leaves=63,
-            learning_rate=0.02,
-            n_estimators=2000,
-            feature_fraction=0.8,
-            bagging_fraction=0.8,
-            bagging_freq=5,
+            num_leaves=hp.num_leaves,
+            learning_rate=hp.learning_rate,
+            n_estimators=hp.n_estimators,
+            feature_fraction=hp.feature_fraction,
+            bagging_fraction=hp.bagging_fraction,
+            bagging_freq=hp.bagging_freq,
             verbose=-1,
-            random_state=42,
+            random_state=hp.random_state,
         )
 
         self.classifier.fit(
@@ -733,14 +739,16 @@ class StackedMarketModel:
         residual_test = y_pred_test - line_test
 
         # Scale factor tuned for typical prop magnitude
-        scale_factor = 5.0 if self.market in ["POINTS", "ASSISTS"] else 2.0
+        scale_factor = (
+            BLEND_WEIGHTS.residual_scale_factor if self.market in ["POINTS", "ASSISTS"] else 2.0
+        )
 
         prob_from_residual_train = expit(residual_train / scale_factor)
         prob_from_residual_test = expit(residual_test / scale_factor)
 
-        # Blend: 60% classifier, 40% residual-based probability
-        blend_weight_cls = 0.6
-        blend_weight_res = 0.4
+        # Blend weights from centralized config
+        blend_weight_cls = BLEND_WEIGHTS.classifier_weight
+        blend_weight_res = BLEND_WEIGHTS.residual_weight
 
         y_prob_blend_test = (
             blend_weight_cls * y_prob_test_cal + blend_weight_res * prob_from_residual_test

@@ -19,7 +19,6 @@ Usage:
 """
 
 import argparse
-import os
 import sys
 from collections import defaultdict
 from datetime import date
@@ -29,16 +28,12 @@ import psycopg2
 from tqdm import tqdm
 
 # Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from nba.config.database import get_intelligence_db_config
 
 # Database configuration
-DB_CONFIG_INTEL = {
-    "host": "localhost",
-    "port": 5539,
-    "database": "nba_intelligence",
-    "user": os.getenv("DB_USER", "mlb_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
+DB_CONFIG_INTEL = get_intelligence_db_config()
 
 
 def date_to_season(d: date) -> int:

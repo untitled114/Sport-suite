@@ -21,10 +21,16 @@ import logging
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from nba.config.database import get_games_db_config
 
 # Add utilities to path
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utilities"))
@@ -34,13 +40,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Database connection params
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5537,
-    "database": "nba_games",
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
+DB_CONFIG = get_games_db_config()
 
 
 def get_current_season() -> str:

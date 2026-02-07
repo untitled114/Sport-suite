@@ -133,7 +133,8 @@ class TwoEnergyGenerator:
                 over_line,
                 book_name,
                 consensus_line,
-                actual_value
+                actual_value,
+                opponent_team
             FROM nba_props_xl
             WHERE game_date = %s
               AND (odds_type = 'goblin' OR book_name = 'prizepicks_goblin')
@@ -150,7 +151,7 @@ class TwoEnergyGenerator:
         min_line_alt = config.get("min_line_alt")  # Alternative: line >= X bypasses deflation check
 
         for row in cursor.fetchall():
-            player_name, stat, line, book, consensus, actual = row
+            player_name, stat, line, book, consensus, actual, opponent_team = row
             line_val = float(line)
             consensus_val = float(consensus) if consensus else None
 
@@ -180,6 +181,7 @@ class TwoEnergyGenerator:
             if not passes_filter:
                 continue
 
+            opp = str(opponent_team) if opponent_team else None
             pick = {
                 "player_name": player_name,
                 "stat_type": stat,
@@ -191,6 +193,8 @@ class TwoEnergyGenerator:
                 "filter": f"goblin_{stat.lower()}_over",
                 "energy": "POSITIVE",
                 "actual_value": float(actual) if actual else None,
+                "opponent_team": opp,
+                "game_key": opp,
             }
             if actual is not None:
                 pick["result"] = "WIN" if actual > line_val else "LOSS"
@@ -210,7 +214,8 @@ class TwoEnergyGenerator:
                 over_line,
                 book_name,
                 consensus_line,
-                actual_value
+                actual_value,
+                opponent_team
             FROM nba_props_xl
             WHERE game_date = %s
               AND book_name = %s
@@ -225,8 +230,9 @@ class TwoEnergyGenerator:
 
         picks = []
         for row in cursor.fetchall():
-            player_name, stat, line, book_name, consensus, actual = row
+            player_name, stat, line, book_name, consensus, actual, opponent_team = row
             inflate = float(line) - float(consensus)
+            opp = str(opponent_team) if opponent_team else None
             pick = {
                 "player_name": player_name,
                 "stat_type": stat,
@@ -238,6 +244,8 @@ class TwoEnergyGenerator:
                 "filter": f"{book}_{stat.lower()}_under",
                 "energy": "NEGATIVE",
                 "actual_value": float(actual) if actual else None,
+                "opponent_team": opp,
+                "game_key": opp,
             }
             if actual is not None:
                 pick["result"] = "WIN" if actual < line else "LOSS"

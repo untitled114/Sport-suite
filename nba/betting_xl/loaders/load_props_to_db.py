@@ -31,6 +31,7 @@ from pymongo import MongoClient
 
 from nba.betting_xl.loaders.opponent_mapper import OpponentMapper
 from nba.betting_xl.utils.logging_config import add_logging_args, get_logger, setup_logging
+from nba.config.database import get_intelligence_db_config
 
 # Logger will be configured in main()
 logger = get_logger(__name__)
@@ -42,14 +43,7 @@ VALID_STAT_TYPES = {"POINTS", "REBOUNDS", "ASSISTS", "THREES"}
 # Database connections
 # IMPORTANT: Use port 5539 (nba_intelligence) - the ORIGINAL/LEGACY database
 # Port 5540 (nba_reference) is the consolidated DB that gives mixed/bad predictions
-DB_CONFIG = {
-    "host": os.getenv("NBA_INT_DB_HOST", "localhost"),
-    "port": int(os.getenv("NBA_INT_DB_PORT", 5539)),
-    "database": os.getenv("NBA_INT_DB_NAME", "nba_intelligence"),
-    "user": os.getenv("NBA_INT_DB_USER", os.getenv("DB_USER", "nba_user")),
-    "password": os.getenv("NBA_INT_DB_PASSWORD", os.getenv("DB_PASSWORD")),
-    "connect_timeout": int(os.getenv("NBA_DB_CONNECT_TIMEOUT", 10)),
-}
+DB_CONFIG = get_intelligence_db_config()
 
 
 def _build_mongo_uri() -> str:

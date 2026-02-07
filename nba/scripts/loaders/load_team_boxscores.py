@@ -1,28 +1,25 @@
 #!/usr/bin/env python3
-from pathlib import Path
-
 """
 Load team game log box score stats from NBA API
 Populates: fg_made, fg_attempted, three_pt_made, three_pt_attempted,
            ft_made, ft_attempted, rebounds, assists, turnovers
 """
 
-import os
 import sys
 from datetime import datetime
+from pathlib import Path
 
 import psycopg2
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from nba.config.database import get_games_db_config
 
 sys.path.append(str(Path(__file__).parent.parent.parent / "nba/scripts/utilities"))
 from nba_api_wrapper import NBAApiWrapper
 
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5537,
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-    "database": "nba_games",
-}
+DB_CONFIG = get_games_db_config()
 
 
 def main():

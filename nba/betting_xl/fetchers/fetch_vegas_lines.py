@@ -46,14 +46,12 @@ MARKET_IDS = {
     "moneyline": 127,
 }
 
-# Database config
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5537,
-    "database": "nba_games",
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from nba.config.database import get_games_db_config
+
+# Database config (centralized)
+DB_CONFIG = get_games_db_config()
 
 # Team abbreviation mapping (API -> Database)
 # BettingPros API uses different abbreviations than our database
@@ -66,6 +64,59 @@ TEAM_ABBREV_MAP = {
     "GS": "GSW",  # Golden State Warriors
     "NY": "NYK",  # New York Knicks
     "NO": "NOP",  # New Orleans (alternate)
+}
+
+# ESPN uses slightly different abbreviations
+ESPN_TEAM_MAP = {
+    "WSH": "WAS",
+    "SA": "SAS",
+    "GS": "GSW",
+    "UTAH": "UTA",
+    "NY": "NYK",
+    "NO": "NOP",
+    "PHO": "PHX",
+    "BRK": "BKN",
+    "NOR": "NOP",
+}
+
+ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+
+# The Odds API (premium key for historical, fallback for live)
+ODDS_API_KEY = os.getenv("ODDS_API_KEY")
+ODDS_API_BASE = "https://api.the-odds-api.com"
+
+# The Odds API uses full team names — map to our DB abbreviations
+ODDS_API_TEAM_MAP = {
+    "Atlanta Hawks": "ATL",
+    "Boston Celtics": "BOS",
+    "Brooklyn Nets": "BKN",
+    "Charlotte Hornets": "CHA",
+    "Chicago Bulls": "CHI",
+    "Cleveland Cavaliers": "CLE",
+    "Dallas Mavericks": "DAL",
+    "Denver Nuggets": "DEN",
+    "Detroit Pistons": "DET",
+    "Golden State Warriors": "GSW",
+    "Houston Rockets": "HOU",
+    "Indiana Pacers": "IND",
+    "Los Angeles Clippers": "LAC",
+    "Los Angeles Lakers": "LAL",
+    "Memphis Grizzlies": "MEM",
+    "Miami Heat": "MIA",
+    "Milwaukee Bucks": "MIL",
+    "Minnesota Timberwolves": "MIN",
+    "New Orleans Pelicans": "NOP",
+    "New York Knicks": "NYK",
+    "Oklahoma City Thunder": "OKC",
+    "Orlando Magic": "ORL",
+    "Philadelphia 76ers": "PHI",
+    "Phoenix Suns": "PHX",
+    "Portland Trail Blazers": "POR",
+    "Sacramento Kings": "SAC",
+    "San Antonio Spurs": "SAS",
+    "Toronto Raptors": "TOR",
+    "Utah Jazz": "UTA",
+    "Washington Wizards": "WAS",
 }
 
 
@@ -291,9 +342,242 @@ class VegasLinesFetcher:
 
         return result
 
+    def fetch_from_odds_api(self, historical: bool = False) -> List[Dict]:
+        """
+        Fetch vegas lines from The Odds API (premium).
+        Supports both live and historical endpoints.
+
+        Args:
+            historical: If True, use /v4/historical/ endpoint for past dates.
+
+        Returns:
+            List of game line dictionaries (same format as fetch_all_lines)
+        """
+        if not ODDS_API_KEY:
+            logger.warning("ODDS_API_KEY not set, skipping Odds API")
+            return []
+
+        if historical:
+            url = f"{ODDS_API_BASE}/v4/historical/sports/basketball_nba/odds"
+            # Historical endpoint wants a UTC timestamp
+            params = {
+                "apiKey": ODDS_API_KEY,
+                "regions": "us",
+                "markets": "spreads,totals",
+                "date": f"{self.date}T18:00:00Z",
+            }
+        else:
+            url = f"{ODDS_API_BASE}/v4/sports/basketball_nba/odds"
+            params = {
+                "apiKey": ODDS_API_KEY,
+                "regions": "us",
+                "markets": "spreads,totals",
+                "oddsFormat": "american",
+            }
+
+        logger.info(
+            f"Fetching from Odds API ({'historical' if historical else 'live'}) for {self.date}..."
+        )
+
+        try:
+            response = requests.get(url, params=params, timeout=30)
+            remaining = response.headers.get("x-requests-remaining", "?")
+            logger.info(f"Odds API credits remaining: {remaining}")
+
+            if response.status_code == 401:
+                logger.warning("Odds API: unauthorized or plan limitation")
+                return []
+            response.raise_for_status()
+            raw = response.json()
+        except (requests.RequestException, ValueError) as e:
+            logger.error(f"Odds API failed: {e}")
+            return []
+
+        # Historical wraps data in {"data": [...], "timestamp": ...}
+        games = raw.get("data", raw) if historical else raw
+        if not isinstance(games, list):
+            games = []
+
+        if not games:
+            logger.warning("Odds API returned no games")
+            return []
+
+        logger.info(f"Odds API: Found {len(games)} games")
+        all_lines = []
+
+        for game in games:
+            home_full = game.get("home_team", "")
+            away_full = game.get("away_team", "")
+            home_team = ODDS_API_TEAM_MAP.get(home_full, home_full)
+            away_team = ODDS_API_TEAM_MAP.get(away_full, away_full)
+
+            # For live endpoint, filter to today's games only
+            if not historical:
+                commence = game.get("commence_time", "")
+                if commence:
+                    try:
+                        utc_time = datetime.fromisoformat(commence.replace("Z", "+00:00"))
+                        est_time = utc_time - timedelta(hours=5)
+                        game_date = est_time.strftime("%Y-%m-%d")
+                        if game_date != self.date:
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+
+            spread_val = None
+            total_val = None
+
+            for bookmaker in game.get("bookmakers", []):
+                for market in bookmaker.get("markets", []):
+                    if market["key"] == "spreads":
+                        for outcome in market.get("outcomes", []):
+                            if outcome.get("name") == home_full:
+                                try:
+                                    spread_val = float(outcome.get("point", 0))
+                                except (TypeError, ValueError):
+                                    pass
+                                break
+                    elif market["key"] == "totals":
+                        for outcome in market.get("outcomes", []):
+                            if outcome.get("name") == "Over":
+                                try:
+                                    total_val = float(outcome.get("point", 0))
+                                except (TypeError, ValueError):
+                                    pass
+                                break
+                # Use first bookmaker with data
+                if spread_val is not None or total_val is not None:
+                    break
+
+            game_lines = {
+                "event_id": game.get("id"),
+                "game_date": self.date,
+                "home_team": home_team,
+                "away_team": away_team,
+                "scheduled": game.get("commence_time"),
+                "status": None,
+                "spread_consensus": spread_val,
+                "spread_opening": None,
+                "spread_best": None,
+                "spread_books": [],
+                "total_consensus": total_val,
+                "total_opening": None,
+                "total_best": None,
+                "total_books": [],
+                "fetch_timestamp": datetime.now().isoformat(),
+                "source": "odds_api",
+            }
+
+            all_lines.append(game_lines)
+
+            spread_str = f"{spread_val}" if spread_val is not None else "N/A"
+            total_str = f"{total_val}" if total_val is not None else "N/A"
+            logger.info(f"  {away_team} @ {home_team}: Spread={spread_str}, Total={total_str}")
+
+        logger.info(f"Odds API: {len(all_lines)} games with lines")
+        return all_lines
+
+    def fetch_from_espn(self) -> List[Dict]:
+        """
+        Fetch vegas lines from ESPN scoreboard API (free, no key required).
+        Used as fallback when BettingPros returns 403.
+
+        Returns:
+            List of game line dictionaries (same format as fetch_all_lines)
+        """
+        date_param = self.date.replace("-", "")
+        url = f"{ESPN_SCOREBOARD_URL}?dates={date_param}"
+        logger.info(f"Fetching from ESPN fallback for {self.date}...")
+
+        try:
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+        except (requests.RequestException, ValueError) as e:
+            logger.error(f"ESPN fallback failed: {e}")
+            return []
+
+        events = data.get("events", [])
+        if not events:
+            logger.warning("ESPN returned no events")
+            return []
+
+        logger.info(f"ESPN: Found {len(events)} games")
+        all_lines = []
+
+        for event in events:
+            competitions = event.get("competitions", [])
+            if not competitions:
+                continue
+
+            comp = competitions[0]
+            competitors = comp.get("competitors", [])
+            if len(competitors) < 2:
+                continue
+
+            # competitors: homeAway == "home" or "away"
+            home_team = None
+            away_team = None
+            for team_entry in competitors:
+                abbrev = team_entry.get("team", {}).get("abbreviation", "")
+                abbrev = ESPN_TEAM_MAP.get(abbrev, abbrev)
+                if team_entry.get("homeAway") == "home":
+                    home_team = abbrev
+                else:
+                    away_team = abbrev
+
+            if not home_team or not away_team:
+                continue
+
+            # Extract odds
+            spread_val = None
+            total_val = None
+            odds_list = comp.get("odds", [])
+            if odds_list:
+                odds = odds_list[0]
+                # spread is from home team perspective (negative = home favored)
+                try:
+                    spread_val = float(odds.get("spread", 0)) or None
+                except (TypeError, ValueError):
+                    spread_val = None
+                try:
+                    total_val = float(odds.get("overUnder", 0)) or None
+                except (TypeError, ValueError):
+                    total_val = None
+
+            game_lines = {
+                "event_id": event.get("id"),
+                "game_date": self.date,
+                "home_team": home_team,
+                "away_team": away_team,
+                "scheduled": event.get("date"),
+                "status": event.get("status", {}).get("type", {}).get("name"),
+                "spread_consensus": spread_val,
+                "spread_opening": None,
+                "spread_best": None,
+                "spread_books": [],
+                "total_consensus": total_val,
+                "total_opening": None,
+                "total_best": None,
+                "total_books": [],
+                "fetch_timestamp": datetime.now().isoformat(),
+                "source": "espn",
+            }
+
+            all_lines.append(game_lines)
+
+            spread_str = f"{spread_val}" if spread_val else "N/A"
+            total_str = f"{total_val}" if total_val else "N/A"
+            logger.info(f"  {away_team} @ {home_team}: Spread={spread_str}, Total={total_str}")
+
+        logger.info(f"ESPN fallback: {len(all_lines)} games with lines")
+        return all_lines
+
     def fetch_all_lines(self) -> List[Dict]:
         """
         Fetch all vegas lines for all games on the date.
+        Fallback chain: BettingPros -> Odds API (live) -> ESPN.
+        For historical dates, uses Odds API historical endpoint.
 
         Returns:
             List of game line dictionaries
@@ -302,8 +586,20 @@ class VegasLinesFetcher:
             self.fetch_events()
 
         if not self.events:
-            logger.warning("No events found")
-            return []
+            # Check if this is a past date (use historical endpoint)
+            try:
+                target = datetime.strptime(self.date, "%Y-%m-%d").date()
+                is_historical = target < datetime.now().date()
+            except ValueError:
+                is_historical = False
+
+            logger.info("BettingPros unavailable, trying Odds API fallback...")
+            lines = self.fetch_from_odds_api(historical=is_historical)
+            if lines:
+                return lines
+
+            logger.info("Odds API unavailable, trying ESPN fallback...")
+            return self.fetch_from_espn()
 
         all_lines = []
 

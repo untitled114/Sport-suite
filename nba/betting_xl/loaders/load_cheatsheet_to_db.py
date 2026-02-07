@@ -13,7 +13,6 @@ Usage:
 
 import argparse
 import json
-import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -21,14 +20,12 @@ from typing import Any, Dict, List, Optional
 
 import psycopg2
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from nba.config.database import get_intelligence_db_config
+
 # Database connection
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5539,
-    "database": "nba_intelligence",
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
+DB_CONFIG = get_intelligence_db_config()
 
 
 def get_db_connection():

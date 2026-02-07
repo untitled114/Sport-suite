@@ -23,7 +23,7 @@ Usage:
     python fetch_prizepicks.py --date 2026-01-30  # Specific date
 
 API Key (Premium 20K plan):
-    Set THEODDSAPI_KEY environment variable or it will read from odds-prem-api.txt
+    Set THEODDSAPI_KEY or ODDS_API_KEY environment variable
 """
 
 import logging
@@ -95,18 +95,12 @@ class PrizePicksFetcher(BaseFetcher):
 
         self.date = date or datetime.now().strftime("%Y-%m-%d")
 
-        # Get API key from environment or file
-        self.api_key = os.getenv("THEODDSAPI_KEY")
-        if not self.api_key:
-            # Try reading from root file (Sport-suite/odds-prem-api.txt)
-            api_file = Path(__file__).parents[3] / "odds-prem-api.txt"
-            if api_file.exists():
-                self.api_key = api_file.read_text().strip()
-
+        # Get API key from environment only (no plaintext file fallback)
+        self.api_key = os.getenv("THEODDSAPI_KEY") or os.getenv("ODDS_API_KEY")
         if not self.api_key:
             raise ValueError(
-                "The Odds API key not found. Set THEODDSAPI_KEY env var or "
-                "create odds-prem-api.txt in project root."
+                "The Odds API key not found. "
+                "Set THEODDSAPI_KEY or ODDS_API_KEY environment variable."
             )
 
     def get_todays_events(self) -> List[Dict[str, Any]]:
@@ -470,7 +464,7 @@ Examples:
 
 Note:
   Requires The Odds API key (Premium 20K plan recommended for full access).
-  Set THEODDSAPI_KEY environment variable or create odds-prem-api.txt in project root.
+  Set THEODDSAPI_KEY or ODDS_API_KEY environment variable.
         """,
     )
     parser.add_argument("--date", type=str, help="Date to fetch (YYYY-MM-DD). Defaults to today.")

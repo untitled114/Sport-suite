@@ -9,26 +9,36 @@ Usage:
 """
 
 import json
+import os
+import shlex
 import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 SCRIPT_DIR = Path(__file__).parent
 PROJECT_ROOT = SCRIPT_DIR.parent.parent
 PREDICTIONS_DIR = SCRIPT_DIR / "predictions"
-DATE_STR = datetime.now().strftime("%Y-%m-%d")
+
+# Force Eastern Time for all date calculations (NBA operates on EST)
+os.environ["TZ"] = "America/New_York"
+try:
+    time.tzset()
+except AttributeError:
+    pass  # Windows doesn't have tzset
+EASTERN = ZoneInfo("America/New_York")
+DATE_STR = datetime.now(EASTERN).strftime("%Y-%m-%d")
 
 
 def run_step(name, cmd, timeout=120):
     """Run a pipeline step, return (name, success, elapsed, output)."""
     t0 = time.time()
     try:
-        result = subprocess.run(  # nosec B602 - commands are hardcoded, not user input
-            cmd,
-            shell=True,
+        result = subprocess.run(
+            shlex.split(cmd),
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -101,8 +111,15 @@ def main():
                 timeout=30,
             )
 
-    # Phase 2: Parallel updates
-    print("\n[2/4] Updating context (parallel)...")
+    # Phase 2: Context updates
+    # Games must load first so vegas UPDATE finds existing rows
+    print("\n[2/4] Updating context...")
+    name, ok, elapsed, _ = run_step(
+        "Games", "python3 nba/scripts/loaders/load_nba_games_incremental.py", timeout=60
+    )
+    print(f"  Games: {'OK' if ok else 'SKIP'} ({elapsed:.0f}s)")
+
+    # Now injuries + vegas can run in parallel
     update_steps = {
         "Injuries": "python3 nba/scripts/update_injuries_NOW.py",
         "Vegas": f"python3 nba/betting_xl/fetchers/fetch_vegas_lines.py --date {DATE_STR} --save-to-db",
@@ -156,8 +173,9 @@ def main():
             if filepath.exists():
                 data = json.loads(filepath.read_text())
                 pick_counts[name] = data.get("total_picks", len(data.get("picks", [])))
-        except Exception:
-            pass
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"  Warning: Could not read {name} picks from {filepath.name}: {e}")
+            pick_counts[name] = 0
 
     # Summary
     total_elapsed = time.time() - t_start

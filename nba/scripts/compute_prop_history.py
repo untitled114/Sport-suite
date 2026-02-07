@@ -33,7 +33,6 @@ Date: January 2026
 import argparse
 import logging
 import math
-import os
 import sys
 from collections import defaultdict
 from datetime import date, datetime, timedelta
@@ -51,30 +50,14 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 LOG_DIR = PROJECT_ROOT / "nba" / "scripts" / "logs"
 
-# Database configuration (matches JSONCalibrator pattern)
-DB_INTELLIGENCE = {
-    "host": os.getenv("NBA_INT_DB_HOST", "localhost"),
-    "port": int(os.getenv("NBA_INT_DB_PORT", 5539)),
-    "user": os.getenv(
-        "NBA_INT_DB_USER", os.getenv("NBA_DB_USER", os.getenv("DB_USER", "nba_user"))
-    ),
-    "password": os.getenv(
-        "NBA_INT_DB_PASSWORD", os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
-    ),
-    "database": os.getenv("NBA_INT_DB_NAME", "nba_intelligence"),
-}
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from nba.config.database import get_intelligence_db_config, get_team_db_config
 
-DB_TEAM = {
-    "host": os.getenv("NBA_TEAM_DB_HOST", "localhost"),
-    "port": int(os.getenv("NBA_TEAM_DB_PORT", 5538)),
-    "user": os.getenv(
-        "NBA_TEAM_DB_USER", os.getenv("NBA_DB_USER", os.getenv("DB_USER", "nba_user"))
-    ),
-    "password": os.getenv(
-        "NBA_TEAM_DB_PASSWORD", os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
-    ),
-    "database": os.getenv("NBA_TEAM_DB_NAME", "nba_team"),
-}
+# Database configuration (centralized)
+DB_INTELLIGENCE = get_intelligence_db_config()
+
+DB_TEAM = get_team_db_config()
 
 
 class PropHistoryLearner:

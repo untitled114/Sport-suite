@@ -14,7 +14,6 @@ Usage:
 
 import argparse
 import json
-import os
 import pickle
 import sys
 from collections import defaultdict
@@ -25,6 +24,7 @@ import numpy as np
 import pandas as pd
 import psycopg2
 
+from nba.config.database import get_intelligence_db_config, get_players_db_config
 from nba.core.logging_config import get_logger, setup_logging
 from nba.features.extract_live_features_xl import LiveFeatureExtractorXL
 
@@ -32,21 +32,8 @@ from nba.features.extract_live_features_xl import LiveFeatureExtractorXL
 logger = get_logger(__name__)
 
 # Database connections
-DB_INTELLIGENCE = {
-    "host": "localhost",
-    "port": 5539,
-    "database": "nba_intelligence",
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
-
-DB_PLAYERS = {
-    "host": "localhost",
-    "port": 5536,
-    "database": "nba_players",
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
+DB_INTELLIGENCE = get_intelligence_db_config()
+DB_PLAYERS = get_players_db_config()
 
 MODELS_DIR = Path(__file__).parent.parent / "models" / "saved_xl"
 OUTPUT_DIR = Path(__file__).parent

@@ -19,34 +19,21 @@ Usage:
 import argparse
 import json
 import logging
-import os
 import time
 from datetime import datetime, timedelta
 
 import psycopg2
 import requests
 
+from nba.config.database import get_games_db_config, get_players_db_config
 from nba.utils.team_utils import normalize_team_abbrev
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
 # Database configs
-DB_PLAYERS = {
-    "host": "localhost",
-    "port": 5536,
-    "database": "nba_players",
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
-
-DB_GAMES = {
-    "host": "localhost",
-    "port": 5537,
-    "database": "nba_games",
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
+DB_PLAYERS = get_players_db_config()
+DB_GAMES = get_games_db_config()
 
 # ESPN NBA API
 ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"

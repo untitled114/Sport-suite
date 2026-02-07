@@ -5,6 +5,7 @@ NBA Betting Picks Commands for Cephalon Axiom
 
 import asyncio
 import json
+import logging
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -18,7 +19,7 @@ from discord.ext import tasks
 NBA_PROJECT = "/home/sportsuite/sport-suite"
 PREDICTIONS_DIR = f"{NBA_PROJECT}/nba/betting_xl/predictions"
 VENV_ACTIVATE = f"source {NBA_PROJECT}/venv/bin/activate"
-ENV_SETUP = f"source {NBA_PROJECT}/.env && export DB_USER DB_PASSWORD BETTINGPROS_API_KEY ODDS_API_KEY TERM=xterm"
+ENV_SETUP = f"source {NBA_PROJECT}/.env && export DB_USER DB_PASSWORD BETTINGPROS_API_KEY ODDS_API_KEY THEODDSAPI_KEY TERM=xterm TZ=America/New_York"
 
 NBA_OWNER_ID = 759254862423916564
 NBA_ADMIN_IDS = []
@@ -40,7 +41,9 @@ def _is_admin(user_id: int) -> bool:
 
 
 def _get_today_str() -> str:
-    return datetime.now().strftime("%Y-%m-%d")
+    from zoneinfo import ZoneInfo
+
+    return datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
 
 def _get_picks_file(date_str: str = None) -> Path:
@@ -57,48 +60,87 @@ def _load_picks(date_str: str = None) -> Optional[dict]:
     pro_picks = []
 
     # Load XL picks
-    if xl_file.exists():
-        try:
-            with open(xl_file) as f:
-                xl_data = json.load(f)
-        except Exception:
-            pass
+    try:
+        with open(xl_file) as f:
+            xl_data = json.load(f)
+    except FileNotFoundError:
+        pass
+    except (json.JSONDecodeError, IOError) as e:
+        logging.warning(f"Failed to load XL picks from {xl_file}: {e}")
 
     # Load PRO picks
-    if pro_file.exists():
-        try:
-            with open(pro_file) as f:
-                pro_data = json.load(f)
-                pro_picks = pro_data.get("picks", []) if isinstance(pro_data, dict) else pro_data
-                # Normalize PRO picks to match XL format
-                for p in pro_picks:
-                    p["source"] = "PRO"
-                    p["model_version"] = "pro"
-                    # Map PRO fields to XL fields
-                    if "line" in p and "best_line" not in p:
-                        p["best_line"] = p["line"]
-                    if "projection" in p and "prediction" not in p:
-                        p["prediction"] = p["projection"]
-                    if "platform" in p and "best_book" not in p:
-                        p["best_book"] = p["platform"]
-                    if "ev_pct" in p and "edge_pct" not in p:
-                        p["edge_pct"] = p["ev_pct"]
-                    if "projection_diff" in p and "edge" not in p:
-                        p["edge"] = p["projection_diff"]
-                    if "probability" in p and "p_over" not in p:
-                        p["p_over"] = p["probability"]
-                    if "consensus_line" not in p:
-                        p["consensus_line"] = p.get("line", 0)
-                    if "num_books" not in p:
-                        p["num_books"] = 1
-                    if "opponent_team" not in p:
-                        p["opponent_team"] = "OPP"
-                    if "filter_tier" not in p:
-                        p["filter_tier"] = p.get("filter_name", "PRO")
-        except Exception:
-            pass
+    try:
+        with open(pro_file) as f:
+            pro_data = json.load(f)
+            pro_picks = pro_data.get("picks", []) if isinstance(pro_data, dict) else pro_data
+            # Normalize PRO picks to match XL format
+            for p in pro_picks:
+                p["source"] = "PRO"
+                p["model_version"] = "pro"
+                # Map PRO fields to XL fields
+                if "line" in p and "best_line" not in p:
+                    p["best_line"] = p["line"]
+                if "projection" in p and "prediction" not in p:
+                    p["prediction"] = p["projection"]
+                if "platform" in p and "best_book" not in p:
+                    p["best_book"] = p["platform"]
+                if "ev_pct" in p and "edge_pct" not in p:
+                    p["edge_pct"] = p["ev_pct"]
+                if "projection_diff" in p and "edge" not in p:
+                    p["edge"] = p["projection_diff"]
+                if "probability" in p and "p_over" not in p:
+                    p["p_over"] = p["probability"]
+                if "consensus_line" not in p:
+                    p["consensus_line"] = p.get("line", 0)
+                if "num_books" not in p:
+                    p["num_books"] = 1
+                if "opponent_team" not in p:
+                    p["opponent_team"] = "OPP"
+                if "filter_tier" not in p:
+                    p["filter_tier"] = p.get("filter_name", "PRO")
+    except FileNotFoundError:
+        pass
+    except (json.JSONDecodeError, IOError) as e:
+        logging.warning(f"Failed to load PRO picks from {pro_file}: {e}")
 
-    if not xl_data and not pro_picks:
+    # Load Two Energy picks
+    te_file = Path(f"{PREDICTIONS_DIR}/two_energy_picks_{date}.json")
+    te_picks = []
+    try:
+        with open(te_file) as f:
+            te_data = json.load(f)
+            te_picks = te_data.get("picks", []) if isinstance(te_data, dict) else te_data
+            for p in te_picks:
+                p["source"] = "TWO_ENERGY"
+                p["model_version"] = "two_energy"
+                if "line" in p and "best_line" not in p:
+                    p["best_line"] = p["line"]
+                if "book" in p and "best_book" not in p:
+                    p["best_book"] = p["book"]
+                if "filter_tier" not in p:
+                    p["filter_tier"] = p.get("energy", "TWO_ENERGY")
+                if "consensus_line" not in p:
+                    p["consensus_line"] = p.get("line", 0)
+                if "prediction" not in p:
+                    p["prediction"] = p.get("line", 0)
+                if "edge" not in p:
+                    p["edge"] = p.get("deflation", p.get("line_inflate", 0))
+                if "edge_pct" not in p:
+                    line_val = p.get("line", 1)
+                    p["edge_pct"] = (p["edge"] / line_val * 100) if line_val else 0
+                if "p_over" not in p:
+                    wr = p.get("expected_wr", 75)
+                    p["p_over"] = wr / 100.0
+                if "num_books" not in p:
+                    p["num_books"] = 1
+                if "opponent_team" not in p:
+                    p["opponent_team"] = p.get("game_key", "OPP")
+    except FileNotFoundError:
+        pass
+    except (json.JSONDecodeError, IOError) as e:
+        logging.warning(f"Failed to load Two Energy picks from {te_file}: {e}")
+
+    if not xl_data and not pro_picks and not te_picks:
         return None
 
     # Merge picks
@@ -107,12 +149,13 @@ def _load_picks(date_str: str = None) -> Optional[dict]:
         for p in xl_picks:
             if "source" not in p:
                 p["source"] = "XL"
-        all_picks = xl_picks + pro_picks
+        all_picks = xl_picks + pro_picks + te_picks
         xl_data["picks"] = all_picks
         xl_data["total_picks"] = len(all_picks)
         return xl_data
     else:
-        return {"picks": pro_picks, "total_picks": len(pro_picks)}
+        all_picks = pro_picks + te_picks
+        return {"picks": all_picks, "total_picks": len(all_picks)}
 
 
 def _strip_ansi(text: str) -> str:
@@ -125,6 +168,7 @@ def _strip_ansi(text: str) -> str:
 
 
 async def _run_command(command: str, timeout: int = 600) -> tuple[bool, str]:
+    proc = None
     try:
         proc = await asyncio.create_subprocess_shell(
             command,
@@ -134,11 +178,18 @@ async def _run_command(command: str, timeout: int = 600) -> tuple[bool, str]:
             executable="/bin/bash",
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        output = stdout.decode() if proc.returncode == 0 else stderr.decode()
+        output = (
+            stdout.decode()
+            if proc.returncode == 0
+            else (stderr.decode() or stdout.decode()[-2000:])
+        )
         # Strip ANSI escape codes for clean Discord display
         output = _strip_ansi(output)
         return proc.returncode == 0, output
     except asyncio.TimeoutError:
+        if proc is not None:
+            proc.kill()
+            await proc.wait()
         return False, "Command timed out"
     except Exception as e:
         return False, str(e)
@@ -243,6 +294,24 @@ def _format_pick_card(pick: dict) -> discord.Embed:
     if risk_level and risk_level not in ("LOW", "MEDIUM", ""):
         stake_str += f" ({risk_level})"
     desc_lines.append(stake_str)
+
+    # Blowout risk warning
+    blowout = pick.get("blowout_risk")
+    if blowout:
+        level = blowout["level"]
+        spread = blowout["abs_spread"]
+        if level == "EXTREME":
+            desc_lines.append(f"**!! BLOWOUT RISK** (spread {spread:.0f}) - bench risk")
+        elif level == "HIGH":
+            desc_lines.append(f"**! BLOWOUT RISK** (spread {spread:.0f})")
+        else:
+            desc_lines.append(f"**~ Blowout Watch** (spread {spread:.0f})")
+
+    # Same-game correlation warning
+    same_game = pick.get("same_game_players", [])
+    if same_game:
+        names = ", ".join(same_game[:3])
+        desc_lines.append(f"**Same game as:** {names}")
 
     embed.description = "\n".join(desc_lines)
 
@@ -361,23 +430,111 @@ def _format_summary_embed(data: dict) -> discord.Embed:
         market_lines.append(f"Consensus: **{both_agree_count}**")
     embed.add_field(name="By Market", value="\n".join(market_lines) or "-", inline=True)
 
-    # Top pick preview
+    # Top 3 picks preview
     if picks:
-        top = picks[0]
-        player = top.get("player_name", "?")
-        market = top.get("stat_type", top.get("market", "?"))
-        line = top.get("best_line", 0)
-        side = top.get("side", "OVER")
-        edge_pct = top.get("edge_pct", 0)
+        top_lines = []
+        for p in picks[:3]:
+            player = p.get("player_name", "?")
+            market = p.get("stat_type", p.get("market", "?"))
+            line = p.get("best_line", 0)
+            side = p.get("side", "OVER")
+            edge_pct = p.get("edge_pct", 0)
+            top_lines.append(f"**{player}** {side} {line} {market} ({edge_pct:+.1f}%)")
         embed.add_field(
-            name="Top Pick",
-            value=f"**{player}** {side} {line} {market} ({edge_pct:+.1f}%)",
+            name="Top Picks",
+            value="\n".join(top_lines),
+            inline=False,
+        )
+
+    # Blowout Watch section
+    blowout_picks = [p for p in picks if p.get("blowout_risk")]
+    if blowout_picks:
+        bl_lines = []
+        for p in sorted(blowout_picks, key=lambda x: x["blowout_risk"]["abs_spread"], reverse=True)[
+            :5
+        ]:
+            level = p["blowout_risk"]["level"]
+            spread = p["blowout_risk"]["abs_spread"]
+            bl_lines.append(f"{p['player_name']}: {level} (spread {spread:.0f})")
+        embed.add_field(name="Blowout Watch", value="\n".join(bl_lines), inline=False)
+
+    # Same-Game Groups section (don't parlay together)
+    game_groups = {}
+    for p in picks:
+        gk = p.get("game_key")
+        if gk:
+            game_groups.setdefault(gk, []).append(p["player_name"])
+    multi = {k: v for k, v in game_groups.items() if len(v) > 1}
+    if multi:
+        gg_lines = []
+        for gk, players in list(multi.items())[:4]:
+            gg_lines.append(f"**{gk}**: {', '.join(players[:4])}")
+        embed.add_field(
+            name="Same-Game Groups (don't parlay together)",
+            value="\n".join(gg_lines),
             inline=False,
         )
 
     embed.set_footer(text="/nba-detail for full cards")
     embed.timestamp = datetime.now(timezone.utc)
     return embed
+
+
+class PickPaginator(discord.ui.View):
+    """Paginated view for browsing pick cards with Prev/Next buttons."""
+
+    def __init__(
+        self, picks: list, summary_embed: discord.Embed, per_page: int = 5, timeout: int = 600
+    ):
+        super().__init__(timeout=timeout)
+        self.picks = picks
+        self.summary_embed = summary_embed
+        self.per_page = per_page
+        self.page = 0
+        self.total_pages = max(1, (len(picks) + per_page - 1) // per_page)
+        self._update_buttons()
+
+    def _update_buttons(self):
+        self.prev_btn.disabled = self.page <= 0
+        self.next_btn.disabled = self.page >= self.total_pages - 1
+        self.page_indicator.label = f"{self.page + 1}/{self.total_pages}"
+
+    def get_embeds(self) -> list:
+        start = self.page * self.per_page
+        end = min(start + self.per_page, len(self.picks))
+        embeds = []
+        if self.page == 0:
+            embeds.append(self.summary_embed)
+        else:
+            header = discord.Embed(
+                description=f"Page {self.page + 1}/{self.total_pages} | Picks {start + 1}-{end} of {len(self.picks)}",
+                color=COLOR_BLUE,
+            )
+            embeds.append(header)
+        for pick in self.picks[start:end]:
+            embeds.append(_format_pick_card(pick))
+        return embeds
+
+    @discord.ui.button(label="<", style=discord.ButtonStyle.secondary)
+    async def prev_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = max(0, self.page - 1)
+        self._update_buttons()
+        await interaction.response.edit_message(embeds=self.get_embeds(), view=self)
+
+    @discord.ui.button(label="1/1", style=discord.ButtonStyle.secondary, disabled=True)
+    async def page_indicator(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pass  # Non-interactive page label
+
+    @discord.ui.button(label=">", style=discord.ButtonStyle.primary)
+    async def next_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = min(self.total_pages - 1, self.page + 1)
+        self._update_buttons()
+        await interaction.response.edit_message(embeds=self.get_embeds(), view=self)
+
+    async def on_timeout(self):
+        self.prev_btn.disabled = True
+        self.next_btn.disabled = True
+        self.page_indicator.label = "Expired"
 
 
 # ==================== COMMANDS ====================
@@ -400,7 +557,7 @@ def register(bot):
         await interaction.followup.send(embed=_format_summary_embed(data))
 
     @bot.tree.command(name="nba-detail", description="Show detailed NBA pick cards")
-    @app_commands.describe(count="Number of picks (1-25, default all)")
+    @app_commands.describe(count="Number of picks (default all)")
     async def nba_detail(interaction: discord.Interaction, count: int = 0):
         await interaction.response.defer()
         data = _load_picks()
@@ -412,17 +569,19 @@ def register(bot):
             return
 
         picks = data.get("picks", [])
+        if count > 0:
+            picks = picks[:count]
 
-        # Default to all picks, max 25
-        if count <= 0:
-            count = len(picks)
-        count = max(1, min(count, 25))
+        summary = _format_summary_embed(data)
 
-        await interaction.followup.send(embed=_format_summary_embed(data))
-        for pick in picks[:count]:
-            await interaction.channel.send(embed=_format_pick_card(pick))
-        if len(picks) > count:
-            await interaction.channel.send(f"*+{len(picks) - count} more picks*")
+        if len(picks) <= 5:
+            # Few enough to show all at once (no pagination needed)
+            embeds = [summary] + [_format_pick_card(p) for p in picks]
+            await interaction.followup.send(embeds=embeds)
+        else:
+            # Paginate: 5 picks per page with Prev/Next buttons
+            view = PickPaginator(picks, summary)
+            await interaction.followup.send(embeds=view.get_embeds(), view=view)
 
     @bot.tree.command(name="nba-refresh", description="Quick refresh lines and picks (~1 min)")
     async def nba_refresh(interaction: discord.Interaction):
@@ -433,8 +592,8 @@ def register(bot):
         embed = discord.Embed(title="Refreshing", description="Updating lines...", color=COLOR_BLUE)
         await interaction.followup.send(embed=embed)
 
-        cmd = f"cd {NBA_PROJECT} && {VENV_ACTIVATE} && {ENV_SETUP} && ./nba/nba-predictions.sh refresh"
-        success, output = await _run_command(cmd, timeout=300)
+        cmd = f"cd {NBA_PROJECT} && {VENV_ACTIVATE} && {ENV_SETUP} && python3 nba/betting_xl/quick_refresh.py"
+        success, output = await _run_command(cmd, timeout=600)
 
         if success:
             data = _load_picks()
@@ -616,15 +775,14 @@ def start_scheduled_tasks(bot):
             return
 
         picks = data.get("picks", [])
-        await owner.send(embed=_format_summary_embed(data))
+        summary = _format_summary_embed(data)
 
-        # Send ALL picks (up to 25 to avoid rate limits)
-        for pick in picks[:25]:
-            await owner.send(embed=_format_pick_card(pick))
-            await asyncio.sleep(0.5)  # Small delay to avoid rate limits
-
-        if len(picks) > 25:
-            await owner.send(f"*+{len(picks)-25} more picks (use /nba-detail in server)*")
+        if len(picks) <= 5:
+            embeds = [summary] + [_format_pick_card(p) for p in picks]
+            await owner.send(embeds=embeds)
+        else:
+            view = PickPaginator(picks, summary, timeout=1800)
+            await owner.send(embeds=view.get_embeds(), view=view)
 
     @auto_post.before_loop
     async def before():

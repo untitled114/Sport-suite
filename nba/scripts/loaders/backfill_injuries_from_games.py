@@ -18,39 +18,29 @@ Usage:
 
 import argparse
 import logging
-import os
+import sys
 from collections import defaultdict
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import psycopg2
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from nba.config.database import (
+    get_games_db_config,
+    get_intelligence_db_config,
+    get_players_db_config,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Database configs
-DB_PLAYERS = {
-    "host": "localhost",
-    "port": 5536,
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-    "database": "nba_players",
-}
-
-DB_GAMES = {
-    "host": "localhost",
-    "port": 5537,
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-    "database": "nba_games",
-}
-
-DB_INTELLIGENCE = {
-    "host": "localhost",
-    "port": 5539,
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-    "database": "nba_intelligence",
-}
+DB_PLAYERS = get_players_db_config()
+DB_GAMES = get_games_db_config()
+DB_INTELLIGENCE = get_intelligence_db_config()
 
 # Players must have played within this window to be considered "active"
 ACTIVE_WINDOW_DAYS = 14

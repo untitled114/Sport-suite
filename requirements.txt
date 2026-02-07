@@ -26,6 +26,7 @@ pytz>=2024.1
 
 # HTTP Requests
 requests>=2.28.0,<3.0.0
+curl_cffi>=0.7.0  # Cloudflare bypass for PrizePicks API
 
 # API Framework
 fastapi>=0.109.0,<1.0.0

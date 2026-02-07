@@ -11,26 +11,25 @@ Usage:
 
 import argparse
 import logging
-import os
+import sys
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import pandas as pd
 import psycopg2
 import requests
 from psycopg2.extras import execute_values
 
+from nba.config.database import get_players_db_config
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Database connection
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5536,
-    "database": "nba_players",
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
+DB_CONFIG = get_players_db_config()
 
 # NBA Stats API config
 NBA_STATS_API = "https://stats.nba.com/stats/playergamelogs"
