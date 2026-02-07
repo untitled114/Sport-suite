@@ -37,6 +37,31 @@ echo "Remote: $REMOTE_DIR"
 [ -n "$DRY_RUN" ] && echo "Mode: DRY RUN (no changes will be made)"
 echo ""
 
+# Pre-flight checks
+echo "=== Pre-flight checks ==="
+
+# Verify SSH connectivity
+ssh -o ConnectTimeout=10 -o BatchMode=yes $SERVER "echo ok" > /dev/null 2>&1 || {
+  echo "[ERROR] Cannot connect to $SERVER via SSH"
+  exit 1
+}
+echo "[OK] SSH connection"
+
+# Verify remote .env exists (will not be overwritten since it's excluded)
+ssh $SERVER "test -f $REMOTE_DIR/.env" || {
+  echo "[ERROR] Remote .env file missing at $REMOTE_DIR/.env"
+  exit 1
+}
+echo "[OK] Remote .env exists"
+
+# Check remote disk space (fail if < 500MB free)
+REMOTE_FREE_KB=$(ssh $SERVER "df --output=avail $REMOTE_DIR 2>/dev/null | tail -1" 2>/dev/null || echo "0")
+if [ "$REMOTE_FREE_KB" -lt 512000 ] 2>/dev/null; then
+  echo "[WARNING] Low disk space on remote: ${REMOTE_FREE_KB}KB free"
+fi
+
+echo ""
+
 # Sync code (excludes data, logs, venv, secrets)
 rsync -avz --delete $DRY_RUN \
   --exclude='.git' \
@@ -83,6 +108,23 @@ if [ "$RESTART" = true ]; then
   }
   echo "[OK] Services running"
 fi
+
+# Post-deploy verification
+echo ""
+echo "=== Post-deploy verification ==="
+ssh $SERVER "cd $REMOTE_DIR && source venv/bin/activate && python3 -c '
+import sys
+sys.path.insert(0, \".\")
+try:
+    from nba.config.database import get_intelligence_db_config
+    from nba.betting_xl.xl_predictor import XLPredictor
+    print(\"[OK] Core imports successful\")
+except ImportError as e:
+    print(f\"[ERROR] Import failed: {e}\")
+    sys.exit(1)
+'" || {
+  echo "[WARNING] Post-deploy verification failed - check remote Python environment"
+}
 
 echo ""
 echo "=== Deployment complete ==="

@@ -10,24 +10,22 @@ Usage:
 import argparse
 import json
 import logging
-import os
+import sys
 from datetime import datetime
 from pathlib import Path
 
 import psycopg2
 from psycopg2.extras import execute_values
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from nba.config.database import get_intelligence_db_config
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Database configuration
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5539,
-    "database": "nba_intelligence",
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
+DB_CONFIG = get_intelligence_db_config()
 
 # Valid stat types for cheatsheet
 VALID_STAT_TYPES = {"POINTS", "REBOUNDS", "ASSISTS", "THREES", "STEALS", "BLOCKS"}

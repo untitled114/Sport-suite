@@ -43,8 +43,9 @@ def _notify(title: str, message: str, urgency: str = "normal"):
                 capture_output=True,
             )
             return
-        except Exception:
-            pass  # Fall through to logging
+        except OSError as e:
+            logger.debug(f"Desktop notification unavailable: {e}")
+            # Fall through to logging
 
     # Fallback: log the notification
     log_level = logging.WARNING if urgency == "critical" else logging.INFO

@@ -225,8 +225,8 @@ class CheatSheetFetcher(BaseFetcher):
                         # Only include teams if game is on requested date
                         if game_date != self.date:
                             continue
-                    except (ValueError, AttributeError):
-                        pass
+                    except (ValueError, AttributeError) as e:
+                        logger.debug(f"Could not parse game date '{game_date_str}': {e}")
 
                 # Add both teams
                 for competitor in competitors:

@@ -16,28 +16,20 @@ Usage:
 """
 
 import argparse
-import os
+import sys
 from collections import defaultdict
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import psycopg2
 
-# Database configs
-INTELLIGENCE_DB = {
-    "host": "localhost",
-    "port": 5539,
-    "database": "nba_intelligence",
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-PLAYERS_DB = {
-    "host": "localhost",
-    "port": 5536,
-    "database": "nba_players",
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
+from nba.config.database import get_intelligence_db_config, get_players_db_config
+
+# Database configs
+INTELLIGENCE_DB = get_intelligence_db_config()
+PLAYERS_DB = get_players_db_config()
 
 
 def get_cheatsheet_with_actuals(

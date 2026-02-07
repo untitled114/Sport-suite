@@ -5,20 +5,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import psycopg2
 
-DB_PLAYERS = {
-    "host": "localhost",
-    "port": 5536,
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-    "database": "nba_players",
-}
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from nba.config.database import get_players_db_config
+
+DB_PLAYERS = get_players_db_config()
 
 STAT_COLUMN_MAP = {
     "POINTS": "points",

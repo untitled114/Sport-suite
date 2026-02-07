@@ -15,30 +15,23 @@ Usage:
 """
 
 import logging
-import os
+import sys
+from pathlib import Path
 
 import psycopg2
 from psycopg2.extras import execute_batch
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from nba.config.database import get_games_db_config, get_players_db_config
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Database connections
-PLAYERS_DB = {
-    "host": "localhost",
-    "port": 5536,
-    "database": "nba_players",
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
-
-GAMES_DB = {
-    "host": "localhost",
-    "port": 5537,
-    "database": "nba_games",
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
+PLAYERS_DB = get_players_db_config()
+GAMES_DB = get_games_db_config()
 
 
 def aggregate_team_shooting_stats():

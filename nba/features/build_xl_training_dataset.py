@@ -25,7 +25,6 @@ Usage:
 """
 
 import argparse
-import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -36,29 +35,23 @@ import pandas as pd
 import psycopg2
 from tqdm import tqdm
 
-# Add parent directory to path to import feature extractors
-sys.path.append(str(Path(__file__).parent.parent))
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from features.extract_live_features import LiveFeatureExtractor
 from features.extract_live_features_xl import LiveFeatureExtractorXL
 
-# Database configuration
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5539,  # FIXED: nba_intelligence has full 2.2M props (was 5540 with only 439K)
-    "database": "nba_intelligence",  # FIXED: correct database for historical props
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
+from nba.config.database import (
+    get_games_db_config,
+    get_intelligence_db_config,
+    get_players_db_config,
+)
+
+# Database configuration (centralized)
+DB_CONFIG = get_intelligence_db_config()
 
 # Games database (for schedule lookup - second pass opponent_team enrichment)
-GAMES_DB_CONFIG = {
-    "host": "localhost",
-    "port": 5537,  # nba_games database
-    "database": "nba_games",
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
+GAMES_DB_CONFIG = get_games_db_config()
 
 import re
 
@@ -269,14 +262,8 @@ class XLDatasetBuilder:
         if self.verbose:
             print("\n🏠 Enriching is_home and opponent_team from player_game_logs...")
 
-        # Connect to nba_reference database
-        conn_players = psycopg2.connect(
-            host="localhost",
-            port=5540,
-            database="nba_reference",
-            user=os.getenv("DB_USER", "nba_user"),
-            password=os.getenv("DB_PASSWORD"),
-        )
+        # Connect to players database (centralized config)
+        conn_players = psycopg2.connect(**get_players_db_config())
 
         try:
             # Get unique (player_name, game_date) pairs that need enrichment

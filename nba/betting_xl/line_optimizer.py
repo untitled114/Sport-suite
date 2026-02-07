@@ -8,7 +8,6 @@ Part of Phase 5: XL Betting Pipeline (Task 5.2)
 """
 
 import logging
-import os
 from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
@@ -16,6 +15,7 @@ import psycopg2
 
 # Centralized configuration (available for future migration)
 # TODO: Migrate hardcoded values below to use config.thresholds
+from nba.config.database import get_intelligence_db_config
 from nba.config.thresholds import (
     POINTS_CONFIG,
     REBOUNDS_CONFIG,
@@ -99,12 +99,11 @@ REBOUNDS_STAR_PLAYERS = {
 # Solution: Apply additional scrutiny when traditional books are softest
 # =============================================================================
 
-# Books that showed trap behavior when softest in December
+# Use centralized TRAP_BOOKS from thresholds (imported above)
+# Local alias for backward compatibility with existing code
 TRAP_BOOKS_WHEN_SOFTEST = {
-    "DraftKings": {"min_spread_required": 3.5, "min_p_over_boost": 0.05},
-    "BetMGM": {"min_spread_required": 3.5, "min_p_over_boost": 0.05},
-    "BetRivers": {"min_spread_required": 3.0, "min_p_over_boost": 0.03},
-    "Caesars": {"min_spread_required": 3.0, "min_p_over_boost": 0.03},
+    name: {"min_spread_required": cfg.min_spread_required, "min_p_over_boost": cfg.min_p_over_boost}
+    for name, cfg in TRAP_BOOKS.items()
 }
 
 # Books that showed reliability when softest in December
@@ -189,17 +188,8 @@ UNDERDOG_CONFIG = {
     },
 }
 
-# Database config
-DB_DEFAULT_USER = os.getenv("NBA_DB_USER", os.getenv("DB_USER", "nba_user"))
-DB_DEFAULT_PASSWORD = os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
-
-DB_INTELLIGENCE = {
-    "host": os.getenv("NBA_INT_DB_HOST", "localhost"),
-    "port": int(os.getenv("NBA_INT_DB_PORT", 5539)),
-    "user": os.getenv("NBA_INT_DB_USER", DB_DEFAULT_USER),
-    "password": os.getenv("NBA_INT_DB_PASSWORD", DB_DEFAULT_PASSWORD),
-    "database": os.getenv("NBA_INT_DB_NAME", "nba_intelligence"),
-}
+# Database config (centralized in nba.config.database)
+DB_INTELLIGENCE = get_intelligence_db_config()
 
 # =============================================================================
 # PRODUCTION FILTER TIERS (Jan 30, 2026)
@@ -546,8 +536,9 @@ class LineOptimizer:
         # Exclude PrizePicks alternate lines (goblin/demon) if standard_only mode
         # These lines weren't in training data (added Feb 2026)
         if self.standard_only:
-            excluded_books = ", ".join([f"'{b}'" for b in PRIZEPICKS_ALT_BOOKS])
-            query += f"                AND book_name NOT IN ({excluded_books})\n"
+            placeholders = ", ".join(["%s"] * len(PRIZEPICKS_ALT_BOOKS))
+            query += f"                AND book_name NOT IN ({placeholders})\n"
+            params.extend(PRIZEPICKS_ALT_BOOKS)
 
         query += """        )
         SELECT

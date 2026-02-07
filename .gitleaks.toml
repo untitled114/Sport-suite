@@ -17,6 +17,7 @@ paths = [
     '''pyproject\.toml$''',
     '''requirements.*\.txt$''',
     '''nba/betting_xl/loaders/load_props_to_db\.py$''',  # Uses env vars, not real secrets
+    '''nba/config/database\.py$''',  # Builds MongoDB URI from env vars, not hardcoded secrets
 ]
 
 # Allowlist known false positives

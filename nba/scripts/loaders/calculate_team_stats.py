@@ -15,30 +15,23 @@ Usage:
 
 import argparse
 import logging
-import os
+import sys
+from pathlib import Path
 
 import psycopg2
 from psycopg2.extras import execute_values
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from nba.config.database import get_games_db_config, get_team_db_config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Database connections
-GAMES_DB = {
-    "host": "localhost",
-    "port": 5537,
-    "database": "nba_games",
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
-
-TEAM_DB = {
-    "host": "localhost",
-    "port": 5538,
-    "database": "nba_team",
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
+GAMES_DB = get_games_db_config()
+TEAM_DB = get_team_db_config()
 
 
 def calculate_team_season_stats(seasons: list):

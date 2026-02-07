@@ -12,27 +12,21 @@ import argparse
 import glob
 import json
 import os
+import sys
 from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import psycopg2
 
+from nba.config.database import get_intelligence_db_config, get_players_db_config
+
 # Database connection
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5539,
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-    "database": "nba_intelligence",
-}
+DB_CONFIG = get_intelligence_db_config()
 
 # Player database for lookups
-PLAYERS_DB_CONFIG = {
-    "host": "localhost",
-    "port": 5536,
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-    "database": "nba_players",
-}
+PLAYERS_DB_CONFIG = get_players_db_config()
 
 # Stat type mapping
 STAT_TYPE_MAP = {

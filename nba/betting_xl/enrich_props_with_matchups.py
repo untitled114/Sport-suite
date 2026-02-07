@@ -39,6 +39,7 @@ import psycopg2
 import requests
 
 from nba.betting_xl.utils.logging_config import add_logging_args, get_logger, setup_logging
+from nba.config.database import get_intelligence_db_config, get_players_db_config
 from nba.utils.team_utils import normalize_team_abbrev
 
 # Logger will be configured in main()
@@ -55,26 +56,9 @@ def get_current_season():
     return now.year + 1 if now.month >= 10 else now.year
 
 
-# Database configs - Use environment variables with fallback defaults
-# This allows the script to work both standalone and when called from pipeline
-DB_DEFAULT_USER = os.getenv("NBA_DB_USER", os.getenv("DB_USER", "nba_user"))
-DB_DEFAULT_PASSWORD = os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
-
-DB_INTELLIGENCE = {
-    "host": os.getenv("NBA_INT_DB_HOST", "localhost"),
-    "port": int(os.getenv("NBA_INT_DB_PORT", 5539)),
-    "user": os.getenv("NBA_INT_DB_USER", DB_DEFAULT_USER),
-    "password": os.getenv("NBA_INT_DB_PASSWORD", DB_DEFAULT_PASSWORD),
-    "database": os.getenv("NBA_INT_DB_NAME", "nba_intelligence"),
-}
-
-DB_PLAYERS = {
-    "host": os.getenv("NBA_PLAYERS_DB_HOST", "localhost"),
-    "port": int(os.getenv("NBA_PLAYERS_DB_PORT", 5536)),
-    "user": os.getenv("NBA_PLAYERS_DB_USER", DB_DEFAULT_USER),
-    "password": os.getenv("NBA_PLAYERS_DB_PASSWORD", DB_DEFAULT_PASSWORD),
-    "database": os.getenv("NBA_PLAYERS_DB_NAME", "nba_players"),
-}
+# Database configs (centralized in nba.config.database)
+DB_INTELLIGENCE = get_intelligence_db_config()
+DB_PLAYERS = get_players_db_config()
 
 # BettingPros API - Use PREMIUM credentials that work with /v3/events
 BETTINGPROS_BASE_URL = "https://api.bettingpros.com/v3"

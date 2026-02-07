@@ -7,7 +7,6 @@ Used for production predictions on current season (2025-26).
 """
 
 import logging
-import os
 import warnings
 from datetime import datetime, timedelta
 
@@ -24,22 +23,14 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)  # Only show warnings and errors
 
 # Import centralized database config
-try:
-    from nba.config.database import (
-        DB_DEFAULT_PASSWORD,
-        DB_DEFAULT_USER,
-        get_games_db_config,
-        get_intelligence_db_config,
-        get_players_db_config,
-        get_team_db_config,
-    )
-
-    _USE_CENTRALIZED_CONFIG = True
-except ImportError:
-    # Fallback to inline config if centralized module not available
-    _USE_CENTRALIZED_CONFIG = False
-    DB_DEFAULT_USER = os.getenv("NBA_DB_USER", os.getenv("DB_USER", "nba_user"))
-    DB_DEFAULT_PASSWORD = os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
+from nba.config.database import (
+    DB_DEFAULT_PASSWORD,
+    DB_DEFAULT_USER,
+    get_games_db_config,
+    get_intelligence_db_config,
+    get_players_db_config,
+    get_team_db_config,
+)
 
 
 class LiveFeatureExtractor:
@@ -49,42 +40,11 @@ class LiveFeatureExtractor:
     DB_DEFAULT_USER = DB_DEFAULT_USER
     DB_DEFAULT_PASSWORD = DB_DEFAULT_PASSWORD
 
-    # Database configs - use centralized module if available
-    if _USE_CENTRALIZED_CONFIG:
-        PLAYER_DB_CONFIG = get_players_db_config()
-        GAMES_DB_CONFIG = get_games_db_config()
-        TEAM_DB_CONFIG = get_team_db_config()
-        INTELLIGENCE_DB_CONFIG = get_intelligence_db_config()
-    else:
-        # Fallback inline configs (legacy support)
-        PLAYER_DB_CONFIG = {
-            "host": os.getenv("NBA_PLAYERS_DB_HOST", "localhost"),
-            "port": int(os.getenv("NBA_PLAYERS_DB_PORT", 5536)),
-            "user": os.getenv("NBA_PLAYERS_DB_USER", DB_DEFAULT_USER),
-            "password": os.getenv("NBA_PLAYERS_DB_PASSWORD", DB_DEFAULT_PASSWORD),
-            "database": os.getenv("NBA_PLAYERS_DB_NAME", "nba_players"),
-        }
-        GAMES_DB_CONFIG = {
-            "host": os.getenv("NBA_GAMES_DB_HOST", "localhost"),
-            "port": int(os.getenv("NBA_GAMES_DB_PORT", 5537)),
-            "user": os.getenv("NBA_GAMES_DB_USER", DB_DEFAULT_USER),
-            "password": os.getenv("NBA_GAMES_DB_PASSWORD", DB_DEFAULT_PASSWORD),
-            "database": os.getenv("NBA_GAMES_DB_NAME", "nba_games"),
-        }
-        TEAM_DB_CONFIG = {
-            "host": os.getenv("NBA_TEAM_DB_HOST", "localhost"),
-            "port": int(os.getenv("NBA_TEAM_DB_PORT", 5538)),
-            "user": os.getenv("NBA_TEAM_DB_USER", DB_DEFAULT_USER),
-            "password": os.getenv("NBA_TEAM_DB_PASSWORD", DB_DEFAULT_PASSWORD),
-            "database": os.getenv("NBA_TEAM_DB_NAME", "nba_team"),
-        }
-        INTELLIGENCE_DB_CONFIG = {
-            "host": os.getenv("NBA_INT_DB_HOST", "localhost"),
-            "port": int(os.getenv("NBA_INT_DB_PORT", 5539)),
-            "user": os.getenv("NBA_INT_DB_USER", DB_DEFAULT_USER),
-            "password": os.getenv("NBA_INT_DB_PASSWORD", DB_DEFAULT_PASSWORD),
-            "database": os.getenv("NBA_INT_DB_NAME", "nba_intelligence"),
-        }
+    # Database configs (centralized)
+    PLAYER_DB_CONFIG = get_players_db_config()
+    GAMES_DB_CONFIG = get_games_db_config()
+    TEAM_DB_CONFIG = get_team_db_config()
+    INTELLIGENCE_DB_CONFIG = get_intelligence_db_config()
 
     # Team abbreviation mapping (props -> database)
     TEAM_ABBREV_MAP = {
@@ -2360,6 +2320,15 @@ class LiveFeatureExtractor:
             feature_vector.append(features_dict.get(fname, 0.0))
 
         return np.array(feature_vector).reshape(1, -1)
+
+    def __enter__(self):
+        """Support usage as context manager."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Ensure connections are closed when used as context manager."""
+        self.close()
+        return False
 
     def close(self):
         """Close all database connections"""

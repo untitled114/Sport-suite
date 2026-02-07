@@ -6,12 +6,12 @@ Uses name normalization to match players across different ID systems.
 """
 
 import argparse
-import os
 from datetime import datetime, timedelta
 
 import psycopg2
 
 from nba.betting_xl.utils.logging_config import add_logging_args, get_logger, setup_logging
+from nba.config.database import get_intelligence_db_config, get_players_db_config
 from nba.utils.name_normalizer import NameNormalizer
 
 # Logger will be configured in main block
@@ -28,22 +28,9 @@ def get_current_season():
     return now.year + 1 if now.month >= 10 else now.year
 
 
-# Database configs
-DB_INTELLIGENCE = {
-    "host": "localhost",
-    "port": 5539,
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-    "database": "nba_intelligence",
-}
-
-DB_PLAYERS = {
-    "host": "localhost",
-    "port": 5536,
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-    "database": "nba_players",
-}
+# Database configs (centralized in nba.config.database)
+DB_INTELLIGENCE = get_intelligence_db_config()
+DB_PLAYERS = get_players_db_config()
 
 STAT_MAP = {
     "POINTS": "points",

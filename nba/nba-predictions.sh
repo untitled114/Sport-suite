@@ -55,6 +55,10 @@ fi
 
 LOG_DIR="$SCRIPT_DIR/betting_xl/logs"
 PREDICTIONS_DIR="$SCRIPT_DIR/betting_xl/predictions"
+
+# Force Eastern Time for all date calculations (NBA operates on EST)
+export TZ=America/New_York
+
 DATE_STR=$(date +%Y-%m-%d)
 TIME_STR=$(date +%H:%M:%S)
 LOG_FILE="$LOG_DIR/pipeline_${DATE_STR}.log"
@@ -1064,65 +1068,15 @@ refresh_workflow() {
         fi
     fi
 
-    # ── Phase 1: Parallel data fetching (3 independent sources) ──
-    section "Fetching Data" "Props + PrizePicks + Cheatsheet (parallel)"
-
-    local props_log="/tmp/nba_refresh_props_$$.log"
-    local pp_log="/tmp/nba_refresh_pp_$$.log"
-    local cs_log="/tmp/nba_refresh_cs_$$.log"
-
-    # Run all three fetches in parallel
-    (fetch_and_load_props > "$props_log" 2>&1) &
-    local PID_PROPS=$!
-
-    (fetch_and_load_prizepicks > "$pp_log" 2>&1) &
-    local PID_PP=$!
-
-    (fetch_and_load_cheatsheet > "$cs_log" 2>&1) &
-    local PID_CS=$!
-
-    # Wait for props (required)
-    if wait $PID_PROPS; then
-        success "Props fetched + loaded"
-    else
-        cat "$props_log" >> "$LOG_FILE"
-        error "Props fetch failed"
-        rm -f "$props_log" "$pp_log" "$cs_log"
-        return 1
-    fi
-
-    # Wait for PrizePicks (optional)
-    if wait $PID_PP; then
-        success "PrizePicks loaded"
-    else
-        warning "PrizePicks failed (non-blocking)"
-    fi
-
-    # Wait for cheatsheet (optional)
-    if wait $PID_CS; then
-        success "Cheatsheet loaded"
-    else
-        warning "Cheatsheet failed (non-blocking)"
-    fi
-
-    # Append logs
-    cat "$props_log" "$pp_log" "$cs_log" >> "$LOG_FILE" 2>/dev/null
-    rm -f "$props_log" "$pp_log" "$cs_log"
-
-    # ── Phase 2: Parallel updates (independent) ──
-    update_injuries &
-    local PID_INJ=$!
-
-    fetch_vegas_lines &
-    local PID_VEGAS=$!
-
-    wait $PID_INJ
-    wait $PID_VEGAS
-
-    # ── Phase 3: Enrichment (needs props loaded) ──
+    # Refresh data that changes intraday
+    fetch_and_load_props || return 1
+    fetch_and_load_prizepicks
+    fetch_and_load_cheatsheet
+    update_injuries
+    fetch_vegas_lines
     enrich_matchups || return 1
 
-    # ── Phase 4: Generate predictions ──
+    # Generate predictions
     generate_all_predictions
 
     complete "Refresh Complete" "Predictions updated with latest lines"

@@ -18,7 +18,6 @@ Usage:
 
 import argparse
 import logging
-import os
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -27,34 +26,20 @@ import psycopg2
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-try:
-    from nba.config import STAT_COLUMN_MAP, get_intelligence_db_config, get_players_db_config
+import sys
+from pathlib import Path
 
-    DB_INTELLIGENCE = get_intelligence_db_config()
-    DB_PLAYERS = get_players_db_config()
-except ImportError:
-    # Fallback for standalone execution
-    DB_INTELLIGENCE = {
-        "host": "localhost",
-        "port": 5539,
-        "user": os.getenv("DB_USER", "nba_user"),
-        "password": os.getenv("DB_PASSWORD"),
-        "database": "nba_intelligence",
-    }
-    DB_PLAYERS = {
-        "host": "localhost",
-        "port": 5536,
-        "user": os.getenv("DB_USER", "nba_user"),
-        "password": os.getenv("DB_PASSWORD"),
-        "database": "nba_players",
-    }
-    # Note: Use correct column name 'three_pointers_made' (not 'threes_made')
-    STAT_COLUMN_MAP = {
-        "POINTS": "points",
-        "REBOUNDS": "rebounds",
-        "ASSISTS": "assists",
-        "THREES": "three_pointers_made",
-    }
+# Ensure project root is on sys.path for standalone execution
+_project_root = str(Path(__file__).resolve().parents[2])
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+from nba.config import STAT_COLUMN_MAP
+from nba.config.database import get_intelligence_db_config, get_players_db_config
+
+# Database configs (centralized in nba.config.database)
+DB_INTELLIGENCE = get_intelligence_db_config()
+DB_PLAYERS = get_players_db_config()
 
 
 class ResultsTracker:

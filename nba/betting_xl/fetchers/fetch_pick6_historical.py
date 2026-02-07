@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
-Historical Pick6 Backfill via The Odds API
-==========================================
-Fetches historical Pick6 multipliers for backtesting.
+Historical DFS Props Backfill via The Odds API
+==============================================
+Fetches historical DFS multipliers from Pick6 AND Underdog for backtesting.
 
 Uses the historical events + historical event odds endpoints.
 Cost: 10 credits per market per region per event.
+Adding multiple bookmakers (pick6,underdog) in same region = no extra cost!
 
 Usage:
     python3 -m nba.betting_xl.fetchers.fetch_pick6_historical \
         --start 2026-01-02 --end 2026-01-14 \
-        --output the-odds-api-data/historical_pick6_jan1_14.json
+        --output the-odds-api-data/historical_dfs_jan1_14.json
 """
 
 import json
@@ -29,6 +30,9 @@ logger = logging.getLogger(__name__)
 API_KEY = os.getenv("ODDS_API_KEY")
 BASE_URL = "https://api.the-odds-api.com"
 SPORT = "basketball_nba"
+
+# DFS bookmakers to fetch (same region = no extra cost)
+BOOKMAKERS = ["pick6", "underdog"]
 
 # Only POINTS + REBOUNDS + alternates to save credits (4 markets = 40 credits/event)
 MARKETS_TO_FETCH = [
@@ -80,18 +84,20 @@ def get_historical_events(date_str: str) -> List[Dict]:
 
 def get_historical_event_odds(event_id: str, date_str: str) -> Dict:
     """
-    Get historical odds for a single event with Pick6 multipliers.
+    Get historical odds for a single event with DFS multipliers.
+    Fetches from both Pick6 AND Underdog (same cost since same region).
     Cost: 10 × num_markets × num_regions credits.
     """
     date_iso = f"{date_str}T23:00:00Z"
     markets_str = ",".join(MARKETS_TO_FETCH)
+    bookmakers_str = ",".join(BOOKMAKERS)
 
     url = f"{BASE_URL}/v4/historical/sports/{SPORT}/events/{event_id}/odds"
     params = {
         "apiKey": API_KEY,
         "date": date_iso,
         "regions": "us_dfs",
-        "bookmakers": "pick6",
+        "bookmakers": bookmakers_str,
         "markets": markets_str,
         "oddsFormat": "american",
         "includeMultipliers": "true",
@@ -144,7 +150,7 @@ def extract_alternate_multipliers(bookmaker_data: Dict) -> Dict:
 
 
 def parse_event_props(event_data: Dict, game_date: str) -> List[Dict]:
-    """Parse props from historical event odds response."""
+    """Parse props from historical event odds response for ALL DFS bookmakers."""
     props = []
 
     home_team = event_data.get("home_team", "")
@@ -152,11 +158,15 @@ def parse_event_props(event_data: Dict, game_date: str) -> List[Dict]:
     event_id = event_data.get("id", "")
 
     for bookmaker in event_data.get("bookmakers", []):
-        if bookmaker.get("key") != "pick6":
+        book_key = bookmaker.get("key", "")
+        if book_key not in BOOKMAKERS:
             continue
 
-        # First pass: extract alternate multipliers
+        # First pass: extract alternate multipliers for this bookmaker
         alt_multipliers = extract_alternate_multipliers(bookmaker)
+
+        # Track which players we've added from main markets for this book
+        book_main_keys = set()
 
         # Second pass: build props from main markets
         for market in bookmaker.get("markets", []):
@@ -193,25 +203,27 @@ def parse_event_props(event_data: Dict, game_date: str) -> List[Dict]:
                         "stat_type": stat_type,
                         "line": float(line),
                         "multiplier": multiplier,
+                        "book": book_key,
                         "game_date": game_date,
                         "home_team": home_team,
                         "away_team": away_team,
                         "event_id": event_id,
                     }
                 )
+                book_main_keys.add((player_name.lower(), stat_type))
 
-        # Also add players only in alternates
-        main_keys = {
-            (p["player"].lower(), p["stat_type"]) for p in props if p["event_id"] == event_id
-        }
+        # Also add players only in alternates for this bookmaker
         for (name_lower, stat_type), alt_info in alt_multipliers.items():
-            if (name_lower, stat_type) not in main_keys and alt_info.get("alt_line") is not None:
+            if (name_lower, stat_type) not in book_main_keys and alt_info.get(
+                "alt_line"
+            ) is not None:
                 props.append(
                     {
                         "player": name_lower.title(),
                         "stat_type": stat_type,
                         "line": alt_info["alt_line"],
                         "multiplier": alt_info["multiplier"],
+                        "book": book_key,
                         "game_date": game_date,
                         "home_team": home_team,
                         "away_team": away_team,
@@ -257,8 +269,8 @@ def fetch_historical_range(start_date: str, end_date: str) -> List[Dict]:
                     est_time = utc_time - timedelta(hours=5)
                     if est_time.strftime("%Y-%m-%d") == date_str:
                         target_events.append(event)
-                except ValueError:
-                    pass
+                except ValueError as e:
+                    logger.debug(f"Skipping event with unparseable date '{commence_time}': {e}")
 
         logger.info(f"  {len(target_events)} games on {date_str}")
 
@@ -278,10 +290,10 @@ def fetch_historical_range(start_date: str, end_date: str) -> List[Dict]:
                 props = parse_event_props(event_odds, date_str)
                 day_props.extend(props)
 
-        # Dedup by (player, stat_type) keeping lowest multiplier
+        # Dedup by (player, stat_type, book) keeping lowest multiplier per book
         deduped = {}
         for p in day_props:
-            key = (p["player"].lower(), p["stat_type"], p["game_date"])
+            key = (p["player"].lower(), p["stat_type"], p["game_date"], p.get("book", "pick6"))
             if key not in deduped or p["multiplier"] < deduped[key]["multiplier"]:
                 deduped[key] = p
         day_props = list(deduped.values())
@@ -302,7 +314,7 @@ def main():
     parser.add_argument("--end", required=True, help="End date (YYYY-MM-DD)")
     parser.add_argument(
         "--output",
-        default="the-odds-api-data/historical_pick6_backfill.json",
+        default="the-odds-api-data/historical_dfs_backfill.json",
         help="Output JSON file",
     )
     parser.add_argument(
@@ -329,8 +341,8 @@ def main():
                         est = utc - timedelta(hours=5)
                         if est.strftime("%Y-%m-%d") == date_str:
                             target.append(event)
-                    except (ValueError, AttributeError):
-                        pass
+                    except (ValueError, AttributeError) as e:
+                        logger.debug(f"Skipping event with unparseable date '{ct}': {e}")
             total_events += len(target)
             time.sleep(1)
             current += timedelta(days=1)
@@ -353,7 +365,17 @@ def main():
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "w") as f:
             json.dump(props, f, indent=2)
-        logger.info(f"Saved {len(props)} props to {output_path}")
+
+        # Summary by bookmaker
+        book_counts = {}
+        for p in props:
+            book = p.get("book", "pick6")
+            book_counts[book] = book_counts.get(book, 0) + 1
+
+        logger.info(f"\nSaved {len(props)} props to {output_path}")
+        logger.info("By bookmaker:")
+        for book, count in sorted(book_counts.items()):
+            logger.info(f"  {book}: {count} props")
     else:
         logger.warning("No props fetched")
 

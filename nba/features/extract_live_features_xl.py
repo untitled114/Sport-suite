@@ -593,7 +593,12 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
                 "ASSISTS": "assists",
                 "THREES": "threes",
             }
-            stat_suffix = stat_col_map.get(stat_type, "points")
+            stat_suffix = stat_col_map.get(stat_type)
+            if stat_suffix is None:
+                logger.warning(
+                    f"Unknown stat_type '{stat_type}' for H2H features, returning defaults"
+                )
+                return self._get_default_h2h_features()
 
             # Build query for the specific stat_type
             query = f"""
@@ -615,14 +620,15 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
                 cur.execute(query, (player_name, opponent_team, stat_type, game_date))
                 result = cur.fetchone()
 
-                if result:
+                if result and len(result) >= 12:
                     # For backward compatibility, we still return all stat names
                     # but only the queried stat_type will have actual values
+                    # Use 'is not None' checks to preserve legitimate zero values
                     features = {
-                        "h2h_games": result[0] or 0,
-                        "h2h_days_since_last": result[1] or 999,
-                        "h2h_sample_quality": result[2] or 0.2,
-                        "h2h_recency_weight": result[3] or 0.5,
+                        "h2h_games": result[0] if result[0] is not None else 0,
+                        "h2h_days_since_last": result[1] if result[1] is not None else 999,
+                        "h2h_sample_quality": result[2] if result[2] is not None else 0.2,
+                        "h2h_recency_weight": result[3] if result[3] is not None else 0.5,
                     }
 
                     # Initialize all stats to 0.0
@@ -635,14 +641,18 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
                         features[f"h2h_away_avg_{stat}"] = 0.0
 
                     # Populate the specific stat_type values from the query
-                    features[f"h2h_avg_{stat_suffix}"] = result[4] or 0.0
-                    features[f"h2h_std_{stat_suffix}"] = result[5] or 0.0
-                    features[f"h2h_L3_{stat_suffix}"] = result[6] or 0.0
-                    features[f"h2h_L5_{stat_suffix}"] = result[7] or 0.0
-                    features[f"h2h_L10_{stat_suffix}"] = result[8] or 0.0
-                    features[f"h2h_L20_{stat_suffix}"] = result[9] or 0.0
-                    features[f"h2h_home_avg_{stat_suffix}"] = result[10] or 0.0
-                    features[f"h2h_away_avg_{stat_suffix}"] = result[11] or 0.0
+                    features[f"h2h_avg_{stat_suffix}"] = result[4] if result[4] is not None else 0.0
+                    features[f"h2h_std_{stat_suffix}"] = result[5] if result[5] is not None else 0.0
+                    features[f"h2h_L3_{stat_suffix}"] = result[6] if result[6] is not None else 0.0
+                    features[f"h2h_L5_{stat_suffix}"] = result[7] if result[7] is not None else 0.0
+                    features[f"h2h_L10_{stat_suffix}"] = result[8] if result[8] is not None else 0.0
+                    features[f"h2h_L20_{stat_suffix}"] = result[9] if result[9] is not None else 0.0
+                    features[f"h2h_home_avg_{stat_suffix}"] = (
+                        result[10] if result[10] is not None else 0.0
+                    )
+                    features[f"h2h_away_avg_{stat_suffix}"] = (
+                        result[11] if result[11] is not None else 0.0
+                    )
 
                     return features
                 else:
@@ -1071,7 +1081,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
                 cur.execute(query, (player_name, game_date, cs_stat_type))
                 result = cur.fetchone()
 
-                if result:
+                if result and len(result) >= 8:
                     return {
                         "bp_projection_diff": float(result[0]) if result[0] is not None else 0.0,
                         "bp_bet_rating": float(result[1]) if result[1] is not None else 3.0,

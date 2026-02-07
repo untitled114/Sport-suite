@@ -20,9 +20,15 @@ Usage:
 
 import argparse
 import logging
-import os
-from datetime import datetime, timedelta
+import sys
 from pathlib import Path
+
+# Ensure project root is on sys.path for standalone execution
+_project_root = str(Path(__file__).resolve().parents[2])
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+from datetime import datetime, timedelta
 
 import pandas as pd
 import psycopg2
@@ -30,13 +36,9 @@ import psycopg2
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-DB_INTELLIGENCE = {
-    "host": "localhost",
-    "port": 5539,
-    "user": os.getenv("DB_USER", "nba_user"),
-    "password": os.getenv("DB_PASSWORD"),
-    "database": "nba_intelligence",
-}
+from nba.config.database import get_intelligence_db_config
+
+DB_INTELLIGENCE = get_intelligence_db_config()
 
 # Validation benchmarks (from Oct 23 - Nov 4, 2024)
 VALIDATION_BENCHMARKS = {

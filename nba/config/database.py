@@ -21,6 +21,7 @@ Usage:
 
 import os
 from typing import Any, Dict
+from urllib.parse import quote_plus
 
 # Default credentials from environment (REQUIRED - no hardcoded passwords)
 # Note: Production uses mlb_user for all databases (legacy naming)
@@ -98,8 +99,11 @@ def get_mongo_config() -> Dict[str, Any]:
     mongo_password = os.getenv("MONGO_PASSWORD", "")
 
     # Build URI - only include auth if credentials provided
+    # URL-encode credentials to handle special characters safely
     if mongo_user and mongo_password:
-        default_uri = f"mongodb://{mongo_user}:{mongo_password}@localhost:27017/"
+        default_uri = (
+            f"mongodb://{quote_plus(mongo_user)}:{quote_plus(mongo_password)}@localhost:27017/"
+        )
     else:
         default_uri = "mongodb://localhost:27017/"
 
