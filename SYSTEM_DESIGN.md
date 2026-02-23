@@ -29,7 +29,7 @@ This document explains how data flows through the system, why architectural deci
 │   ┌─────────────────────────────────────────────────────────────────────┐  │
 │   │                          Loader Layer                               │  │
 │   │  nba/betting_xl/loaders/                                            │  │
-│   │  ├── load_props_to_db.py       # Props → nba_prop_lines table      │  │
+│   │  ├── load_props_to_db.py       # Props → nba_props_xl table        │  │
 │   │  └── load_cheatsheet_to_db.py  # DFS data → database               │  │
 │   └──────────────────────────────┬──────────────────────────────────────┘  │
 │                                  │                                          │
@@ -39,13 +39,13 @@ This document explains how data flows through the system, why architectural deci
 │   │                                                                     │  │
 │   │   nba_players:5536          nba_games:5537                          │  │
 │   │   ├── player_profile        ├── games                               │  │
-│   │   ├── player_game_logs      ├── box_scores                          │  │
-│   │   └── player_rolling_stats  └── game_context                        │  │
+│   │   ├── player_game_logs      ├── team_game_logs                      │  │
+│   │   └── player_season_stats   └── game_context                        │  │
 │   │                                                                     │  │
 │   │   nba_team:5538             nba_intelligence:5539                   │  │
-│   │   ├── teams                 ├── nba_prop_lines  (42K+ props)        │  │
-│   │   ├── team_stats            ├── injuries                            │  │
-│   │   └── team_rolling_stats    └── matchup_history                     │  │
+│   │   ├── teams                 ├── nba_props_xl    (42K+ props)        │  │
+│   │   ├── team_season_stats     ├── injury_report                       │  │
+│   │   └── team_betting_performance  └── matchup_history                 │  │
 │   └─────────────────────────────────────────────────────────────────────┘  │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -66,11 +66,11 @@ This document explains how data flows through the system, why architectural deci
 │   │   Input: player_name, game_date, opponent, is_home, line            │  │
 │   │                                                                     │  │
 │   │   Queries:                                                          │  │
-│   │   ├── player_rolling_stats  → L3/L5/L10/L20 EMA stats              │  │
-│   │   ├── team_stats            → pace, off_rating, def_rating          │  │
+│   │   ├── player_season_stats   → L3/L5/L10/L20 EMA stats              │  │
+│   │   ├── team_season_stats     → pace, off_rating, def_rating          │  │
 │   │   ├── matchup_history       → H2H performance vs opponent           │  │
-│   │   ├── injuries              → teammate injury impact                │  │
-│   │   └── nba_prop_lines        → multi-book line data                  │  │
+│   │   ├── injury_report         → teammate injury impact                │  │
+│   │   └── nba_props_xl          → multi-book line data                  │  │
 │   │                                                                     │  │
 │   │   Output: XL (102) or V3 (136) feature vector                       │  │
 │   └─────────────────────────────────────────────────────────────────────┘  │
@@ -221,28 +221,28 @@ This document explains how data flows through the system, why architectural deci
 -- Core player data
 player_profile (player_id, player_name, team, position, height, weight)
 player_game_logs (player_id, game_date, opponent, is_home, pts, reb, ast, ...)
-player_rolling_stats (player_id, game_date, ema_points_L3, ema_points_L5, ...)
+player_season_stats (player_id, season, ppg, rpg, apg, mpg, ...)
 ```
 
 ### nba_intelligence (Port 5539)
 
 ```sql
--- Prop lines from 7 sportsbooks
-nba_prop_lines (
+-- Prop lines from 10 sources (7 sportsbooks + 3 DFS)
+nba_props_xl (
   id,
   player_name,
   stat_type,        -- 'POINTS', 'REBOUNDS', etc.
   game_date,
   line,             -- The prop line (e.g., 27.5)
-  source,           -- 'draftkings', 'fanduel', etc.
+  source,           -- 'draftkings', 'fanduel', 'prizepicks', etc.
   book_id,
   actual_result,    -- Filled after game (for validation)
   created_at
 )
 
 -- Indexes for performance
-CREATE INDEX idx_props_player_date ON nba_prop_lines(player_name, game_date);
-CREATE INDEX idx_props_date_stat ON nba_prop_lines(game_date, stat_type);
+CREATE INDEX idx_props_player_date ON nba_props_xl(player_name, game_date);
+CREATE INDEX idx_props_date_stat ON nba_props_xl(game_date, stat_type);
 ```
 
 ---
@@ -257,7 +257,7 @@ python3 build_xl_training_dataset.py --output datasets/
 ```
 
 **What it does:**
-1. Queries `nba_prop_lines` for historical props with `actual_result IS NOT NULL`
+1. Queries `nba_props_xl` for historical props with `actual_result IS NOT NULL`
 2. Enriches `is_home` from `player_game_logs` (90.5% match rate)
 3. Extracts 166 features for each prop using point-in-time data
 4. Outputs: `xl_training_POINTS_2023_2025.csv` (24,316 rows)
@@ -361,7 +361,7 @@ Backtest showed line shopping improves ROI by +6.8% vs. betting consensus.
 ```
 
 - Fetches props from BettingPros API
-- Loads to `nba_prop_lines` table
+- Loads to `nba_props_xl` table
 - Result: 7 sportsbooks have LeBron REBOUNDS lines ranging from 7.5 to 8.5
 
 ### 2. Feature Extraction
