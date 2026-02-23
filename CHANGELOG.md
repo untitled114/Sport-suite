@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Cephalon fleet deployment system (`deploy.sh --deploy-fleet`, `--restart-fleet`)
+- Axiom bot database `tool_use` integration for on-demand queries
+- Gitleaks secret scanning allowlist for test fixtures
+
+### Fixed
+- CI/CD deploy workflow: rsync `--omit-dir-times` for consistent deploys
+- BettingPros API brotli decompression fix (removed `br` from Accept-Encoding)
+
 ## [2.0.0] - 2026-02-03
 
 ### Added

@@ -69,7 +69,7 @@ mlops = [
 ]
 
 [project.urls]
-Repository = "https://github.com/untitled114/nba-props-betting"
+Repository = "https://github.com/untitled114/Sport-suite"
 
 [tool.setuptools.packages.find]
 where = ["."]
