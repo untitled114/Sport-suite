@@ -178,11 +178,21 @@ def nba_full_pipeline():
 
         pattern = f"{SCRIPT_DIR}/betting_xl/lines/all_sources_*.json"
         files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
-        return {"props_file": files[0] if files else None, "status": "success"}
+
+        # Check if no games today (fetch succeeded but produced no props file)
+        if not files:
+            print("[INFO] No props file generated - likely no NBA games today")
+            return {"props_file": None, "status": "no_games"}
+
+        return {"props_file": files[0], "status": "success"}
 
     @task(task_id="load_props")
     def load_props(fetch_result: dict[str, Any]) -> dict[str, Any]:
         """Load props to database."""
+        if fetch_result.get("status") == "no_games":
+            print("[INFO] No games today - skipping load_props")
+            return {"status": "no_games"}
+
         props_file = fetch_result.get("props_file")
         if not props_file:
             raise Exception("No props file to load")
@@ -234,14 +244,16 @@ def nba_full_pipeline():
             timeout=300,
         )
 
-        # Verify data was loaded (this is critical for GOLDMINE picks)
+        # Verify data was loaded
         pp_count = get_prizepicks_count(date_str)
 
         if pp_count == 0:
-            raise Exception(
-                f"PrizePicks data not loaded for {date_str}. "
-                "GOLDMINE picks require PrizePicks goblin/demon lines."
+            print(
+                f"[WARN] No PrizePicks data for {date_str} "
+                "(no games today or API unavailable). "
+                "GOLDMINE picks will be skipped."
             )
+            return {"status": "no_data", "prizepicks_count": 0}
 
         print(f"[OK] PrizePicks loaded: {pp_count} props for {date_str}")
         return {"status": "success", "prizepicks_count": pp_count}
@@ -249,6 +261,10 @@ def nba_full_pipeline():
     @task(task_id="enrich_matchups")
     def enrich_matchups(load_result: dict[str, Any]) -> dict[str, Any]:
         """Enrich props with matchup context."""
+        if load_result.get("status") == "no_games":
+            print("[INFO] No games today - skipping enrich_matchups")
+            return {"coverage": 0, "total": 0, "status": "no_games"}
+
         import psycopg2
 
         from nba.config.database import get_intelligence_db_config
@@ -346,19 +362,22 @@ def nba_full_pipeline():
     @task(task_id="generate_xl_predictions")
     def generate_xl_predictions(enrichment: dict[str, Any]) -> dict[str, Any]:
         """Generate XL model predictions."""
+        if enrichment.get("status") == "no_games":
+            print("[INFO] No games today - skipping XL predictions")
+            return {"output_file": None, "total_picks": 0, "status": "no_games"}
+
         date_str = datetime.now().strftime("%Y-%m-%d")
         output_file = f"{PREDICTIONS_DIR}/xl_picks_{date_str}.json"
 
-        # Pre-flight check: verify we have PrizePicks data for GOLDMINE picks
+        # Pre-flight check: verify PrizePicks data for GOLDMINE picks
         pp_count = get_prizepicks_count(date_str)
 
         if pp_count == 0:
-            raise Exception(
-                f"Pre-flight failed: No PrizePicks data for {date_str}. "
-                "Cannot generate GOLDMINE picks without soft lines."
+            print(
+                f"[WARN] No PrizePicks data for {date_str} - " "GOLDMINE picks will be unavailable"
             )
-
-        print(f"[OK] Pre-flight: {pp_count} PrizePicks props available")
+        else:
+            print(f"[OK] Pre-flight: {pp_count} PrizePicks props available")
 
         result = run_script(
             f"{SCRIPT_DIR}/betting_xl/generate_xl_predictions.py",
@@ -379,6 +398,10 @@ def nba_full_pipeline():
     @task(task_id="generate_pro_picks")
     def generate_pro_picks(enrichment: dict[str, Any]) -> dict[str, Any]:
         """Generate Pro tier picks."""
+        if enrichment.get("status") == "no_games":
+            print("[INFO] No games today - skipping Pro picks")
+            return {"output_file": None, "total_picks": 0, "status": "no_games"}
+
         date_str = datetime.now().strftime("%Y-%m-%d")
         output_file = f"{PREDICTIONS_DIR}/pro_picks_{date_str}.json"
 
@@ -397,6 +420,10 @@ def nba_full_pipeline():
     @task(task_id="generate_odds_api_picks")
     def generate_odds_api_picks(enrichment: dict[str, Any]) -> dict[str, Any]:
         """Generate Odds API picks."""
+        if enrichment.get("status") == "no_games":
+            print("[INFO] No games today - skipping Odds API picks")
+            return {"output_file": None, "total_picks": 0, "status": "no_games"}
+
         date_str = datetime.now().strftime("%Y-%m-%d")
         output_file = f"{PREDICTIONS_DIR}/odds_api_picks_{date_str.replace('-', '')}.json"
 
@@ -412,40 +439,25 @@ def nba_full_pipeline():
 
         return {"output_file": output_file, "total_picks": picks_count, "status": result["status"]}
 
-    @task(task_id="generate_two_energy_picks")
-    def generate_two_energy_picks(enrichment: dict[str, Any]) -> dict[str, Any]:
-        """Generate Two Energy picks (Goblin OVER + Inflated UNDER).
-
-        Optimized v2 filters:
-        - Goblin POINTS: line < 20 AND deflation >= 3.0 (73.1% WR)
-        - Goblin REBOUNDS: deflation >= 2.0 OR line >= 8.0 (73.8% WR)
-        - FanDuel REBOUNDS UNDER: inflation >= 0.8 (76.7% WR)
-        - DraftKings POINTS UNDER: inflation >= 1.0 (76.7% WR)
-        """
-        date_str = datetime.now().strftime("%Y-%m-%d")
-        output_file = f"{PREDICTIONS_DIR}/two_energy_picks_{date_str}.json"
-
-        result = run_script(
-            f"{SCRIPT_DIR}/betting_xl/generate_two_energy_picks.py",
-            ["--date", date_str, "--output", output_file],
-        )
-
-        picks_count = 0
-        if Path(output_file).exists():
-            with open(output_file) as f:
-                picks_count = json.load(f).get("total_picks", 0)
-
-        return {"output_file": output_file, "total_picks": picks_count, "status": result["status"]}
+    # Two Energy picks DISABLED (too many picks, ~130+/day)
 
     @task(task_id="output_summary")
     def output_summary(
         xl_result: dict[str, Any],
         pro_result: dict[str, Any],
         odds_result: dict[str, Any],
-        energy_result: dict[str, Any],
     ) -> dict[str, Any]:
         """Output final summary."""
         date_str = datetime.now().strftime("%Y-%m-%d")
+
+        # Check if all results indicate no games
+        all_no_games = all(
+            r.get("status") == "no_games" for r in [xl_result, pro_result, odds_result]
+        )
+
+        if all_no_games:
+            print(f"[INFO] No NBA games on {date_str} - pipeline completed with nothing to do")
+            return {"date": date_str, "status": "no_games", "total": 0}
 
         summary = {
             "date": date_str,
@@ -453,12 +465,10 @@ def nba_full_pipeline():
             "xl_picks": xl_result.get("total_picks", 0),
             "pro_picks": pro_result.get("total_picks", 0),
             "odds_api_picks": odds_result.get("total_picks", 0),
-            "two_energy_picks": energy_result.get("total_picks", 0),
             "total": (
                 xl_result.get("total_picks", 0)
                 + pro_result.get("total_picks", 0)
                 + odds_result.get("total_picks", 0)
-                + energy_result.get("total_picks", 0)
             ),
         }
 
@@ -469,7 +479,7 @@ def nba_full_pipeline():
 
         print(f"Full pipeline complete: {summary['total']} total picks")
         print(f"  XL: {summary['xl_picks']}, Pro: {summary['pro_picks']}")
-        print(f"  Odds API: {summary['odds_api_picks']}, Two Energy: {summary['two_energy_picks']}")
+        print(f"  Odds API: {summary['odds_api_picks']}")
         return summary
 
     # ========================================================================
@@ -508,10 +518,9 @@ def nba_full_pipeline():
     xl = generate_xl_predictions(enriched)
     pro = generate_pro_picks(enriched)
     odds = generate_odds_api_picks(enriched)
-    energy = generate_two_energy_picks(enriched)
 
     # Final summary
-    output_summary(xl, pro, odds, energy)
+    output_summary(xl, pro, odds)
 
 
 dag = nba_full_pipeline()

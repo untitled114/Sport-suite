@@ -112,6 +112,19 @@ class XLPredictionsGenerator:
         self.bias_adjustments: Dict[str, float] = {}
         self.opp_rank_cache: Dict[str, int] = {}  # (opponent_team, stat_type) -> rank
 
+        # Database connections
+        self.conn_intelligence = None
+        self.conn_players = None
+        self.conn_games = None
+
+        # Drift detection
+        self.drift_services: Dict[str, DriftService] = {}
+        self.drift_status: Dict[str, Dict[str, Any]] = {}
+        self._feature_samples: Dict[str, list] = {}  # market -> list of feature dicts
+
+        # Results
+        self.picks = []
+
     def __enter__(self):
         """Support usage as context manager."""
         return self

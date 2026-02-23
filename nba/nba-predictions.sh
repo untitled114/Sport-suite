@@ -768,23 +768,9 @@ generate_all_predictions() {
         fi
     fi
 
-    section "Generating Two Energy Picks" "Goblin OVER + Inflated UNDER"
-    if [ -f "$SCRIPT_DIR/betting_xl/generate_two_energy_picks.py" ]; then
-        local energy_file="$PREDICTIONS_DIR/two_energy_picks_${DATE_STR}.json"
-        if python3 -m nba.betting_xl.generate_two_energy_picks --date "$DATE_STR" --output "$energy_file" >> "$LOG_FILE" 2>&1; then
-            if [ -f "$energy_file" ] && command -v jq >/dev/null 2>&1; then
-                local energy_count=$(jq '.total_picks // 0' "$energy_file")
-                if [ "$energy_count" -gt 0 ]; then
-                    display_two_energy_picks "$energy_file"
-                    success "Two Energy picks: ${energy_count}"
-                else
-                    info "No Two Energy picks (no goblin/inflated lines)"
-                fi
-            fi
-        else
-            warning "Two Energy picks skipped"
-        fi
-    fi
+    # Two Energy picks DISABLED (too many picks, ~130+/day)
+    # section "Generating Two Energy Picks" "Goblin OVER + Inflated UNDER"
+    info "Two Energy picks: DISABLED"
 }
 
 ################################################################################

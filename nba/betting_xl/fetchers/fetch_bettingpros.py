@@ -19,7 +19,7 @@ import logging
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -360,12 +360,14 @@ class BettingProsFetcher(BaseFetcher):
                 print(f"  Error parsing prop: {e}")
             return None
 
-    def fetch_todays_schedule(self) -> Dict[str, str]:
+    def fetch_todays_schedule(self) -> Optional[Dict[str, str]]:
         """
         Fetch today's NBA schedule from ESPN to filter props by actual game date.
 
         Returns:
-            Dict mapping team_abbrev -> game_date for teams playing on requested date
+            Dict mapping team_abbrev -> game_date for teams playing on requested date.
+            Returns None if the ESPN API call itself failed (network error, bad status).
+            Returns empty dict {} if ESPN responded successfully but no games are scheduled.
         """
         import requests
 
@@ -378,7 +380,7 @@ class BettingProsFetcher(BaseFetcher):
 
             if response.status_code != 200:
                 logger.warning(f"Failed to fetch ESPN schedule: HTTP {response.status_code}")
-                return {}
+                return None
 
             data = response.json()
             events = data.get("events", [])
@@ -418,7 +420,7 @@ class BettingProsFetcher(BaseFetcher):
 
         except (requests.RequestException, KeyError, ValueError, TypeError) as e:
             logger.error(f"Failed to fetch ESPN schedule: {e}")
-            return {}
+            return None
 
     def _normalize_team_abbrev(self, abbrev: str) -> str:
         """Normalize team abbreviation to canonical format"""
@@ -463,15 +465,23 @@ class BettingProsFetcher(BaseFetcher):
         # Fetch today's schedule to filter props by actual game date
         print("Fetching today's schedule from ESPN...", flush=True)
         team_schedule = self.fetch_todays_schedule()
-        teams_playing_today = set(team_schedule.keys())
 
-        if teams_playing_today:
+        if team_schedule is None:
+            # ESPN API failed - can't verify game dates
+            print("[WARN] Could not fetch ESPN schedule (API error)\n", flush=True)
+            teams_playing_today = set()
+        elif not team_schedule:
+            # ESPN responded successfully but no games scheduled
+            print(
+                f"[INFO] No NBA games scheduled for {self.date} (All-Star break / off day)",
+                flush=True,
+            )
+            print("[OK] Nothing to fetch - returning empty\n", flush=True)
+            return []
+        else:
+            teams_playing_today = set(team_schedule.keys())
             print(f"[OK] {len(teams_playing_today)} teams playing on {self.date}", flush=True)
             print(f"   Teams: {', '.join(sorted(teams_playing_today))}\n", flush=True)
-        else:
-            print(
-                f"[WARN]  WARNING: Could not fetch schedule - will accept all props\n", flush=True
-            )
 
         all_props = []
 
