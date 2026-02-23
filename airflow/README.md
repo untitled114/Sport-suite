@@ -4,7 +4,7 @@ Production orchestration for the NBA betting system using Apache Airflow with Lo
 
 ## Production Setup
 
-**Server:** Hetzner VPS at `5.161.239.229`
+**Server:** Hetzner VPS (set `DEPLOY_SERVER` env var)
 **Executor:** LocalExecutor (parallel task execution)
 **Metadata DB:** PostgreSQL on port 5539 (shared with nba_intelligence)
 
@@ -23,7 +23,7 @@ Production orchestration for the NBA betting system using Apache Airflow with Lo
 ### Check Status
 
 ```bash
-ssh sportsuite@5.161.239.229
+ssh $DEPLOY_SERVER
 
 # Check Airflow services
 sudo systemctl status airflow-scheduler airflow-webserver
@@ -49,7 +49,7 @@ make server-trigger DAG=nba_full_pipeline
 
 ### Access Web UI
 
-http://5.161.239.229:8080
+http://<your-server-ip>:8080
 
 - **Username:** admin
 - **Password:** (set during installation)
@@ -70,7 +70,7 @@ sql_alchemy_conn = postgresql+psycopg2://mlb_user:PASSWORD@localhost:5539/airflo
 
 [webserver]
 web_server_port = 8080
-base_url = http://5.161.239.229:8080
+base_url = http://<your-server-ip>:8080
 ```
 
 ### Airflow Variables
@@ -193,7 +193,7 @@ docker-compose -f docker-compose.airflow.yml up -d
 
 ```bash
 # Copy production airflow.cfg
-scp sportsuite@5.161.239.229:/home/sportsuite/sport-suite/airflow/airflow.cfg ./
+scp $DEPLOY_SERVER:/home/sportsuite/sport-suite/airflow/airflow.cfg ./
 
 # Update for local paths
 sed -i 's|/home/sportsuite/sport-suite|/home/untitled/Sport-suite|g' airflow.cfg

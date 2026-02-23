@@ -15,7 +15,7 @@
 
 set -e
 
-SERVER="sportsuite@5.161.239.229"
+SERVER="${DEPLOY_SERVER:?Set DEPLOY_SERVER env var (e.g. user@your-server-ip)}"
 REMOTE_DIR="/home/sportsuite/sport-suite"
 FLEET_DIR="/home/cephalons"
 

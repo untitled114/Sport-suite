@@ -208,7 +208,7 @@ v: validate
 
 .PHONY: deploy deploy-restart server-status server-logs
 
-SERVER := sportsuite@5.161.239.229
+SERVER := $(DEPLOY_SERVER)
 
 ## Deploy code to production (no restart)
 deploy:
