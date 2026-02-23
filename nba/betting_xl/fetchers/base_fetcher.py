@@ -84,7 +84,7 @@ class BaseFetcher(ABC):
             "User-Agent": random.choice(self.USER_AGENTS),
             "Accept": "application/json, text/html, */*",
             "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
+            "Accept-Encoding": "gzip, deflate",
             "Connection": "keep-alive",
             "Cache-Control": "no-cache",
         }

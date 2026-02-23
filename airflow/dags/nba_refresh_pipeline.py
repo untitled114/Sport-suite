@@ -157,13 +157,16 @@ def nba_refresh_pipeline():
         pattern = f"{SCRIPT_DIR}/betting_xl/lines/all_sources_*.json"
         files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
 
-        if files:
-            run_script(
-                f"{SCRIPT_DIR}/betting_xl/loaders/load_props_to_db.py",
-                ["--file", files[0], "--skip-mongodb"],
-            )
+        if not files:
+            print("[INFO] No props file generated - likely no NBA games today")
+            return {"props_file": None, "status": "no_games"}
 
-        return {"props_file": files[0] if files else None, "status": "success"}
+        run_script(
+            f"{SCRIPT_DIR}/betting_xl/loaders/load_props_to_db.py",
+            ["--file", files[0], "--skip-mongodb"],
+        )
+
+        return {"props_file": files[0], "status": "success"}
 
     @task(task_id="refresh_cheatsheet")
     def refresh_cheatsheet() -> dict[str, Any]:
@@ -203,6 +206,10 @@ def nba_refresh_pipeline():
     @task(task_id="enrich_matchups")
     def enrich_matchups(props_result: dict[str, Any]) -> dict[str, Any]:
         """Re-enrich matchups after refresh."""
+        if props_result.get("status") == "no_games":
+            print("[INFO] No games today - skipping enrich_matchups")
+            return {"coverage": 0, "status": "no_games"}
+
         import psycopg2
 
         from nba.config.database import get_intelligence_db_config
@@ -246,6 +253,10 @@ def nba_refresh_pipeline():
     @task(task_id="generate_xl_predictions")
     def generate_xl_predictions(enrichment: dict[str, Any]) -> dict[str, Any]:
         """Generate XL predictions."""
+        if enrichment.get("status") == "no_games":
+            print("[INFO] No games today - skipping XL predictions")
+            return {"total_picks": 0, "status": "no_games"}
+
         date_str = datetime.now().strftime("%Y-%m-%d")
         output_file = f"{PREDICTIONS_DIR}/xl_picks_{date_str}.json"
 
@@ -268,6 +279,10 @@ def nba_refresh_pipeline():
     @task(task_id="generate_pro_picks")
     def generate_pro_picks(enrichment: dict[str, Any]) -> dict[str, Any]:
         """Generate Pro picks."""
+        if enrichment.get("status") == "no_games":
+            print("[INFO] No games today - skipping Pro picks")
+            return {"total_picks": 0, "status": "no_games"}
+
         date_str = datetime.now().strftime("%Y-%m-%d")
         output_file = f"{PREDICTIONS_DIR}/pro_picks_{date_str}.json"
 
@@ -286,6 +301,10 @@ def nba_refresh_pipeline():
     @task(task_id="generate_odds_api_picks")
     def generate_odds_api_picks(enrichment: dict[str, Any]) -> dict[str, Any]:
         """Generate Odds API picks."""
+        if enrichment.get("status") == "no_games":
+            print("[INFO] No games today - skipping Odds API picks")
+            return {"total_picks": 0, "status": "no_games"}
+
         date_str = datetime.now().strftime("%Y-%m-%d")
         output_file = f"{PREDICTIONS_DIR}/odds_api_picks_{date_str.replace('-', '')}.json"
 
@@ -301,43 +320,32 @@ def nba_refresh_pipeline():
 
         return {"total_picks": picks_count, "status": "success"}
 
-    @task(task_id="generate_two_energy_picks")
-    def generate_two_energy_picks(enrichment: dict[str, Any]) -> dict[str, Any]:
-        """Generate Two Energy picks (Goblin OVER + Inflated UNDER)."""
-        date_str = datetime.now().strftime("%Y-%m-%d")
-        output_file = f"{PREDICTIONS_DIR}/two_energy_picks_{date_str}.json"
-
-        run_script(
-            f"{SCRIPT_DIR}/betting_xl/generate_two_energy_picks.py",
-            ["--date", date_str, "--output", output_file],
-        )
-
-        picks_count = 0
-        if Path(output_file).exists():
-            with open(output_file) as f:
-                picks_count = json.load(f).get("total_picks", 0)
-
-        return {"total_picks": picks_count, "status": "success"}
+    # Two Energy picks DISABLED (too many picks, ~130+/day)
 
     @task(task_id="output_summary")
     def output_summary(
         xl_result: dict[str, Any],
         pro_result: dict[str, Any],
         odds_result: dict[str, Any],
-        energy_result: dict[str, Any],
     ) -> dict[str, Any]:
         """Output refresh summary."""
+        all_no_games = all(
+            r.get("status") == "no_games" for r in [xl_result, pro_result, odds_result]
+        )
+
+        if all_no_games:
+            print("[INFO] No NBA games today - refresh completed with nothing to do")
+            return {"total_picks": 0, "status": "no_games"}
+
         total = (
             xl_result.get("total_picks", 0)
             + pro_result.get("total_picks", 0)
             + odds_result.get("total_picks", 0)
-            + energy_result.get("total_picks", 0)
         )
         print(f"Refresh complete: {total} total picks")
         print(f"  XL: {xl_result.get('total_picks', 0)}")
         print(f"  Pro: {pro_result.get('total_picks', 0)}")
         print(f"  Odds API: {odds_result.get('total_picks', 0)}")
-        print(f"  Two Energy: {energy_result.get('total_picks', 0)}")
         return {"total_picks": total, "status": "complete"}
 
     # ========================================================================
@@ -365,10 +373,9 @@ def nba_refresh_pipeline():
     xl = generate_xl_predictions(enriched)
     pro = generate_pro_picks(enriched)
     odds = generate_odds_api_picks(enriched)
-    energy = generate_two_energy_picks(enriched)
 
     # Summary
-    output_summary(xl, pro, odds, energy)
+    output_summary(xl, pro, odds)
 
 
 dag = nba_refresh_pipeline()

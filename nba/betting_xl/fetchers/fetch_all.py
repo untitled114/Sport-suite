@@ -73,7 +73,7 @@ class FetchOrchestrator:
 
             return props
 
-        except (requests.RequestException, KeyError, ValueError, TypeError) as e:
+        except (requests.RequestException, RuntimeError, KeyError, ValueError, TypeError) as e:
             logger.error(f"BettingPros fetch failed: {e}")
             self.errors.append(("bettingpros", str(e)))
             return []

@@ -1,19 +1,34 @@
 #!/bin/bash
 # Deploy to production server
-# Usage: ./deploy.sh [--restart] [--dry-run]
+# Usage: ./deploy.sh [OPTIONS]
 #
 # Options:
-#   --restart   Restart Airflow services after deployment
-#   --dry-run   Show what would be synced without making changes
+#   --restart        Restart Airflow services after deployment
+#   --restart-bot    Restart Cephalon Axiom (NBA bot) after deployment
+#   --restart-fleet  Restart all 3 Cephalon bots after deployment
+#   --deploy-fleet   Deploy shared cephalon/ module to server
+#   --deploy-axiom   Deploy Axiom bot code to server
+#   --deploy-lumen   Deploy Lumen bot code to server
+#   --deploy-solace  Deploy Solace bot code to server
+#   --deploy-atlas   Deploy Atlas bot code to server
+#   --dry-run        Show what would be synced without making changes
 
 set -e
 
 SERVER="sportsuite@5.161.239.229"
 REMOTE_DIR="/home/sportsuite/sport-suite"
+FLEET_DIR="/home/cephalons"
 
 # Parse arguments
 DRY_RUN=""
 RESTART=false
+RESTART_BOT=false
+RESTART_FLEET=false
+DEPLOY_FLEET=false
+DEPLOY_AXIOM=false
+DEPLOY_LUMEN=false
+DEPLOY_SOLACE=false
+DEPLOY_ATLAS=false
 
 for arg in "$@"; do
   case $arg in
@@ -23,9 +38,30 @@ for arg in "$@"; do
     --restart)
       RESTART=true
       ;;
+    --restart-bot)
+      RESTART_BOT=true
+      ;;
+    --restart-fleet)
+      RESTART_FLEET=true
+      ;;
+    --deploy-fleet)
+      DEPLOY_FLEET=true
+      ;;
+    --deploy-axiom)
+      DEPLOY_AXIOM=true
+      ;;
+    --deploy-lumen)
+      DEPLOY_LUMEN=true
+      ;;
+    --deploy-solace)
+      DEPLOY_SOLACE=true
+      ;;
+    --deploy-atlas)
+      DEPLOY_ATLAS=true
+      ;;
     *)
       echo "Unknown option: $arg"
-      echo "Usage: ./deploy.sh [--restart] [--dry-run]"
+      echo "Usage: ./deploy.sh [--restart] [--restart-bot] [--restart-fleet] [--deploy-fleet] [--deploy-axiom] [--deploy-lumen] [--deploy-solace] [--deploy-atlas] [--dry-run]"
       exit 1
       ;;
   esac
@@ -62,7 +98,8 @@ fi
 
 echo ""
 
-# Sync code (excludes data, logs, venv, secrets)
+# Sync main code (excludes data, logs, venv, secrets)
+echo "=== Syncing main codebase ==="
 rsync -avz --delete $DRY_RUN \
   --exclude='.git' \
   --exclude='__pycache__' \
@@ -81,7 +118,78 @@ rsync -avz --delete $DRY_RUN \
   --exclude='*.log' \
   --exclude='*.pkl' \
   --exclude='catboost_info/' \
+  --exclude='discord/' \
   /home/untitled/Sport-suite/ $SERVER:$REMOTE_DIR/
+
+# Local Cephalons directory
+CEPHALONS_DIR="/home/untitled/Cephalons"
+
+# Deploy shared cephalon module (to shared location accessible by all bots)
+if [ "$DEPLOY_FLEET" = true ]; then
+  echo ""
+  echo "=== Deploying Cephalon Fleet (shared module) ==="
+  ssh $SERVER "mkdir -p $FLEET_DIR"
+  rsync -avz --delete $DRY_RUN \
+    --exclude='__pycache__' \
+    --exclude='*.pyc' \
+    $CEPHALONS_DIR/cephalon/ $SERVER:$FLEET_DIR/cephalon/
+  echo "[OK] Cephalon module synced to $FLEET_DIR/cephalon/"
+fi
+
+# Deploy Axiom bot
+if [ "$DEPLOY_AXIOM" = true ]; then
+  echo ""
+  echo "=== Deploying Cephalon Axiom ==="
+  rsync -avz $DRY_RUN \
+    --exclude='__pycache__' \
+    --exclude='*.pyc' \
+    $CEPHALONS_DIR/axiom/bot.py \
+    $CEPHALONS_DIR/axiom/nba_commands.py \
+    $SERVER:$REMOTE_DIR/discord/
+  echo "[OK] Axiom bot synced"
+fi
+
+# Deploy Lumen bot
+if [ "$DEPLOY_LUMEN" = true ]; then
+  echo ""
+  echo "=== Deploying Cephalon Lumen ==="
+  rsync -avz $DRY_RUN \
+    $CEPHALONS_DIR/lumen/bot.py \
+    $SERVER:/home/palworld/discord/bot.py
+  echo "[OK] Lumen bot.py synced"
+fi
+
+# Deploy Solace bot (staging via /tmp — /home/trading/solace/ is owned by trading)
+if [ "$DEPLOY_SOLACE" = true ]; then
+  echo ""
+  echo "=== Deploying Cephalon Solace ==="
+  rsync -avz $DRY_RUN \
+    $CEPHALONS_DIR/solace/bot.py \
+    $CEPHALONS_DIR/solace/commands.py \
+    $SERVER:/tmp/solace_deploy/
+  if [ -z "$DRY_RUN" ]; then
+    ssh $SERVER "sudo cp /tmp/solace_deploy/bot.py /tmp/solace_deploy/commands.py /home/trading/solace/ && \
+      sudo chown trading:trading /home/trading/solace/bot.py /home/trading/solace/commands.py && \
+      rm -rf /tmp/solace_deploy"
+  fi
+  echo "[OK] Solace bot synced"
+fi
+
+# Deploy Atlas bot
+if [ "$DEPLOY_ATLAS" = true ]; then
+  echo ""
+  echo "=== Deploying Cephalon Atlas ==="
+  ssh $SERVER "mkdir -p $FLEET_DIR/atlas"
+  rsync -avz $DRY_RUN \
+    --exclude='__pycache__' \
+    --exclude='*.pyc' \
+    --exclude='logs/' \
+    $CEPHALONS_DIR/atlas/bot.py \
+    $CEPHALONS_DIR/atlas/monitors.py \
+    $CEPHALONS_DIR/atlas/formatter.py \
+    $SERVER:$FLEET_DIR/atlas/
+  echo "[OK] Atlas bot synced to $FLEET_DIR/atlas/"
+fi
 
 if [ -n "$DRY_RUN" ]; then
   echo ""
@@ -107,6 +215,41 @@ if [ "$RESTART" = true ]; then
     exit 1
   }
   echo "[OK] Services running"
+fi
+
+# Restart Axiom bot if requested
+if [ "$RESTART_BOT" = true ]; then
+  echo ""
+  echo "=== Restarting Cephalon Axiom (NBA bot) ==="
+  ssh $SERVER "sudo systemctl restart cephalon-axiom"
+  echo "[OK] Cephalon Axiom restarted"
+
+  # Verify service is running
+  ssh $SERVER "systemctl is-active cephalon-axiom" || {
+    echo "[ERROR] Cephalon Axiom failed to start!"
+    exit 1
+  }
+  echo "[OK] Cephalon Axiom running"
+fi
+
+# Restart all fleet bots if requested
+if [ "$RESTART_FLEET" = true ]; then
+  echo ""
+  echo "=== Restarting Cephalon Fleet ==="
+
+  for service in cephalon-axiom cephalon-lumen cephalon-solace cephalon-atlas; do
+    echo "  Restarting $service..."
+    ssh $SERVER "sudo systemctl restart $service" && \
+      echo "  [OK] $service restarted" || \
+      echo "  [WARN] $service restart failed (may not exist)"
+  done
+
+  echo ""
+  echo "=== Verifying Fleet ==="
+  for service in cephalon-axiom cephalon-lumen cephalon-solace cephalon-atlas; do
+    STATUS=$(ssh $SERVER "systemctl is-active $service 2>/dev/null" || echo "inactive")
+    echo "  $service: $STATUS"
+  done
 fi
 
 # Post-deploy verification

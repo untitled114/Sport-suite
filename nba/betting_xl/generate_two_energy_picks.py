@@ -6,8 +6,8 @@ Implements the two-energy betting strategy with volume-optimized filters:
 
 POSITIVE ENERGY (OVER):
 - PrizePicks Goblin lines (deflated = easy OVER)
-- POINTS: line < 20 AND deflation >= 5.0 → 77.3% WR
-- REBOUNDS: deflation >= 2.5 OR line >= 9.0 → 77.9% WR
+- POINTS: line < 20 AND deflation >= 6.0 → 77.3% WR
+- REBOUNDS: deflation >= 3.5 → 77.9% WR
 
 NEGATIVE ENERGY (UNDER):
 - FanDuel REBOUNDS: line > consensus + 0.8 → 76.7% WR
@@ -58,8 +58,8 @@ FILTERS = {
         "stat_type": "POINTS",
         "side": "OVER",
         "max_line": 20.0,  # Exclude high scorers (20+ lines lose at 34-43%)
-        "min_deflate": 5.0,  # 77.3% WR on 185 picks (Jan 1 - Feb 6)
-        "description": "Goblin POINTS OVER (line<20, deflation>=5)",
+        "min_deflate": 6.0,  # Tightened from 5.0 to reduce volume
+        "description": "Goblin POINTS OVER (line<20, deflation>=6)",
         "expected_wr": 77.3,
     },
     "goblin_rebounds_over": {
@@ -67,9 +67,8 @@ FILTERS = {
         "book": "prizepicks_goblin",
         "stat_type": "REBOUNDS",
         "side": "OVER",
-        "min_deflate": 2.5,  # 77.9% WR on 249 picks (Jan 1 - Feb 6)
-        "min_line_alt": 9.0,  # OR line >= 9 (91.7% hit rate)
-        "description": "Goblin REBOUNDS OVER (deflation>=2.5 OR line>=9)",
+        "min_deflate": 3.5,  # Tightened from 2.5, removed line>=9 bypass
+        "description": "Goblin REBOUNDS OVER (deflation>=3.5)",
         "expected_wr": 77.9,
     },
     # NEGATIVE ENERGY - UNDER on inflated lines

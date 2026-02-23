@@ -144,13 +144,11 @@ def main():
     xl_file = PREDICTIONS_DIR / f"xl_picks_{DATE_STR}.json"
     pro_file = PREDICTIONS_DIR / f"pro_picks_{DATE_STR}.json"
     odds_file = PREDICTIONS_DIR / f"odds_api_picks_{DATE_STR.replace('-', '')}.json"
-    energy_file = PREDICTIONS_DIR / f"two_energy_picks_{DATE_STR}.json"
 
     pred_steps = {
         "XL": f"python3 nba/betting_xl/generate_xl_predictions.py --output {xl_file} --underdog-only",
         "PRO": f"python3 nba/betting_xl/generate_cheatsheet_picks.py --output {pro_file}",
         "Odds API": f"python3 nba/betting_xl/generate_odds_api_picks.py --date {DATE_STR} --output {odds_file}",
-        "Two Energy": f"python3 -m nba.betting_xl.generate_two_energy_picks --date {DATE_STR} --output {energy_file}",
     }
 
     pick_counts = {}
@@ -167,7 +165,6 @@ def main():
         ("XL", xl_file),
         ("PRO", pro_file),
         ("Odds API", odds_file),
-        ("Two Energy", energy_file),
     ]:
         try:
             if filepath.exists():
@@ -184,7 +181,7 @@ def main():
     print(f"Refresh Complete ({total_elapsed:.0f}s)")
     print(
         f"  XL: {pick_counts.get('XL', 0)} | PRO: {pick_counts.get('PRO', 0)} | "
-        f"Odds API: {pick_counts.get('Odds API', 0)} | Two Energy: {pick_counts.get('Two Energy', 0)}"
+        f"Odds API: {pick_counts.get('Odds API', 0)}"
     )
     print(f"  Total: {total_picks} picks")
     print(f"{'=' * 50}")
