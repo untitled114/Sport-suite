@@ -230,7 +230,7 @@ def nba_full_pipeline():
 
     @task(task_id="fetch_prizepicks")
     def fetch_prizepicks() -> dict[str, Any]:
-        """Fetch PrizePicks props (standard/goblin/demon lines).
+        """Fetch PrizePicks props (standard lines only).
 
         PrizePicks provides DFS lines that are often softer than sportsbooks,
         creating high-spread opportunities for GOLDMINE picks.
@@ -438,8 +438,6 @@ def nba_full_pipeline():
                 picks_count = json.load(f).get("total_picks", 0)
 
         return {"output_file": output_file, "total_picks": picks_count, "status": result["status"]}
-
-    # Two Energy picks DISABLED (too many picks, ~130+/day)
 
     @task(task_id="output_summary")
     def output_summary(

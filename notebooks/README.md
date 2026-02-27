@@ -78,5 +78,4 @@ All notebooks use **real data only**:
 ## Related
 
 - [Main README](../README.md) - Project overview
-- [Case Study](../docs/CASE_STUDY_GOBLIN_LINES.md) - Goblin lines analysis
 - [betting_xl README](../nba/betting_xl/README.md) - Prediction system

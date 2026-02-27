@@ -295,8 +295,6 @@ tests/                              # Unit + integration tests (70%+ coverage)
 - [Notebooks](notebooks/) — Feature importance, validation deep-dive, live prediction examples
 - [Validation Methodology](docs/VALIDATION.md) — Backtesting approach and metrics
 - [Server Operations](docs/SERVER_OPERATIONS.md) — Deployment and monitoring runbook
-- [Case Study: Alternate Lines](docs/CASE_STUDY_GOBLIN_LINES.md) — Training data mismatch analysis
-
 ---
 
 ## License

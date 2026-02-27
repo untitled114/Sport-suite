@@ -131,7 +131,6 @@ def load_all_picks() -> list:
     for pattern, system in [
         ("xl_picks_*.json", "XL"),
         ("pro_picks_*.json", "PRO"),
-        ("two_energy_picks_*.json", "TWO_ENERGY"),
     ]:
         files = sorted(glob.glob(str(PREDICTIONS_DIR / pattern)))
         for fpath in files:
@@ -447,7 +446,7 @@ def run_analysis():
 
     # ── By System ──
     print_section("BY SYSTEM")
-    for sys_name in ["XL", "PRO", "TWO_ENERGY"]:
+    for sys_name in ["XL", "PRO"]:
         sys_picks = [p for p in graded if p["system"] == sys_name]
         if len(sys_picks) < 10:
             continue

@@ -4,19 +4,11 @@ PrizePicks Fetcher via The Odds API
 ====================================
 Fetches NBA player props from PrizePicks using The Odds API.
 
-PrizePicks is a DFS platform with three pick types:
-
-  STANDARD (-137 in API): Core picks at normal multiplier
-  GOBLINS  (+100 in API): Easier picks (lower lines) - REDUCED payout/multiplier
-  DEMONS   (+100 in API): Harder picks (higher lines) - INCREASED payout/multiplier
-
-Note: The odds from the API (-137, +100) are just representations.
-      Actual payouts depend on flex play multipliers when combining picks.
+PrizePicks is a DFS platform. Only standard lines are fetched.
 
 Line Shopping Value:
   - PrizePicks often has SOFTER (higher) standard lines than sportsbooks
   - Compare PP standard lines vs sportsbook lines to find OVER value
-  - Goblins can indicate where "easy" money is (low lines that books also have low)
 
 Usage:
     python fetch_prizepicks.py                    # Fetch today's props
@@ -67,14 +59,6 @@ class PrizePicksFetcher(BaseFetcher):
         "player_rebounds": "REBOUNDS",
         "player_assists": "ASSISTS",
         "player_threes": "THREES",
-    }
-
-    # Alternate markets (demon/goblin picks at +100 odds - higher lines)
-    ALTERNATE_MARKETS = {
-        "player_points_alternate": "POINTS",
-        "player_rebounds_alternate": "REBOUNDS",
-        "player_assists_alternate": "ASSISTS",
-        "player_threes_alternate": "THREES",
     }
 
     def __init__(self, date: str = None, verbose: bool = True):
@@ -164,7 +148,7 @@ class PrizePicksFetcher(BaseFetcher):
         Args:
             event_id: The Odds API event ID
             event_info: Event dict with team info
-            include_alternates: Whether to fetch alternate (demon) lines
+            include_alternates: Whether to fetch alternate lines (unused)
 
         Returns:
             List of prop dictionaries
@@ -273,9 +257,11 @@ class PrizePicksFetcher(BaseFetcher):
                 is_home = player_team == home_team if player_team else None
                 opponent = away_team if is_home else home_team
 
-                # Build prop dict
-                # For alternates, tag with prizepicks_alt book name
-                book_name = "prizepicks_alt" if is_alternate else self.BOOKMAKER
+                # Skip alternate lines entirely
+                if is_alternate:
+                    continue
+
+                book_name = self.BOOKMAKER
 
                 prop = {
                     "player_name": player_name,
@@ -368,33 +354,9 @@ class PrizePicksFetcher(BaseFetcher):
         valid_props = [p for p in all_props if self.validate_prop(p)]
         deduped_props = self.deduplicate_props(valid_props)
 
-        # Classify props as standard/goblin/demon and tag accordingly
-        standard_props = [p for p in deduped_props if not p.get("is_alternate", False)]
-        alt_props = [p for p in deduped_props if p.get("is_alternate", False)]
-
-        # Calculate standard averages per stat_type for classification
-        std_avgs = {}
-        for stat_type in self.MARKETS.values():
-            std_market = [p for p in standard_props if p["stat_type"] == stat_type]
-            std_avgs[stat_type] = (
-                sum(p["line"] for p in std_market) / len(std_market) if std_market else 0
-            )
-
-        # Tag standard props
-        for prop in standard_props:
+        # Tag all props as standard
+        for prop in deduped_props:
             prop["odds_type"] = "standard"
-
-        # Tag alternate props as goblin or demon
-        for prop in alt_props:
-            stat_type = prop["stat_type"]
-            std_avg = std_avgs.get(stat_type, 0)
-
-            if prop["line"] < std_avg:
-                prop["odds_type"] = "goblin"
-                prop["book_name"] = "prizepicks_goblin"
-            else:
-                prop["odds_type"] = "demon"
-                prop["book_name"] = "prizepicks_demon"
 
         # Summary
         print("\n" + "=" * 70)
@@ -405,42 +367,15 @@ class PrizePicksFetcher(BaseFetcher):
         print(f"After deduplication: {len(deduped_props)}")
         print()
 
-        # Count by odds_type
-        goblin_count = len([p for p in deduped_props if p.get("odds_type") == "goblin"])
-        demon_count = len([p for p in deduped_props if p.get("odds_type") == "demon"])
-        print(f"Standard picks: {len(standard_props)} (normal multiplier)")
-        print(f"Goblin picks: {goblin_count} (deflated lines - bet OVER)")
-        print(f"Demon picks: {demon_count} (inflated lines - trap)")
-        print()
-
-        # Breakdown by market (standard lines only)
-        print("Standard lines by market:")
+        # Breakdown by market
+        print("Lines by market:")
         for stat_type in self.MARKETS.values():
-            market_props = [p for p in standard_props if p["stat_type"] == stat_type]
+            market_props = [p for p in deduped_props if p["stat_type"] == stat_type]
             count = len(market_props)
 
             if count > 0:
                 avg_line = sum(p["line"] for p in market_props) / count
                 print(f"  {stat_type:10s}: {count:4d} props (avg line: {avg_line:.2f})")
-
-        # Breakdown by market (goblin vs demon)
-        print("\nAlternate lines by market (goblins < standard < demons):")
-        for stat_type in self.ALTERNATE_MARKETS.values():
-            market_goblins = [
-                p
-                for p in alt_props
-                if p["stat_type"] == stat_type and p.get("odds_type") == "goblin"
-            ]
-            market_demons = [
-                p
-                for p in alt_props
-                if p["stat_type"] == stat_type and p.get("odds_type") == "demon"
-            ]
-
-            if market_goblins or market_demons:
-                print(
-                    f"  {stat_type:10s}: {len(market_goblins)} goblins, {len(market_demons)} demons"
-                )
 
         print("=" * 70 + "\n", flush=True)
 

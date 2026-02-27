@@ -623,7 +623,7 @@ fetch_and_load_cheatsheet() {
 }
 
 fetch_and_load_prizepicks() {
-    section "Fetching PrizePicks" "Direct API (standard/goblin/demon)"
+    section "Fetching PrizePicks" "Direct API (standard lines)"
 
     # Count before fetch
     local before_count=$(PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -t -c \
@@ -768,9 +768,6 @@ generate_all_predictions() {
         fi
     fi
 
-    # Two Energy picks DISABLED (too many picks, ~130+/day)
-    # section "Generating Two Energy Picks" "Goblin OVER + Inflated UNDER"
-    info "Two Energy picks: DISABLED"
 }
 
 ################################################################################
@@ -880,53 +877,6 @@ display_odds_api_picks() {
     echo ""
 }
 
-display_two_energy_picks() {
-    local energy_file="$1"
-
-    echo ""
-    divider
-    echo ""
-    echo -e "  ${BOLD}${MINT}Two Energy Picks${NC} | ${MUTED}Goblin OVER + Inflated UNDER${NC}"
-    echo ""
-    divider
-
-    # Display POSITIVE energy (OVER) picks
-    echo -e "  ${BOLD}${GREEN}POSITIVE ENERGY (OVER)${NC}"
-    local over_picks
-    over_picks=$(jq -c '.picks[] | select(.side == "OVER")' "$energy_file" 2>/dev/null)
-    while IFS= read -r pick_json; do
-        [ -z "$pick_json" ] && continue
-        local player=$(echo "$pick_json" | jq -r '.player_name')
-        local market=$(echo "$pick_json" | jq -r '.stat_type')
-        local line=$(echo "$pick_json" | jq -r '.line')
-        local deflation=$(echo "$pick_json" | jq -r '.deflation // 0')
-        local expected_wr=$(echo "$pick_json" | jq -r '.expected_wr')
-
-        printf "  ${MUTED}|${NC} ${BOLD}${PLAYER_NAME_COLOR}%-20s${NC} ${market} O${BOLD}%-5s${NC} ${MUTED}(deflated -%.1f)${NC} ${GREEN}${expected_wr}%%${NC}\n" "$player" "$line" "$deflation"
-    done <<< "$over_picks"
-
-    echo ""
-
-    # Display NEGATIVE energy (UNDER) picks
-    echo -e "  ${BOLD}${RED}NEGATIVE ENERGY (UNDER)${NC}"
-    local under_picks
-    under_picks=$(jq -c '.picks[] | select(.side == "UNDER")' "$energy_file" 2>/dev/null)
-    while IFS= read -r pick_json; do
-        [ -z "$pick_json" ] && continue
-        local player=$(echo "$pick_json" | jq -r '.player_name')
-        local market=$(echo "$pick_json" | jq -r '.stat_type')
-        local line=$(echo "$pick_json" | jq -r '.line')
-        local book=$(echo "$pick_json" | jq -r '.book')
-        local inflate=$(echo "$pick_json" | jq -r '.line_inflate // 0')
-        local expected_wr=$(echo "$pick_json" | jq -r '.expected_wr')
-
-        printf "  ${MUTED}|${NC} ${BOLD}${PLAYER_NAME_COLOR}%-20s${NC} ${market} U${BOLD}%-5s${NC} ${MUTED}(${book} +%.1f)${NC} ${GREEN}${expected_wr}%%${NC}\n" "$player" "$line" "$inflate"
-    done <<< "$under_picks"
-
-    echo ""
-    divider
-    echo ""
-}
 
 ################################################################################
 # FULL WORKFLOW (run once daily)

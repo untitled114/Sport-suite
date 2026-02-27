@@ -5,7 +5,7 @@ PrizePicks Direct Loader
 Loads PrizePicks props from direct API fetch into nba_props_xl table.
 
 Handles PrizePicks-specific fields:
-- odds_type: standard/goblin/demon
+- odds_type: standard
 - trending_count: pick popularity
 - board_time: when line was first posted
 - pp_updated_at: PrizePicks updated_at timestamp
@@ -251,7 +251,7 @@ class PrizePicksLoader:
         Calculate consensus metrics for all props.
 
         Uses database function to calculate consensus_line from all books.
-        This enables deflation/inflation calculations for two-energy strategy.
+        This enables line spread calculations for line shopping.
         """
         if self.verbose:
             print("\nCalculating consensus metrics...")
@@ -326,7 +326,7 @@ def fetch_and_load(
 
     try:
         loaded = loader.load_props(props)
-        # Calculate consensus so deflation works for two-energy strategy
+        # Calculate consensus for line spread calculations
         loader.calculate_consensus_metrics()
         loader.print_summary()
         return loaded
@@ -368,7 +368,7 @@ def load_from_file(filepath: str, verbose: bool = True) -> int:
 
     try:
         loaded = loader.load_props(props)
-        # Calculate consensus so deflation works for two-energy strategy
+        # Calculate consensus for line spread calculations
         loader.calculate_consensus_metrics()
         loader.print_summary()
         return loaded

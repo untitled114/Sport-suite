@@ -97,7 +97,7 @@ STAT_TYPES = ["POINTS", "REBOUNDS"]
 
 
 # DFS platforms (softer lines)
-DFS_BOOKS = ("prizepicks", "prizepicks_goblin", "prizepicks_alt", "prizepicks_demon", "underdog")
+DFS_BOOKS = ("prizepicks", "underdog")
 
 
 class XLDatasetBuilder:

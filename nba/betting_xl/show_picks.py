@@ -36,8 +36,6 @@ BOOK_ABBREV = {
     "fanatics": "FAN",
     "underdog": "UNDRDG",
     "prizepicks": "PP",
-    "prizepicks_goblin": "PP-GOB",
-    "prizepicks_demon": "PP-DEM",
     "bet365": "B365",
 }
 
@@ -492,68 +490,6 @@ def show_odds_api_picks(date_str, compact=False):
             print()
 
 
-def show_two_energy_picks(date_str, compact=False):
-    """Display Two Energy picks (Goblin OVER + Inflated UNDER)."""
-    filepath = find_picks_file("two_energy_picks", date_str)
-    if not filepath:
-        print(f"\n  {MUTED}No Two Energy picks file for {date_str}.{RESET}")
-        return
-
-    data = load_json(filepath)
-
-    if not data or not data.get("picks"):
-        print(f"\n  {MUTED}No Two Energy picks for {date_str}.{RESET}")
-        return
-
-    picks = data["picks"]
-    print_header(f"TWO ENERGY PICKS ({len(picks)})")
-    print(f"  {MUTED}Strategy:{RESET} Goblin OVER (deflated lines) + Inflated UNDER")
-
-    # Separate by energy type
-    positive = [p for p in picks if p.get("energy") == "POSITIVE"]
-    negative = [p for p in picks if p.get("energy") == "NEGATIVE"]
-
-    if positive:
-        print(f"\n  {GREEN}{BOLD}POSITIVE ENERGY (OVER){RESET} - {len(positive)} picks")
-        print_divider()
-
-        for pick in positive:
-            player = pick.get("player_name", "Unknown")
-            stat = pick.get("stat_type", "?")
-            line = pick.get("line", "?")
-            book = pick.get("book", "prizepicks_goblin")
-            deflation = pick.get("deflation", 0)
-            expected_wr = pick.get("expected_wr", 73)
-
-            print(f"  {BOLD}{WHITE}{player}{RESET}  {MUTED}[{book}]{RESET}")
-            print(
-                f"  {MUTED}│{RESET} {stat} OVER {BOLD}{line}{RESET}  "
-                f"{MUTED}(deflated -{deflation:.1f}){RESET}  "
-                f"{GREEN}{BOLD}{expected_wr}%{RESET} WR"
-            )
-            print()
-
-    if negative:
-        print(f"\n  {RED}{BOLD}NEGATIVE ENERGY (UNDER){RESET} - {len(negative)} picks")
-        print_divider()
-
-        for pick in negative:
-            player = pick.get("player_name", "Unknown")
-            stat = pick.get("stat_type", "?")
-            line = pick.get("line", "?")
-            book = pick.get("book", "fanduel")
-            inflation = pick.get("inflation", 0)
-            expected_wr = pick.get("expected_wr", 77)
-
-            print(f"  {BOLD}{WHITE}{player}{RESET}  {MUTED}[{book}]{RESET}")
-            print(
-                f"  {MUTED}│{RESET} {stat} UNDER {BOLD}{line}{RESET}  "
-                f"{MUTED}(inflated +{inflation:.1f}){RESET}  "
-                f"{GREEN}{BOLD}{expected_wr}%{RESET} WR"
-            )
-            print()
-
-
 def show_xl_table(date_str):
     """Display XL model picks as a condensed table (1 line per pick)."""
     filepath = find_picks_file("xl_picks", date_str)
@@ -778,7 +714,7 @@ def show_odds_table(date_str):
 def load_all_picks(date_str):
     """Load all picks from all systems, returning (all_picks, sources dict)."""
     sources = {}
-    for prefix in ("xl_picks", "pro_picks", "odds_api_picks", "two_energy_picks"):
+    for prefix in ("xl_picks", "pro_picks", "odds_api_picks"):
         path = find_picks_file(prefix, date_str)
         if path:
             data = load_json(path)
@@ -832,8 +768,6 @@ def show_summary(date_str):
                 label = "STANDARD"
             else:
                 label = tier
-        elif src == "two_energy_picks":
-            label = "TWO_ENERGY"
         elif src == "pro_picks":
             label = "PRO"
         elif src == "odds_api_picks":
@@ -859,7 +793,7 @@ def show_summary(date_str):
 
     # Print tier and market side by side
     tier_lines = []
-    tier_order = ["GOLDMINE", "STAR", "STANDARD", "TWO_ENERGY", "PRO", "ODDS_API"]
+    tier_order = ["GOLDMINE", "STAR", "STANDARD", "PRO", "ODDS_API"]
     for t in tier_order:
         if t in tiers:
             tier_lines.append(f"{t}: {BOLD}{tiers[t]}{RESET}")

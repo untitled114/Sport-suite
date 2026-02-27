@@ -103,44 +103,7 @@ def _load_picks(date_str: str = None) -> Optional[dict]:
     except (json.JSONDecodeError, IOError) as e:
         logging.warning(f"Failed to load PRO picks from {pro_file}: {e}")
 
-    # Load Two Energy picks
-    te_file = Path(f"{PREDICTIONS_DIR}/two_energy_picks_{date}.json")
-    te_picks = []
-    try:
-        with open(te_file) as f:
-            te_data = json.load(f)
-            te_picks = te_data.get("picks", []) if isinstance(te_data, dict) else te_data
-            for p in te_picks:
-                p["source"] = "TWO_ENERGY"
-                p["model_version"] = "two_energy"
-                if "line" in p and "best_line" not in p:
-                    p["best_line"] = p["line"]
-                if "book" in p and "best_book" not in p:
-                    p["best_book"] = p["book"]
-                if "filter_tier" not in p:
-                    p["filter_tier"] = p.get("energy", "TWO_ENERGY")
-                if "consensus_line" not in p:
-                    p["consensus_line"] = p.get("line", 0)
-                if "prediction" not in p:
-                    p["prediction"] = p.get("line", 0)
-                if "edge" not in p:
-                    p["edge"] = p.get("deflation", p.get("line_inflate", 0))
-                if "edge_pct" not in p:
-                    line_val = p.get("line", 1)
-                    p["edge_pct"] = (p["edge"] / line_val * 100) if line_val else 0
-                if "p_over" not in p:
-                    wr = p.get("expected_wr", 75)
-                    p["p_over"] = wr / 100.0
-                if "num_books" not in p:
-                    p["num_books"] = 1
-                if "opponent_team" not in p:
-                    p["opponent_team"] = p.get("game_key", "OPP")
-    except FileNotFoundError:
-        pass
-    except (json.JSONDecodeError, IOError) as e:
-        logging.warning(f"Failed to load Two Energy picks from {te_file}: {e}")
-
-    if not xl_data and not pro_picks and not te_picks:
+    if not xl_data and not pro_picks:
         return None
 
     # Merge picks
@@ -149,13 +112,12 @@ def _load_picks(date_str: str = None) -> Optional[dict]:
         for p in xl_picks:
             if "source" not in p:
                 p["source"] = "XL"
-        all_picks = xl_picks + pro_picks + te_picks
+        all_picks = xl_picks + pro_picks
         xl_data["picks"] = all_picks
         xl_data["total_picks"] = len(all_picks)
         return xl_data
     else:
-        all_picks = pro_picks + te_picks
-        return {"picks": all_picks, "total_picks": len(all_picks)}
+        return {"picks": pro_picks, "total_picks": len(pro_picks)}
 
 
 def _strip_ansi(text: str) -> str:
