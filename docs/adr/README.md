@@ -27,7 +27,6 @@ and consequences. ADRs provide:
 
 | Document | Description |
 |----------|-------------|
-| [Case Study: Goblin Lines](../CASE_STUDY_GOBLIN_LINES.md) | Training data mismatch analysis (Feb 2026) |
 | [Database Audit](../DATABASE_AUDIT.md) | Schema documentation |
 
 ## ADR Format

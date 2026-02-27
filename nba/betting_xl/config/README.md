@@ -187,5 +187,4 @@ python3 monitor.py
 ## Related
 
 - [betting_xl README](../README.md) - Prediction system
-- [Case Study](../../../docs/CASE_STUDY_GOBLIN_LINES.md) - Performance analysis
 - [Airflow README](../../../airflow/README.md) - Pipeline orchestration

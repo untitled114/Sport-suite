@@ -78,7 +78,7 @@ TEAM_ABBREV_MAP = {
 }
 
 # DFS platforms (softer lines than traditional sportsbooks)
-DFS_BOOKS = ("prizepicks", "prizepicks_goblin", "prizepicks_alt", "prizepicks_demon", "underdog")
+DFS_BOOKS = ("prizepicks", "underdog")
 
 
 @dataclass

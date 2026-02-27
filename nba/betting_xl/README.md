@@ -44,12 +44,7 @@ Both XL and V3 models run in parallel. Picks include `model_version: "xl"` or `"
 
 ### DFS Platforms (Softer Lines)
 - **Underdog Fantasy** - Standard DFS
-- **PrizePicks** - Standard lines
-- **PrizePicks Goblin** - Lower lines (85% WR in backtest)
-- **PrizePicks Demon** - Higher lines
-
-**Key Finding:** Goblin lines outperform standard lines despite not being in training data.
-See [Case Study](../../docs/CASE_STUDY_GOBLIN_LINES.md).
+- **PrizePicks** - Standard lines only
 
 ---
 
@@ -105,7 +100,7 @@ Picks are filtered to high-confidence scenarios:
 |----------|----------|
 | Walk-forward CV (model baseline) | ~67% |
 | With filters (standard lines) | ~70% |
-| With filters + goblin lines | ~80% |
+| With filters + line shopping | ~80% |
 
 ---
 
@@ -132,7 +127,7 @@ Line shopping and filtering:
 - Calculates edge vs prediction
 - Applies tier-based filtering
 - Blacklists trap books (configurable)
-- Supports `--standard-only` mode (excludes goblin/demon)
+- Supports `--standard-only` mode
 
 ### `show_picks.py`
 CLI display:
@@ -170,13 +165,7 @@ python3 run_historical_backtest.py --start 2026-01-19 --end 2026-02-02 --no-seed
 ### Filtered Backtest (Jan 19 - Feb 2, 2026)
 
 ```
-WITH GOBLIN LINES:
-  Picks: 47 (44 validated)
-  Win Rate: 79.5%
-  POINTS: 74.2% (23W/8L)
-  REBOUNDS: 92.3% (12W/1L)
-
-STANDARD ONLY:
+LINE SHOPPING:
   Picks: 17 validated
   Win Rate: 70.6%
   POINTS: 64.3% (9W/5L)
@@ -221,6 +210,5 @@ docker ps | grep nba
 ## Related Documentation
 
 - [Main README](../../README.md) - Project overview
-- [Case Study: Goblin Lines](../../docs/CASE_STUDY_GOBLIN_LINES.md) - Training data mismatch analysis
 - [CLAUDE.md](../../.claude/CLAUDE.md) - Complete system reference
 - [ADRs](../../docs/adr/) - Architecture decisions

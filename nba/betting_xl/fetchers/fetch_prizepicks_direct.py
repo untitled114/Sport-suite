@@ -5,7 +5,6 @@ PrizePicks Direct Fetcher
 Fetches NBA player props directly from PrizePicks API.
 
 Captures all valuable fields discovered from API analysis:
-- odds_type: standard/goblin/demon
 - line_score: the actual line
 - description: opponent team
 - updated_at: when line was last updated
@@ -332,18 +331,14 @@ class PrizePicksDirectFetcher(BaseFetcher):
         game_id = rels.get("game", {}).get("data", {}).get("id")
         game = lookups["games"].get(game_id, {})
 
-        # Get odds type (standard, goblin, demon)
+        # Get odds type
         odds_type = attrs.get("odds_type", "standard")
 
-        # Build book name based on odds type
-        if odds_type == "standard":
-            book_name = "prizepicks"
-        elif odds_type == "goblin":
-            book_name = "prizepicks_goblin"
-        elif odds_type == "demon":
-            book_name = "prizepicks_demon"
-        else:
-            book_name = f"prizepicks_{odds_type}"
+        # Skip non-standard lines (alternate lines have terrible odds)
+        if odds_type != "standard":
+            return None
+
+        book_name = "prizepicks"
 
         # Get line
         line = attrs.get("line_score")
@@ -403,8 +398,7 @@ class PrizePicksDirectFetcher(BaseFetcher):
             "under_line": float(line),
             "over_odds": -110,  # PrizePicks doesn't expose odds
             "under_odds": -110,
-            # Odds type (KEY FIELD)
-            "odds_type": odds_type,  # standard, goblin, demon
+            "odds_type": odds_type,
             "book_name": book_name,
             # Timing fields
             "board_time": board_time,  # When line was first posted
@@ -505,14 +499,7 @@ class PrizePicksDirectFetcher(BaseFetcher):
         print(f"Parsed props: {len(props)}")
         print()
 
-        # Count by odds type
-        standard = [p for p in props if p["odds_type"] == "standard"]
-        goblins = [p for p in props if p["odds_type"] == "goblin"]
-        demons = [p for p in props if p["odds_type"] == "demon"]
-
-        print(f"Standard lines: {len(standard)}")
-        print(f"Goblin lines:   {len(goblins)} (easier, less payout)")
-        print(f"Demon lines:    {len(demons)} (harder, more payout)")
+        print(f"Standard lines: {len(props)}")
         print()
 
         # Count trending
@@ -529,15 +516,15 @@ class PrizePicksDirectFetcher(BaseFetcher):
                 )
             print()
 
-        # Breakdown by stat (standard only)
-        print("Standard lines by stat type:")
+        # Breakdown by stat
+        print("Lines by stat type:")
         stat_counts = {}
-        for p in standard:
+        for p in props:
             stat = p["stat_type"]
             stat_counts[stat] = stat_counts.get(stat, 0) + 1
 
         for stat, count in sorted(stat_counts.items(), key=lambda x: -x[1]):
-            stat_props = [p for p in standard if p["stat_type"] == stat]
+            stat_props = [p for p in props if p["stat_type"] == stat]
             avg_line = sum(p["line"] for p in stat_props) / len(stat_props)
             print(f"  {stat:15s}: {count:4d} props (avg line: {avg_line:.1f})")
 

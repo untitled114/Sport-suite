@@ -320,8 +320,6 @@ def nba_refresh_pipeline():
 
         return {"total_picks": picks_count, "status": "success"}
 
-    # Two Energy picks DISABLED (too many picks, ~130+/day)
-
     @task(task_id="output_summary")
     def output_summary(
         xl_result: dict[str, Any],
