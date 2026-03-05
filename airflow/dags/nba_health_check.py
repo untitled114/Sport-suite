@@ -1,7 +1,7 @@
 """
 NBA Health Check DAG
 
-Scheduled: Every 4 hours
+Scheduled: Every 6 hours
 Purpose: System health monitoring and alerting
 
 Tasks:
@@ -58,9 +58,16 @@ default_args = {
 
 
 def send_health_alert(subject: str, body: str, is_critical: bool = False) -> None:
-    """Send health alert via email."""
+    """Send health alert via Discord DM (primary) and email (fallback)."""
+    from discord_notify import send_dm
+
     priority_prefix = "[CRITICAL]" if is_critical else "[WARNING]"
 
+    # Discord DM — immediate and reliable
+    icon = "🚨" if is_critical else "⚠️"
+    send_dm(f"{icon} **{priority_prefix} {subject}**\n{body[:800]}")
+
+    # Email fallback
     try:
         send_email(
             to=default_args["email"],
@@ -68,7 +75,7 @@ def send_health_alert(subject: str, body: str, is_critical: bool = False) -> Non
             html_content=body,
         )
     except Exception as e:
-        print(f"Failed to send health alert: {e}")
+        print(f"Failed to send alert email: {e}")
 
 
 def alert_on_health_failure(context: dict[str, Any]) -> None:
@@ -202,14 +209,14 @@ def nba_health_check():
         json_files = list(models_path.glob("*.json"))
         json_count = len(json_files)
 
-        # Check minimum requirements (24 pkl files, 4 json metadata)
+        # Check minimum requirements (24 pkl files for XL + V3 across deployed markets)
         expected_pkl = 24
 
         if pkl_count < expected_pkl:
             raise Exception(f"Missing model files: {pkl_count}/{expected_pkl} .pkl files")
 
-        # Verify key model files exist
-        required_markets = ["points", "rebounds", "assists", "threes"]
+        # Verify key model files exist for deployed markets only (ASSISTS/THREES disabled)
+        required_markets = ["points", "rebounds"]
         required_components = [
             "regressor",
             "classifier",
@@ -411,6 +418,56 @@ def nba_health_check():
         }
 
     @task(
+        task_id="check_game_log_freshness",
+        doc_md="""
+        ### Check Game Log Freshness
+
+        Verifies player_game_logs has been updated recently.
+        Stale game logs silently break the prediction pipeline by causing the
+        "stale last game" guard to reject every player.
+
+        Threshold: logs must be within 3 days (allows for NBA off days).
+        """,
+    )
+    def check_game_log_freshness() -> dict[str, Any]:
+        """Verify player_game_logs is not stale."""
+        from datetime import date
+
+        import psycopg2
+
+        from nba.config.database import get_players_db_config
+
+        config = get_players_db_config()
+        conn = psycopg2.connect(**config)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT MAX(game_date) FROM player_game_logs;")
+            latest = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM player_game_logs;")
+            total = cursor.fetchone()[0]
+        finally:
+            cursor.close()
+            conn.close()
+
+        if latest is None:
+            raise Exception("player_game_logs is empty")
+
+        days_stale = (date.today() - latest).days
+        print(f"[INFO] player_game_logs: latest={latest}, total={total:,}, stale={days_stale}d")
+
+        if days_stale > 3:
+            # Raise directly — the on_failure_callback will send the Discord DM.
+            # Do not call alert_data_stale() here to avoid a double notification.
+            raise Exception(
+                f"player_game_logs is {days_stale} days stale (latest: {latest}). "
+                "Predictions will fail — ESPN API may be down. "
+                "Run: python3 nba/scripts/fetch_daily_stats.py --days <N> to backfill."
+            )
+
+        print(f"[OK] Game logs current: {latest} ({days_stale}d ago)")
+        return {"latest_date": str(latest), "days_stale": days_stale, "total_rows": total}
+
+    @task(
         task_id="check_api_health",
         doc_md="""
         ### Check API Health
@@ -467,6 +524,7 @@ def nba_health_check():
         data_result: dict[str, Any],
         disk_result: dict[str, Any],
         api_result: dict[str, Any],
+        game_log_result: dict[str, Any],
     ) -> dict[str, Any]:
         """Aggregate health checks and send report."""
         all_results = {
@@ -475,6 +533,7 @@ def nba_health_check():
             "data": data_result,
             "disk": disk_result,
             "api": api_result,
+            "game_logs": game_log_result,
         }
 
         # Determine overall status
@@ -507,6 +566,9 @@ def nba_health_check():
         disk_pct = disk_result.get("usage_percent", 0)
         print(f"Disk: {disk_status} ({disk_pct:.1f}%)")
         print(f"API: {api_result.get('status', 'unknown')}")
+        game_log_stale = game_log_result.get("days_stale", "?")
+        game_log_latest = game_log_result.get("latest_date", "unknown")
+        print(f"Game Logs: latest={game_log_latest} ({game_log_stale}d ago)")
         print("=" * 60)
         print(f"OVERALL: {overall_status.upper()}")
         print("=" * 60 + "\n")
@@ -552,6 +614,11 @@ def nba_health_check():
                     <td>{api_result.get('status')}</td>
                     <td>ESPN: {api_result.get('espn_api')}</td>
                 </tr>
+                <tr>
+                    <td>Game Logs</td>
+                    <td>{"ok" if game_log_result.get("days_stale", 99) <= 3 else "stale"}</td>
+                    <td>latest={game_log_result.get("latest_date", "unknown")} ({game_log_result.get("days_stale", "?")}d ago)</td>
+                </tr>
             </table>
 
             {f"<h4>Warnings:</h4>{warnings_html}" if warnings_html else ""}
@@ -579,6 +646,7 @@ def nba_health_check():
     data_check = check_data_freshness()
     disk_check = check_disk_space()
     api_check = check_api_health()
+    game_log_check = check_game_log_freshness()
 
     # Aggregate results (terminal task)
     send_health_report(
@@ -587,6 +655,7 @@ def nba_health_check():
         data_check,
         disk_check,
         api_check,
+        game_log_check,
     )
 
 
