@@ -1,7 +1,7 @@
 """
 NBA Full Pipeline DAG
 
-Scheduled: Daily at 05:00 PM EST (22:00 UTC)
+Scheduled: Daily at 09:00 AM EST (14:00 UTC)
 Purpose: Complete data collection + predictions
 
 This is the main daily workflow that:
@@ -9,7 +9,7 @@ This is the main daily workflow that:
 2. Enriches matchups
 3. Generates predictions (XL, Pro, Odds API)
 
-Run once daily at 5pm EST when all data sources (including PrizePicks/DFS)
+Run once daily at 9am EST when all data sources (including PrizePicks/DFS)
 are available. Earlier runs miss soft lines that create high-spread opportunities.
 
 Use nba_refresh_pipeline for line movement updates during the day.
@@ -26,12 +26,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from callbacks import on_failure, on_retry, on_success
+from callbacks import dag_failure, on_failure, on_retry, on_success
 
 from airflow.decorators import dag, task
 from airflow.models import Variable
 from airflow.timetables.trigger import CronTriggerTimetable
-from airflow.utils.email import send_email
 
 # ============================================================================
 # Configuration
@@ -95,12 +94,23 @@ def get_prizepicks_count(date_str: str) -> int:
 
 
 def run_script(
-    script_path: str, args: list[str] | None = None, timeout: int = 300
+    script_path: str,
+    args: list[str] | None = None,
+    timeout: int = 300,
+    raise_on_error: bool = False,
 ) -> dict[str, Any]:
-    """Helper to run a Python script with standard error handling."""
+    """Helper to run a Python script with standard error handling.
+
+    Args:
+        raise_on_error: If True, raises Exception on non-zero exit instead of
+                        returning {"status": "error"}. Use for critical tasks
+                        where silent failure is unacceptable.
+    """
     import subprocess
 
     if not Path(script_path).exists():
+        if raise_on_error:
+            raise Exception(f"Script not found: {script_path}")
         return {"status": "skipped", "reason": f"Script not found: {script_path}"}
 
     cmd = ["python3", script_path] + (args or [])
@@ -114,29 +124,15 @@ def run_script(
     )
 
     if result.returncode != 0:
+        error_output = result.stderr or result.stdout
+        if raise_on_error:
+            raise Exception(
+                f"{Path(script_path).name} failed (exit {result.returncode}): "
+                f"{error_output[-500:]}"
+            )
         return {"status": "error", "error": result.stderr, "stdout": result.stdout}
 
     return {"status": "success", "stdout": result.stdout}
-
-
-def alert_on_failure(context: dict[str, Any]) -> None:
-    """Send alert on task failure."""
-    task_instance = context.get("task_instance")
-    dag_id = context.get("dag").dag_id
-    task_id = task_instance.task_id
-
-    subject = f"[AIRFLOW] NBA Full Pipeline Failed: {task_id}"
-    body = f"""
-    <h3>Task Failure Alert</h3>
-    <p><b>DAG:</b> {dag_id}</p>
-    <p><b>Task:</b> {task_id}</p>
-    <p><b>Log URL:</b> <a href="{task_instance.log_url}">{task_instance.log_url}</a></p>
-    """
-
-    try:
-        send_email(to=default_args["email"], subject=subject, html_content=body)
-    except Exception as e:
-        print(f"Failed to send alert email: {e}")
 
 
 # ============================================================================
@@ -154,7 +150,7 @@ def alert_on_failure(context: dict[str, Any]) -> None:
     default_args=default_args,
     max_active_runs=1,
     doc_md=__doc__,
-    on_failure_callback=alert_on_failure,
+    on_failure_callback=dag_failure,
 )
 def nba_full_pipeline():
     """
@@ -237,7 +233,9 @@ def nba_full_pipeline():
         """
         date_str = datetime.now().strftime("%Y-%m-%d")
 
-        # Fetch and load PrizePicks data
+        # Fetch and load PrizePicks data. Script errors are intentionally not
+        # raised here — PrizePicks is a non-critical DFS source. If it fails,
+        # GOLDMINE picks are skipped but the rest of the pipeline continues.
         run_script(
             f"{SCRIPT_DIR}/betting_xl/loaders/load_prizepicks_to_db.py",
             ["--fetch", "--quiet"],
@@ -305,10 +303,45 @@ def nba_full_pipeline():
 
     @task(task_id="fetch_game_results")
     def fetch_game_results() -> dict[str, Any]:
-        """Fetch yesterday's game results."""
-        return run_script(
-            f"{SCRIPT_DIR}/scripts/fetch_daily_stats.py", ["--days", "1"], timeout=600
+        """Fetch yesterday's game results and verify game logs were updated."""
+        from datetime import date, timedelta
+
+        import psycopg2
+
+        from nba.config.database import get_players_db_config
+
+        result = run_script(
+            f"{SCRIPT_DIR}/scripts/fetch_daily_stats.py",
+            ["--days", "1"],
+            timeout=600,
+            raise_on_error=True,
         )
+
+        # Verify game logs are actually fresh (max 3 days stale)
+        # This catches ESPN API silent failures that previously went undetected
+        config = get_players_db_config()
+        conn = psycopg2.connect(**config)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT MAX(game_date) FROM player_game_logs;")
+            latest = cursor.fetchone()[0]
+        finally:
+            cursor.close()
+            conn.close()
+
+        if latest is None:
+            raise Exception("player_game_logs is empty — game log fetch failed silently")
+
+        days_stale = (date.today() - latest).days
+        # NBA has occasional off days; allow up to 3 days before alarming
+        if days_stale > 3:
+            raise Exception(
+                f"player_game_logs is {days_stale} days stale (latest: {latest}). "
+                "ESPN API may be down or fetch_daily_stats failed."
+            )
+
+        print(f"[OK] player_game_logs current: latest={latest} ({days_stale}d ago)")
+        return result
 
     @task(task_id="populate_actuals")
     def populate_actuals(game_results: dict[str, Any]) -> dict[str, Any]:
