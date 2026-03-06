@@ -191,7 +191,6 @@ class XLPredictionsGenerator:
         for ver in self.model_versions:
             loaded_counts[ver] = sum(1 for m in self.predictors.values() if ver in m)
 
-        # NOTE: Odds API picks are now handled by standalone generate_odds_api_picks.py
         counts_str = " + ".join(f"{c} {v.upper()}" for v, c in loaded_counts.items())
         logger.info(f"[OK] Loaded {counts_str} models")
 
@@ -1061,7 +1060,6 @@ class XLPredictionsGenerator:
                 logger.debug(f"Skipped {player_name} {stat_type}: {e}")
                 continue
 
-        # NOTE: Odds API picks are now handled by standalone generate_odds_api_picks.py
         logger.info(f"\n[OK] Generated {len(self.picks)} actionable XL picks")
         if skip_reasons:
             logger.info(
@@ -1530,7 +1528,6 @@ class XLPredictionsGenerator:
             self.initialize_drift_detection()
             self.load_opponent_defense_ranks()
             self.load_vegas_spreads()
-            # NOTE: Odds API picks are now standalone (generate_odds_api_picks.py)
             self.generate_picks()
             self.aggregate_drift_results()
 

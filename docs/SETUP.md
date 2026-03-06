@@ -17,7 +17,7 @@ nano .env
 
 # 4. Source the environment
 source .env
-export DB_USER DB_PASSWORD ODDS_API_KEY BETTINGPROS_API_KEY
+export DB_USER DB_PASSWORD BETTINGPROS_API_KEY
 
 # 5. Start databases
 cd docker && docker-compose up -d && cd ..
@@ -47,8 +47,6 @@ DB_PASSWORD=your_secure_password_here
 # BettingPros Premium API key (required for /v3/props endpoint)
 BETTINGPROS_API_KEY=your_bettingpros_api_key
 
-# The Odds API key (for Pick6 and live odds)
-ODDS_API_KEY=your_odds_api_key
 ```
 
 ### Optional Variables
@@ -83,7 +81,7 @@ DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 
 ```bash
 source .env
-export DB_USER DB_PASSWORD ODDS_API_KEY BETTINGPROS_API_KEY
+export DB_USER DB_PASSWORD BETTINGPROS_API_KEY
 ./nba/nba-predictions.sh
 ```
 
@@ -202,10 +200,10 @@ crontab -e
 # Add these entries (adjust timezone as needed):
 
 # Morning data refresh (10 AM EST)
-0 10 * * * cd /opt/Sport-suite && source .env && export DB_USER DB_PASSWORD ODDS_API_KEY BETTINGPROS_API_KEY && ./nba/nba-predictions.sh full >> /var/log/nba/morning.log 2>&1
+0 10 * * * cd /opt/Sport-suite && source .env && export DB_USER DB_PASSWORD BETTINGPROS_API_KEY && ./nba/nba-predictions.sh full >> /var/log/nba/morning.log 2>&1
 
 # Evening predictions (5 PM EST)
-0 17 * * * cd /opt/Sport-suite && source .env && export DB_USER DB_PASSWORD ODDS_API_KEY BETTINGPROS_API_KEY && ./nba/nba-predictions.sh refresh >> /var/log/nba/evening.log 2>&1
+0 17 * * * cd /opt/Sport-suite && source .env && export DB_USER DB_PASSWORD BETTINGPROS_API_KEY && ./nba/nba-predictions.sh refresh >> /var/log/nba/evening.log 2>&1
 
 # Hourly line updates (during game days)
 0 12-23 * * * cd /opt/Sport-suite && source .env && export DB_USER DB_PASSWORD && ./nba/nba-predictions.sh update_props >> /var/log/nba/lines.log 2>&1

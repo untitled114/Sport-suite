@@ -99,7 +99,6 @@ def nba_validation_pipeline():
     Validates betting picks against actual results:
     - XL picks (ML model predictions)
     - PRO picks (BettingPros cheatsheet filters)
-    - ODDS_API picks (Pick6 multiplier strategy)
 
     Tracks performance over time and alerts on degradation.
     """
@@ -143,7 +142,7 @@ def nba_validation_pipeline():
         }
 
         # Extract system results from output
-        for system in ["XL", "PRO", "ODDS_API"]:
+        for system in ["XL", "PRO"]:
             # Look for lines like "XL           44       26     18     0      59.1%"
             for line in output.split("\n"):
                 if line.strip().startswith(system):
@@ -216,7 +215,7 @@ def nba_validation_pipeline():
                         pass
 
         # Extract by system
-        for system in ["XL", "PRO", "ODDS_API"]:
+        for system in ["XL", "PRO"]:
             for line in output.split("\n"):
                 if line.strip().startswith(system) and "SYSTEM" not in line:
                     parts = line.split()
@@ -289,7 +288,7 @@ def nba_validation_pipeline():
                         pass
 
         # Extract by system
-        for system in ["XL", "PRO", "ODDS_API"]:
+        for system in ["XL", "PRO"]:
             for line in output.split("\n"):
                 if line.strip().startswith(system) and "SYSTEM" not in line:
                     parts = line.split()
@@ -337,7 +336,7 @@ def nba_validation_pipeline():
             alerts.append(f"7-Day ROI ({roi_7d:+.1f}%) below threshold ({MIN_ROI:+.1f}%)")
 
         # Check individual system performance (7-day)
-        for system in ["xl", "pro", "odds_api"]:
+        for system in ["xl", "pro"]:
             sys_wr = rolling_7d.get(f"{system}_wr", 0)
             sys_roi = rolling_7d.get(f"{system}_roi", 0)
 
@@ -372,7 +371,6 @@ def nba_validation_pipeline():
                 <tr><td>Total ROI</td><td>{roi_7d:+.1f}%</td></tr>
                 <tr><td>XL Win Rate</td><td>{rolling_7d.get('xl_wr', 0):.1f}%</td></tr>
                 <tr><td>PRO Win Rate</td><td>{rolling_7d.get('pro_wr', 0):.1f}%</td></tr>
-                <tr><td>ODDS_API Win Rate</td><td>{rolling_7d.get('odds_api_wr', 0):.1f}%</td></tr>
             </table>
 
             <h4>30-Day Performance:</h4>
@@ -440,12 +438,6 @@ def nba_validation_pipeline():
                     "losses": yesterday.get("pro_losses", 0),
                     "win_rate": yesterday.get("pro_wr", 0),
                 },
-                "odds_api": {
-                    "graded": yesterday.get("odds_api_graded", 0),
-                    "wins": yesterday.get("odds_api_wins", 0),
-                    "losses": yesterday.get("odds_api_losses", 0),
-                    "win_rate": yesterday.get("odds_api_wr", 0),
-                },
             },
             "rolling_7d": {
                 "period": rolling_7d.get("period"),
@@ -458,7 +450,6 @@ def nba_validation_pipeline():
                 "total_roi": rolling_7d.get("total_roi", 0),
                 "xl_win_rate": rolling_7d.get("xl_wr", 0),
                 "pro_win_rate": rolling_7d.get("pro_wr", 0),
-                "odds_api_win_rate": rolling_7d.get("odds_api_wr", 0),
             },
             "rolling_30d": {
                 "period": rolling_30d.get("period"),
@@ -503,7 +494,7 @@ def nba_validation_pipeline():
 
         # Yesterday's results
         print(f"\n--- YESTERDAY ({yesterday.get('date', 'N/A')}) ---")
-        for system in ["xl", "pro", "odds_api"]:
+        for system in ["xl", "pro"]:
             graded = yesterday.get(f"{system}_graded", 0)
             wins = yesterday.get(f"{system}_wins", 0)
             losses = yesterday.get(f"{system}_losses", 0)
@@ -517,7 +508,7 @@ def nba_validation_pipeline():
             f"  Total: {rolling_7d.get('total_wins', 0)}W-{rolling_7d.get('total_losses', 0)}L "
             f"({rolling_7d.get('total_wr', 0):.1f}%) | ROI: {rolling_7d.get('total_roi', 0):+.1f}%"
         )
-        for system in ["xl", "pro", "odds_api"]:
+        for system in ["xl", "pro"]:
             wr = rolling_7d.get(f"{system}_wr", 0)
             roi = rolling_7d.get(f"{system}_roi", 0)
             if wr > 0:

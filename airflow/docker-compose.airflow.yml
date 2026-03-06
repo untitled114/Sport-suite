@@ -63,7 +63,6 @@ x-airflow-common: &airflow-common
     NBA_INT_DB_NAME: '${NBA_INT_DB_NAME:-nba_intelligence}'
     DB_USER: '${DB_USER:-mlb_user}'
     DB_PASSWORD: '${DB_PASSWORD:-${DB_PASSWORD}}'
-    ODDS_API_KEY: '${ODDS_API_KEY:-}'
 
   volumes:
     - ./dags:/opt/airflow/dags

@@ -7,7 +7,6 @@ Compare predicted picks against actual game results.
 Validates all pick sources:
 - XL picks (xl_picks_*.json) - ML model predictions
 - PRO picks (pro_picks_*.json) - BettingPros cheatsheet filters
-- ODDS_API picks (odds_api_picks_*.json) - Pick6 multiplier strategy
 
 Usage:
     # Single date
@@ -53,12 +52,12 @@ COMBO_STAT_MAP = {
 
 def load_all_predictions(date: str, predictions_dir: str = "predictions") -> Dict[str, List]:
     """
-    Load predictions from all sources (XL, PRO, ODDS_API).
+    Load predictions from all sources (XL, PRO).
 
-    Returns dict with keys: 'xl', 'pro', 'odds_api', each containing list of picks.
+    Returns dict with keys: 'xl', 'pro', each containing list of picks.
     """
     date_compact = date.replace("-", "")
-    result = {"xl": [], "pro": [], "odds_api": []}
+    result = {"xl": [], "pro": []}
 
     # XL picks
     xl_files = [
@@ -107,32 +106,6 @@ def load_all_predictions(date: str, predictions_dir: str = "predictions") -> Dic
                     if "side" not in pick:
                         pick["side"] = "OVER"
                     result["pro"].append(pick)
-                break
-            except (json.JSONDecodeError, KeyError):
-                continue
-
-    # ODDS_API picks
-    odds_files = [
-        Path(predictions_dir) / f"odds_api_picks_{date}.json",
-        Path(predictions_dir) / f"odds_api_picks_{date_compact}.json",
-    ]
-    for filepath in odds_files:
-        if filepath.exists():
-            try:
-                with open(filepath, "r") as f:
-                    data = json.load(f)
-                for pick in data.get("picks", []):
-                    pick["_source"] = "odds_api"
-                    pick["_game_date"] = date
-                    pick["_filter"] = pick.get("filter_name", pick.get("source", "odds_api"))
-                    # Normalize field names
-                    if "best_line" not in pick:
-                        pick["best_line"] = pick.get("line")
-                    if "prediction" not in pick:
-                        pick["prediction"] = pick.get("projection", pick.get("line", 0))
-                    if "side" not in pick:
-                        pick["side"] = "OVER"
-                    result["odds_api"].append(pick)
                 break
             except (json.JSONDecodeError, KeyError):
                 continue
@@ -379,7 +352,7 @@ def validate_date_range(
     # Determine which systems have data
     active_systems = [
         s
-        for s in ["xl", "pro", "odds_api"]
+        for s in ["xl", "pro"]
         if by_system[s]["wins"] + by_system[s]["losses"] + by_system[s]["pushes"] > 0
     ]
     system_labels = [s.upper() for s in active_systems]
@@ -567,7 +540,7 @@ def main():
     )
     parser.add_argument(
         "--system",
-        choices=["xl", "pro", "odds_api"],
+        choices=["xl", "pro"],
         help="Filter to specific system only",
     )
     parser.add_argument(

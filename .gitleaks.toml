@@ -37,12 +37,6 @@ regex = '''BETTINGPROS_API_KEY\s*=\s*['\"]?([a-zA-Z0-9]{20,})['\"]?'''
 keywords = ["bettingpros"]
 
 [[rules]]
-id = "odds-api-key"
-description = "The Odds API Key"
-regex = '''ODDS_API_KEY\s*=\s*['\"]?([a-f0-9]{32})['\"]?'''
-keywords = ["odds_api", "theoddsapi"]
-
-[[rules]]
 id = "postgresql-password"
 description = "PostgreSQL Password in Connection String"
 regex = '''postgresql.*:\/\/[^:]+:([^@]+)@'''

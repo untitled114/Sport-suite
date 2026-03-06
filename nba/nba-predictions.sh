@@ -136,10 +136,6 @@ check_env_setup() {
     if [ -z "${BETTINGPROS_API_KEY:-}" ]; then
         warnings+=("BETTINGPROS_API_KEY (props fetching will fail)")
     fi
-    if [ -z "${ODDS_API_KEY:-}" ]; then
-        warnings+=("ODDS_API_KEY (Pick6 picks will be unavailable)")
-    fi
-
     # If missing required vars, show setup instructions
     if [ ${#missing[@]} -gt 0 ]; then
         echo ""
@@ -158,11 +154,10 @@ check_env_setup() {
         echo "     DB_USER=mlb_user"
         echo "     DB_PASSWORD=your_secure_password"
         echo "     BETTINGPROS_API_KEY=your_api_key"
-        echo "     ODDS_API_KEY=your_api_key"
         echo ""
         echo "  3. Source the file before running:"
         echo "     source .env"
-        echo "     export DB_USER DB_PASSWORD BETTINGPROS_API_KEY ODDS_API_KEY"
+        echo "     export DB_USER DB_PASSWORD BETTINGPROS_API_KEY"
         echo "     ./nba/nba-predictions.sh"
         echo ""
         echo "  See docs/SETUP.md for complete setup instructions."
@@ -190,7 +185,7 @@ DB_NAME="${NBA_INT_DB_NAME:-nba_intelligence}"
 DB_USER="${DB_USER:-mlb_user}"
 
 # Export DB credentials and API keys for Python scripts (they read from os.getenv)
-export DB_USER DB_PASSWORD ODDS_API_KEY BETTINGPROS_API_KEY
+export DB_USER DB_PASSWORD BETTINGPROS_API_KEY
 
 # Python path for imports
 export PYTHONPATH="$PROJECT_ROOT"
@@ -750,24 +745,6 @@ generate_all_predictions() {
         fi
     fi
 
-    section "Generating Odds API Picks" "Pick6 multipliers"
-    if [ -f "$SCRIPT_DIR/betting_xl/generate_odds_api_picks.py" ]; then
-        local odds_file="$PREDICTIONS_DIR/odds_api_picks_${DATE_STR//-/}.json"
-        if python3 "$SCRIPT_DIR/betting_xl/generate_odds_api_picks.py" --date "$DATE_STR" --output "$odds_file" >> "$LOG_FILE" 2>&1; then
-            if [ -f "$odds_file" ] && command -v jq >/dev/null 2>&1; then
-                local odds_count=$(jq '.total_picks // 0' "$odds_file")
-                if [ "$odds_count" -gt 0 ]; then
-                    display_odds_api_picks "$odds_file"
-                    success "Odds API picks: ${odds_count}"
-                else
-                    info "No Odds API picks (filters not met)"
-                fi
-            fi
-        else
-            warning "Odds API picks skipped"
-        fi
-    fi
-
 }
 
 ################################################################################
@@ -844,38 +821,6 @@ display_pro_picks() {
     echo ""
 }
 
-display_odds_api_picks() {
-    local odds_file="$1"
-
-    echo ""
-    divider
-    echo ""
-    echo -e "  ${BOLD}${ORANGE}Odds API Picks${NC} | ${MUTED}Pick6 Multipliers${NC}"
-    echo ""
-    divider
-
-    local odds_picks
-    odds_picks=$(jq -c '.picks[]' "$odds_file" 2>/dev/null)
-    while IFS= read -r pick_json; do
-        [ -z "$pick_json" ] && continue
-        local player=$(echo "$pick_json" | jq -r '.player_name')
-        local market=$(echo "$pick_json" | jq -r '.stat_type')
-        local line=$(echo "$pick_json" | jq -r '.line')
-        local mult=$(echo "$pick_json" | jq -r '.pick6_multiplier | tonumber | . * 100 | round / 100')
-        local projection=$(echo "$pick_json" | jq -r '.projection | tonumber | . * 10 | round / 10')
-        local expected_wr=$(echo "$pick_json" | jq -r '.expected_wr')
-
-        echo -e "  ${BOLD}${PLAYER_NAME_COLOR}${player}${NC}"
-        echo -e "  ${MUTED}|${NC} ${market} OVER ${BOLD}${line}${NC} @ Pick6"
-        printf "  ${MUTED}|${NC}  %-12s %b\n" "Multiplier:" "${BOLD}${ORANGE}${mult}x${NC}"
-        printf "  ${MUTED}|${NC}  %-12s %b\n" "Projection:" "${BOLD}${projection}${NC}"
-        printf "  ${MUTED}|${NC}  %-12s %b\n" "Expected WR:" "${BOLD}${SUCCESS}${expected_wr}%${NC}"
-        echo ""
-    done <<< "$odds_picks"
-
-    divider
-    echo ""
-}
 
 
 ################################################################################
@@ -1127,7 +1072,7 @@ validate_workflow() {
     fi
 
     # Run validation (from betting_xl directory so relative paths work)
-    section "Running Validation" "Checking XL, PRO, and ODDS_API picks"
+    section "Running Validation" "Checking XL and PRO picks"
 
     pushd "$SCRIPT_DIR/betting_xl" > /dev/null
     if python3 validate_predictions.py $cmd_args 2>&1 | tee -a "$LOG_FILE"; then

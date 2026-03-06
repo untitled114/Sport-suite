@@ -101,7 +101,12 @@ class BettingProsFetcher(BaseFetcher):
             verbose=verbose,
         )
 
-        self.date = date or datetime.now().strftime("%Y-%m-%d")
+        if date:
+            self.date = date
+        else:
+            from zoneinfo import ZoneInfo
+
+            self.date = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
         self.books_mode = books
 
         # Select which books to fetch
@@ -288,14 +293,17 @@ class BettingProsFetcher(BaseFetcher):
             game_id = game_info.get("id", "")
             game_time = game_info.get("start", "")
 
-            # Parse game date/time
-            # IMPORTANT: Use API's actual game date, then filter by requested date later
+            # Parse game date/time - convert UTC to ET so evening games (7+ PM ET)
+            # don't get misdated as the next day (e.g. 7:30 PM ET = 00:30 UTC next day)
             if game_time:
                 try:
-                    game_dt = datetime.fromisoformat(game_time.replace("Z", "+00:00"))
-                    game_date = game_dt.strftime("%Y-%m-%d")  # API's actual game date
-                    game_time_str = game_dt.strftime("%H:%M:%S")
-                except (ValueError, AttributeError):
+                    from zoneinfo import ZoneInfo
+
+                    game_dt_utc = datetime.fromisoformat(game_time.replace("Z", "+00:00"))
+                    game_dt_et = game_dt_utc.astimezone(ZoneInfo("America/New_York"))
+                    game_date = game_dt_et.strftime("%Y-%m-%d")
+                    game_time_str = game_dt_et.strftime("%H:%M:%S")
+                except (ValueError, AttributeError, ImportError):
                     game_date = self.date
                     game_time_str = None
             else:
@@ -395,14 +403,17 @@ class BettingProsFetcher(BaseFetcher):
                 competition = competitions[0]
                 competitors = competition.get("competitors", [])
 
-                # Get game date from event
+                # Get game date from event - convert UTC to ET
                 game_date_str = event.get("date", "")
                 if game_date_str:
                     try:
-                        game_date = datetime.fromisoformat(
-                            game_date_str.replace("Z", "+00:00")
-                        ).strftime("%Y-%m-%d")
-                    except (ValueError, AttributeError):
+                        from zoneinfo import ZoneInfo
+
+                        game_dt_utc = datetime.fromisoformat(game_date_str.replace("Z", "+00:00"))
+                        game_date = game_dt_utc.astimezone(ZoneInfo("America/New_York")).strftime(
+                            "%Y-%m-%d"
+                        )
+                    except (ValueError, AttributeError, ImportError):
                         game_date = self.date
                 else:
                     game_date = self.date
