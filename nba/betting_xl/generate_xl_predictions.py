@@ -719,6 +719,12 @@ class XLPredictionsGenerator:
                 opponent_team,  -- Group by opponent to match validation
                 is_home,  -- Group by is_home to match validation
                 AVG(over_line) as consensus_line,
+                -- Sportsbook-only consensus: excludes goblins/demons which distort
+                -- expected_diff and push p_over out of its training distribution.
+                -- This is what the model is calibrated against.
+                AVG(CASE WHEN book_name NOT IN (
+                    'prizepicks_goblin', 'prizepicks_demon', 'prizepicks_alt'
+                ) THEN over_line END) as sportsbook_consensus,
                 MIN(over_line) as min_line,
                 MAX(over_line) as max_line,
                 MAX(over_line) - MIN(over_line) as line_spread,
@@ -851,13 +857,16 @@ class XLPredictionsGenerator:
                     skip_reasons[skip_reason] += 1
                     continue
 
-                # Extract features
+                # Extract features using sportsbook consensus as the line.
+                # Goblins/demons distort min_line — the model trained on sportsbook
+                # lines, so expected_diff must be computed against the real market.
+                model_line = row["sportsbook_consensus"] or row["consensus_line"]
                 features = self.feature_extractor.extract_features(
                     player_name=player_name,
                     game_date=self.game_date,
                     is_home=row["is_home"],
                     opponent_team=row["opponent_team"],
-                    line=row["min_line"],  # Use softest line for features
+                    line=model_line,
                     stat_type=stat_type,
                 )
 
@@ -889,7 +898,7 @@ class XLPredictionsGenerator:
                 # ============================================================
                 for model_version, predictor in self.predictors[stat_type].items():
                     pred_result = predictor.predict(
-                        features, row["min_line"], player_name=player_name, game_date=self.game_date
+                        features, model_line, player_name=player_name, game_date=self.game_date
                     )
 
                     if pred_result is None:

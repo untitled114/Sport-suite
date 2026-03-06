@@ -112,8 +112,10 @@ RELIABLE_BOOKS_WHEN_SOFTEST = {
     "Underdog",
     "Underdog Fantasy",
     "ESPNBet",
-    "prizepicks",  # Added Jan 31, 2026 - DFS platform with soft lines
+    "prizepicks",
     "PrizePicks",
+    "prizepicks_goblin",  # Goblins are softest by design
+    "prizepicks_alt",
 }
 
 # =============================================================================
@@ -152,6 +154,9 @@ DFS_SOFT_BOOKS = {
     "Underdog Fantasy",
     "prizepicks",
     "PrizePicks",
+    "prizepicks_goblin",  # Easier lines (lower) - strong OVER signal
+    "prizepicks_demon",  # Harder lines (higher)
+    "prizepicks_alt",
 }
 
 UNDERDOG_CONFIG = {
@@ -641,38 +646,83 @@ class LineOptimizer:
             )
 
         # =============================================================================
-        # BLACKLIST CHECK (Jan 2, 2026)
-        # Skip blacklisted books and use next softest
+        # LINE SELECTION
+        # Split lines into goblin / demon / standard buckets.
+        # Goblins: signal only — contribute to line_spread for Goldmine detection
+        #          but are never the recommended bet (trivially easy, low payout).
+        # Demons:  high-payout path — use the highest demon prediction still beats.
+        # Standard: fallback — softest real line (sportsbooks, Underdog, std PP).
+        #
+        # Direction gate: prediction must exceed the standard consensus (model says
+        # OVER on the real market). Without this, goblin-inflated spreads surface
+        # picks where the model actually predicts UNDER.
         # =============================================================================
-        blacklist = BLACKLISTED_BOOKS.get(stat_type, set())
+        _goblin_books = {"prizepicks_goblin", "prizepicks_alt"}
+        _demon_books = {"prizepicks_demon"}
 
-        # Also exclude pseudo-books that aren't real sportsbooks
+        goblin_rows = lines_df[lines_df["book_name"].isin(_goblin_books)]
+        demon_rows = lines_df[lines_df["book_name"].isin(_demon_books)]
+        standard_rows = lines_df[~lines_df["book_name"].isin(_goblin_books | _demon_books)]
+
+        blacklist = BLACKLISTED_BOOKS.get(stat_type, set())
         pseudo_books = {"consensus", "Consensus", "average", "Average"}
         blacklist = blacklist | pseudo_books
 
-        # Find first non-blacklisted book from softest to hardest
         best_book = None
         best_line = None
-        for _idx, row in lines_df.sort_values("over_line").iterrows():
-            if row["book_name"] not in blacklist:
-                best_book = row["book_name"]
-                best_line = row["over_line"]
-                break
 
-        # If all books are blacklisted, skip this prop
+        # Priority 1: Demon path — highest demon line prediction still beats.
+        # Maximises payout while keeping positive edge.
+        # e.g. demons [28.5, 29.5, 34.5], prediction 31.0 → picks 29.5
+        if not demon_rows.empty:
+            eligible = demon_rows[
+                (demon_rows["over_line"] < prediction) & (~demon_rows["book_name"].isin(blacklist))
+            ]
+            if not eligible.empty:
+                best_demon = eligible.loc[eligible["over_line"].idxmax()]
+                best_book = best_demon["book_name"]
+                best_line = float(best_demon["over_line"])
+                logger.info(
+                    f"Demon pick: {player_name} {stat_type} - "
+                    f"prediction {prediction:.1f} vs demon {best_line:.1f} "
+                    f"(skipped {len(demon_rows) - len(eligible)} higher demons)"
+                )
+
+        # Priority 2: Goblin fallback — prediction < all demons.
+        # Use the highest goblin (closest to the real market line).
+        # e.g. goblins [19.5, 22.5, 24.5], prediction 26.0 → picks 24.5
+        if best_book is None and not goblin_rows.empty:
+            eligible = goblin_rows[
+                (goblin_rows["over_line"] < prediction)
+                & (~goblin_rows["book_name"].isin(blacklist))
+            ]
+            if not eligible.empty:
+                best_goblin = eligible.loc[eligible["over_line"].idxmax()]
+                best_book = best_goblin["book_name"]
+                best_line = float(best_goblin["over_line"])
+                logger.info(
+                    f"Goblin fallback: {player_name} {stat_type} - "
+                    f"prediction {prediction:.1f} vs goblin {best_line:.1f}"
+                )
+
+        # Priority 3: Standard fallback — softest real line (sportsbook / std PP / Underdog).
+        # Used when prediction doesn't beat any demon or goblin.
         if best_book is None:
-            logger.debug(f"All books blacklisted for {player_name} {stat_type}")
+            for _idx, row in standard_rows.sort_values("over_line").iterrows():
+                if row["book_name"] not in blacklist and row["over_line"] < prediction:
+                    best_book = row["book_name"]
+                    best_line = row["over_line"]
+                    break
+
+        # No pick if prediction doesn't beat any available line
+        if best_book is None:
+            logger.debug(
+                f"No edge: {player_name} {stat_type} - "
+                f"prediction {prediction:.1f} doesn't beat any line"
+            )
             return None
 
-        # Log if we skipped a blacklisted book
-        softest_book = lines_df.sort_values("over_line").iloc[0]["book_name"]
-        if softest_book in blacklist:
-            logger.info(
-                f"Blacklist skip: {player_name} {stat_type} - "
-                f"Skipped {softest_book}, using {best_book} instead"
-            )
-
-        # Calculate edge using softest line
+        # Calculate edge vs the selected line
         edge = prediction - best_line
 
         # Get game context

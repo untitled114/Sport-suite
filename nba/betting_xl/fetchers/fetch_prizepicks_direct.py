@@ -331,14 +331,18 @@ class PrizePicksDirectFetcher(BaseFetcher):
         game_id = rels.get("game", {}).get("data", {}).get("id")
         game = lookups["games"].get(game_id, {})
 
-        # Get odds type
+        # Get odds type (standard, goblin, demon)
         odds_type = attrs.get("odds_type", "standard")
 
-        # Skip non-standard lines (alternate lines have terrible odds)
-        if odds_type != "standard":
-            return None
-
-        book_name = "prizepicks"
+        # Map odds_type to book_name so line shopping can identify soft lines
+        if odds_type == "standard":
+            book_name = "prizepicks"
+        elif odds_type == "goblin":
+            book_name = "prizepicks_goblin"
+        elif odds_type == "demon":
+            book_name = "prizepicks_demon"
+        else:
+            book_name = f"prizepicks_{odds_type}"
 
         # Get line
         line = attrs.get("line_score")

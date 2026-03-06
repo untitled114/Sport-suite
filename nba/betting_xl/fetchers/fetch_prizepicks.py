@@ -257,11 +257,8 @@ class PrizePicksFetcher(BaseFetcher):
                 is_home = player_team == home_team if player_team else None
                 opponent = away_team if is_home else home_team
 
-                # Skip alternate lines entirely
-                if is_alternate:
-                    continue
-
-                book_name = self.BOOKMAKER
+                # Tag alternate lines — classified as goblin/demon after fetch
+                book_name = "prizepicks_alt" if is_alternate else self.BOOKMAKER
 
                 prop = {
                     "player_name": player_name,
@@ -354,9 +351,30 @@ class PrizePicksFetcher(BaseFetcher):
         valid_props = [p for p in all_props if self.validate_prop(p)]
         deduped_props = self.deduplicate_props(valid_props)
 
-        # Tag all props as standard
-        for prop in deduped_props:
+        # Classify props: standard vs goblin (lower line) vs demon (higher line)
+        standard_props = [p for p in deduped_props if not p.get("is_alternate", False)]
+        alt_props = [p for p in deduped_props if p.get("is_alternate", False)]
+
+        # Calculate standard averages per stat_type for classification
+        std_avgs = {}
+        for stat_type in self.MARKETS.values():
+            std_market = [p for p in standard_props if p["stat_type"] == stat_type]
+            std_avgs[stat_type] = (
+                sum(p["line"] for p in std_market) / len(std_market) if std_market else 0
+            )
+
+        for prop in standard_props:
             prop["odds_type"] = "standard"
+
+        for prop in alt_props:
+            stat_type = prop["stat_type"]
+            std_avg = std_avgs.get(stat_type, 0)
+            if prop["line"] < std_avg:
+                prop["odds_type"] = "goblin"
+                prop["book_name"] = "prizepicks_goblin"
+            else:
+                prop["odds_type"] = "demon"
+                prop["book_name"] = "prizepicks_demon"
 
         # Summary
         print("\n" + "=" * 70)
@@ -367,12 +385,17 @@ class PrizePicksFetcher(BaseFetcher):
         print(f"After deduplication: {len(deduped_props)}")
         print()
 
-        # Breakdown by market
-        print("Lines by market:")
-        for stat_type in self.MARKETS.values():
-            market_props = [p for p in deduped_props if p["stat_type"] == stat_type]
-            count = len(market_props)
+        goblin_count = len([p for p in deduped_props if p.get("odds_type") == "goblin"])
+        demon_count = len([p for p in deduped_props if p.get("odds_type") == "demon"])
+        print(f"Standard picks: {len(standard_props)}")
+        print(f"Goblin picks:   {goblin_count} (lower lines)")
+        print(f"Demon picks:    {demon_count} (higher lines)")
+        print()
 
+        print("Standard lines by market:")
+        for stat_type in self.MARKETS.values():
+            market_props = [p for p in standard_props if p["stat_type"] == stat_type]
+            count = len(market_props)
             if count > 0:
                 avg_line = sum(p["line"] for p in market_props) / count
                 print(f"  {stat_type:10s}: {count:4d} props (avg line: {avg_line:.2f})")
