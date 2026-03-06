@@ -450,43 +450,15 @@ def nba_full_pipeline():
 
         return {"output_file": output_file, "total_picks": picks_count, "status": result["status"]}
 
-    @task(task_id="generate_odds_api_picks")
-    def generate_odds_api_picks(enrichment: dict[str, Any]) -> dict[str, Any]:
-        """Generate Odds API picks."""
-        if enrichment.get("status") == "no_games":
-            print("[INFO] No games today - skipping Odds API picks")
-            return {"output_file": None, "total_picks": 0, "status": "no_games"}
-
-        date_str = datetime.now().strftime("%Y-%m-%d")
-        output_file = f"{PREDICTIONS_DIR}/odds_api_picks_{date_str.replace('-', '')}.json"
-
-        result = run_script(
-            f"{SCRIPT_DIR}/betting_xl/generate_odds_api_picks.py",
-            ["--date", date_str, "--output", output_file],
-        )
-
-        picks_count = 0
-        if Path(output_file).exists():
-            with open(output_file) as f:
-                picks_count = json.load(f).get("total_picks", 0)
-
-        return {"output_file": output_file, "total_picks": picks_count, "status": result["status"]}
-
     @task(task_id="output_summary")
     def output_summary(
         xl_result: dict[str, Any],
         pro_result: dict[str, Any],
-        odds_result: dict[str, Any],
     ) -> dict[str, Any]:
         """Output final summary."""
         date_str = datetime.now().strftime("%Y-%m-%d")
 
-        # Check if all results indicate no games
-        all_no_games = all(
-            r.get("status") == "no_games" for r in [xl_result, pro_result, odds_result]
-        )
-
-        if all_no_games:
+        if all(r.get("status") == "no_games" for r in [xl_result, pro_result]):
             print(f"[INFO] No NBA games on {date_str} - pipeline completed with nothing to do")
             return {"date": date_str, "status": "no_games", "total": 0}
 
@@ -495,12 +467,7 @@ def nba_full_pipeline():
             "generated_at": datetime.now().isoformat(),
             "xl_picks": xl_result.get("total_picks", 0),
             "pro_picks": pro_result.get("total_picks", 0),
-            "odds_api_picks": odds_result.get("total_picks", 0),
-            "total": (
-                xl_result.get("total_picks", 0)
-                + pro_result.get("total_picks", 0)
-                + odds_result.get("total_picks", 0)
-            ),
+            "total": xl_result.get("total_picks", 0) + pro_result.get("total_picks", 0),
         }
 
         summary_file = f"{PREDICTIONS_DIR}/daily_summary_{date_str}.json"
@@ -510,7 +477,6 @@ def nba_full_pipeline():
 
         print(f"Full pipeline complete: {summary['total']} total picks")
         print(f"  XL: {summary['xl_picks']}, Pro: {summary['pro_picks']}")
-        print(f"  Odds API: {summary['odds_api_picks']}")
         return summary
 
     # ========================================================================
@@ -548,10 +514,9 @@ def nba_full_pipeline():
     # Predictions (parallel)
     xl = generate_xl_predictions(enriched)
     pro = generate_pro_picks(enriched)
-    odds = generate_odds_api_picks(enriched)
 
     # Final summary
-    output_summary(xl, pro, odds)
+    output_summary(xl, pro)
 
 
 dag = nba_full_pipeline()

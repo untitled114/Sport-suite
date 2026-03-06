@@ -143,16 +143,14 @@ def main():
     print("\n[4/4] Generating picks (parallel)...")
     xl_file = PREDICTIONS_DIR / f"xl_picks_{DATE_STR}.json"
     pro_file = PREDICTIONS_DIR / f"pro_picks_{DATE_STR}.json"
-    odds_file = PREDICTIONS_DIR / f"odds_api_picks_{DATE_STR.replace('-', '')}.json"
 
     pred_steps = {
         "XL": f"python3 nba/betting_xl/generate_xl_predictions.py --output {xl_file} --underdog-only",
         "PRO": f"python3 nba/betting_xl/generate_cheatsheet_picks.py --output {pro_file}",
-        "Odds API": f"python3 nba/betting_xl/generate_odds_api_picks.py --date {DATE_STR} --output {odds_file}",
     }
 
     pick_counts = {}
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=2) as pool:
         futures = {pool.submit(run_step, name, cmd, 120): name for name, cmd in pred_steps.items()}
         for future in as_completed(futures):
             name, ok, elapsed, output = future.result()
@@ -161,11 +159,7 @@ def main():
             pick_counts[name] = 0
 
     # Count picks from files
-    for name, filepath in [
-        ("XL", xl_file),
-        ("PRO", pro_file),
-        ("Odds API", odds_file),
-    ]:
+    for name, filepath in [("XL", xl_file), ("PRO", pro_file)]:
         try:
             if filepath.exists():
                 data = json.loads(filepath.read_text())
@@ -179,10 +173,7 @@ def main():
     total_picks = sum(pick_counts.values())
     print(f"\n{'=' * 50}")
     print(f"Refresh Complete ({total_elapsed:.0f}s)")
-    print(
-        f"  XL: {pick_counts.get('XL', 0)} | PRO: {pick_counts.get('PRO', 0)} | "
-        f"Odds API: {pick_counts.get('Odds API', 0)}"
-    )
+    print(f"  XL: {pick_counts.get('XL', 0)} | PRO: {pick_counts.get('PRO', 0)}")
     print(f"  Total: {total_picks} picks")
     print(f"{'=' * 50}")
 

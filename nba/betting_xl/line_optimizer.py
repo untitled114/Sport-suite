@@ -359,8 +359,6 @@ V3_TIER_CONFIG = {
     "THREES": {"enabled": False},
 }
 
-# NOTE: Odds API tier config moved to standalone generate_odds_api_picks.py (Jan 26, 2026)
-
 # =============================================================================
 # STAR TIER FILTER (Jan 16, 2026) - RECALIBRATED
 # =============================================================================
@@ -1453,9 +1451,6 @@ class LineOptimizer:
             "model_version": "v3",
             "stake_sizing": stake_info,  # NEW: Volatility-aware stake recommendation
         }
-
-    # NOTE: apply_odds_api_filter() removed - Odds API filtering is now in
-    # standalone generate_odds_api_picks.py (Jan 26, 2026)
 
     def close(self) -> None:
         """
