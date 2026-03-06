@@ -1,0 +1,22 @@
+# Copy to terraform.tfvars and fill in your values
+# terraform.tfvars is gitignored
+
+aws_region    = "us-east-1"
+environment   = "prod"
+instance_type = "t3.xlarge"  # 4 vCPU / 16GB — downsize to t3.large after Hetzner split
+
+root_volume_size_gb = 50
+data_volume_size_gb = 200
+
+ssh_public_key_path = "~/.ssh/id_ed25519.pub"
+
+# Restrict to your IP: ["1.2.3.4/32"]
+# Leave as ["0.0.0.0/0"] only during initial setup
+allowed_ssh_cidrs = ["0.0.0.0/0"]
+
+# Leave empty — use SSH tunnel for Airflow UI:
+#   ssh -L 8080:localhost:8080 sportsuite@<elastic-ip>
+airflow_ui_cidrs = []
+
+availability_zone    = "us-east-1a"
+backup_retention_days = 30

@@ -1,0 +1,11 @@
+# Local state (use S3 backend in production)
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# Secrets — never commit
+terraform.tfvars
+
+# Crash logs
+crash.log
