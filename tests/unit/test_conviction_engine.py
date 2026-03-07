@@ -68,34 +68,47 @@ class TestNormalize:
 
 class TestScoreAppearance:
     def test_perfect_from_run1(self):
-        # 6 appearances in 6 runs starting run 1 → full score
-        score = _score_appearance(6, 1, 6)
+        # 6 appearances across all 6 fired runs, entered at run 1 → full score
+        score = _score_appearance(6, 1, [1, 2, 3, 4, 5, 6])
         assert score == pytest.approx(1.0)
 
     def test_all_possible_from_run3(self):
-        # Appeared every run since entering at run 3 of 6 (4 possible, 4 seen)
-        score = _score_appearance(4, 3, 6)
+        # Appeared every run since entering at run 3 (4 fired runs since entry)
+        score = _score_appearance(4, 3, [1, 2, 3, 4, 5, 6])
         assert 0.8 <= score <= 1.0
 
     def test_late_entry_penalty(self):
-        # A pick present all 6 runs from run 1 scores higher than one
-        # present all possible runs but first appearing at run 5
-        score_early = _score_appearance(6, 1, 6)  # 6/6 runs, entry run 1 → 1.0
-        score_late = _score_appearance(2, 5, 6)  # 2/2 possible, entry run 5 → 0.68
+        # Present all 6 runs from run 1 scores higher than entering at run 5
+        score_early = _score_appearance(6, 1, [1, 2, 3, 4, 5, 6])
+        score_late = _score_appearance(2, 5, [1, 2, 3, 4, 5, 6])
         assert score_early > score_late
 
     def test_zero_possible_runs(self):
-        # Edge case: entry_run > total_runs
-        assert _score_appearance(1, 7, 6) == 0.0
+        # entry_run not in fired_runs and none are >= entry_run
+        assert _score_appearance(1, 7, [1, 2, 3, 4, 5, 6]) == 0.0
 
     def test_single_run(self):
-        score = _score_appearance(1, 1, 1)
+        score = _score_appearance(1, 1, [1])
         assert 0.0 <= score <= 1.0
 
     def test_entry_factor_floor(self):
-        # Entry at run 6 of 6 → entry_factor floored at 0.60
-        score = _score_appearance(1, 6, 6)
+        # Entry at run 6 → entry_factor floored at 0.60
+        score = _score_appearance(1, 6, [1, 2, 3, 4, 5, 6])
         assert score >= 0.0
+
+    def test_skipped_runs_not_penalised(self):
+        # Runs 2 and 3 never fired. Pick seen in all 4 runs that DID fire.
+        # Should score the same as a pick seen in all 6 runs of a full day.
+        fired_with_gap = [1, 4, 5, 6]
+        score_with_gap = _score_appearance(4, 1, fired_with_gap)  # 4/4 fired
+        score_full = _score_appearance(6, 1, [1, 2, 3, 4, 5, 6])  # 6/6 fired
+        assert score_with_gap == pytest.approx(score_full)
+
+    def test_only_fired_runs_after_entry_count(self):
+        # Entered at run 4, only runs 4 and 6 fired after that
+        fired = [1, 2, 4, 6]
+        score = _score_appearance(2, 4, fired)
+        assert score == pytest.approx(1.0 * (1.0 - 3 * 0.08))  # 2/2 * entry_factor(4)
 
 
 # ─────────────────────────────────────────────────────────────────
