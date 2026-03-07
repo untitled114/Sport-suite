@@ -142,8 +142,8 @@ def run_script(
 
 @dag(
     dag_id="nba_full_pipeline",
-    description="NBA complete data collection + predictions (run once daily)",
-    schedule=CronTriggerTimetable("0 14 * * *", timezone="UTC"),  # 09:00 AM EST daily
+    description="NBA complete data collection + predictions (run once daily at 2AM EST)",
+    schedule=CronTriggerTimetable("0 2 * * *", timezone="America/New_York"),  # 2:00 AM EST
     start_date=datetime(2025, 11, 7),
     catchup=False,
     tags=["nba", "predictions", "full", "data-collection"],
@@ -154,10 +154,25 @@ def run_script(
 )
 def nba_full_pipeline():
     """
-    NBA Full Pipeline - Complete daily workflow.
+    NBA Full Pipeline - Complete daily workflow. Run #1 of 6 (2AM EST).
 
     Equivalent to: ./nba-predictions.sh (or ./nba-predictions.sh full)
     """
+
+    # ========================================================================
+    # Axiom Audit — Start
+    # ========================================================================
+
+    @task(task_id="audit_run_start")
+    def audit_run_start() -> dict[str, Any]:
+        """Record pipeline start in axiom_pipeline_audit. Never fails."""
+        from zoneinfo import ZoneInfo
+
+        from nba.core.axiom_writer import audit_run_start as _start
+
+        run_date = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+        _start(run_date, run_number=1, run_type="full")
+        return {"run_date": run_date, "run_number": 1, "started_at": datetime.now().isoformat()}
 
     # ========================================================================
     # Data Collection Tasks
@@ -203,7 +218,7 @@ def nba_full_pipeline():
 
     @task(task_id="fetch_cheatsheet")
     def fetch_cheatsheet() -> dict[str, Any]:
-        """Fetch BettingPros cheatsheet."""
+        """Fetch BettingPros cheatsheet (Underdog lines + BP analytics enrichment)."""
         import glob
 
         result = run_script(
@@ -212,17 +227,79 @@ def nba_full_pipeline():
         )
         if result["status"] == "skipped":
             return result
+        if result["status"] == "error":
+            print(
+                f"[WARN] fetch_cheatsheet failed (non-critical): {result.get('error', '')[-300:]}"
+            )
+            return result
 
         pattern = f"{SCRIPT_DIR}/betting_xl/lines/cheatsheet_underdog_*.json"
         files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
 
         if files:
-            run_script(
+            load_result = run_script(
                 f"{SCRIPT_DIR}/betting_xl/loaders/load_cheatsheet_to_db.py",
                 ["--file", files[0]],
             )
+            if load_result["status"] == "error":
+                print(
+                    f"[WARN] load_cheatsheet_to_db failed (non-critical): {load_result.get('error', '')[-300:]}"
+                )
+        else:
+            print("[WARN] fetch_cheatsheet: no JSON file found after fetch")
 
         return {"status": "success"}
+
+    @task(task_id="fetch_hit_rates")
+    def fetch_hit_rates() -> dict[str, Any]:
+        """Fetch BettingPros consensus hit rates, streaks, and BP projections.
+
+        Non-critical: if missing, predictions still run but without hit-rate enrichment.
+        """
+        from zoneinfo import ZoneInfo
+
+        from nba.betting_xl.fetchers.fetch_bettingpros_hit_rates import BettingProsHitRateFetcher
+
+        date_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+        try:
+            with BettingProsHitRateFetcher(date=date_str, verbose=False) as fetcher:
+                records = fetcher.fetch()
+                if records:
+                    output_file = fetcher.save_hit_rates(records)
+                    print(f"[OK] Hit rates: {len(records)} records → {output_file.name}")
+                    return {"status": "success", "records": len(records)}
+                print("[WARN] fetch_hit_rates: no records returned")
+                return {"status": "no_data", "records": 0}
+        except Exception as exc:
+            print(f"[WARN] fetch_hit_rates failed (non-critical): {exc}")
+            return {"status": "error", "error": str(exc)}
+
+    @task(task_id="fetch_pick_recs")
+    def fetch_pick_recs() -> dict[str, Any]:
+        """Fetch BettingPros session-gated pick recommendations.
+
+        Requires BETTINGPROS_SESSION_ID + BETTINGPROS_WEB_API_KEY (from refresh_bp_session.py).
+        Non-critical: silently skips if session is expired or credentials missing.
+        """
+        from zoneinfo import ZoneInfo
+
+        from nba.betting_xl.fetchers.fetch_pick_recommendations import (
+            fetch_pick_recommendations,
+            save_recommendations,
+        )
+
+        date_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+        try:
+            picks = fetch_pick_recommendations(date_str)
+            if picks:
+                output_file = save_recommendations(date_str, picks)
+                print(f"[OK] Pick recommendations: {len(picks)} picks → {output_file.name}")
+                return {"status": "success", "picks": len(picks)}
+            print("[WARN] fetch_pick_recs: no picks returned (session expired?)")
+            return {"status": "no_data", "picks": 0}
+        except Exception as exc:
+            print(f"[WARN] fetch_pick_recs failed (non-critical): {exc}")
+            return {"status": "error", "error": str(exc)}
 
     @task(task_id="fetch_prizepicks")
     def fetch_prizepicks() -> dict[str, Any]:
@@ -491,9 +568,72 @@ def nba_full_pipeline():
         print(f"  XL: {summary['xl_picks']}, Pro: {summary['pro_picks']}")
         return summary
 
+    @task(task_id="write_to_axiom")
+    def write_to_axiom(
+        audit_info: dict[str, Any],
+        xl_result: dict[str, Any],
+        summary: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Write picks to nba_prediction_history and complete pipeline audit.
+
+        Never raises — axiom is an observer. Pipeline success is independent.
+        """
+        from nba.core.axiom_writer import audit_run_complete, count_todays_props, write_picks
+
+        run_date = audit_info["run_date"]
+        run_number = audit_info["run_number"]
+        started_at = audit_info["started_at"]
+        duration = int((datetime.now() - datetime.fromisoformat(started_at)).total_seconds())
+
+        # Count props fetched from intel DB
+        props_fetched, books_available = count_todays_props(run_date)
+
+        # Write picks to history
+        picks_written = 0
+        xl_count = 0
+        v3_count = 0
+        if xl_result.get("output_file") and Path(xl_result["output_file"]).exists():
+            with open(xl_result["output_file"]) as f:
+                data = json.load(f)
+            picks = data.get("picks", [])
+            picks_written = write_picks(run_date, run_number, datetime.now().isoformat(), picks)
+            xl_count = sum(1 for p in picks if p.get("model_version") == "xl")
+            v3_count = sum(1 for p in picks if p.get("model_version") == "v3")
+
+        # Complete the audit record
+        status = "no_games" if summary.get("status") == "no_games" else "success"
+        audit_run_complete(
+            run_date,
+            run_number,
+            status=status,
+            props_fetched=props_fetched,
+            books_available=books_available,
+            games_found=summary.get("total", 0) if status != "no_games" else 0,
+            duration_seconds=duration,
+            picks_generated=picks_written,
+            xl_picks=xl_count,
+            v3_picks=v3_count,
+        )
+
+        return {"picks_written": picks_written, "duration_seconds": duration}
+
+    @task(task_id="compute_conviction")
+    def compute_conviction(axiom_result: dict[str, Any]) -> dict[str, Any]:
+        """Compute conviction scores across all of today's runs. Never fails."""
+        from zoneinfo import ZoneInfo
+
+        from nba.core.conviction_engine import compute_conviction as _compute
+
+        run_date = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+        count = _compute(run_date, run_number=1)
+        return {"conviction_rows": count}
+
     # ========================================================================
     # Task Dependencies
     # ========================================================================
+
+    # Audit start (before anything else)
+    audit_start = audit_run_start()
 
     # Data collection chain
     props = fetch_props()
@@ -502,6 +642,8 @@ def nba_full_pipeline():
 
     # Parallel data tasks
     cheatsheet = fetch_cheatsheet()
+    hit_rates = fetch_hit_rates()
+    pick_recs = fetch_pick_recs()
     prizepicks = fetch_prizepicks()  # DFS soft lines for GOLDMINE picks
     game_results_task = fetch_game_results()
     actuals = populate_actuals(game_results_task)
@@ -514,6 +656,8 @@ def nba_full_pipeline():
     # All data must complete before predictions
     [
         cheatsheet,
+        hit_rates,
+        pick_recs,
         prizepicks,
         actuals,
         injuries,
@@ -527,8 +671,12 @@ def nba_full_pipeline():
     xl = generate_xl_predictions(enriched)
     pro = generate_pro_picks(enriched)
 
-    # Final summary
-    output_summary(xl, pro)
+    # Summary
+    summary = output_summary(xl, pro)
+
+    # Axiom write + conviction — after summary, never block pipeline
+    axiom = write_to_axiom(audit_start, xl, summary)
+    compute_conviction(axiom)
 
 
 dag = nba_full_pipeline()

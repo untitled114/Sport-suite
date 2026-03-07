@@ -35,6 +35,7 @@ archive/
 *.db
 *.sql
 !dbt/**/*.sql
+!docker/**/*.sql
 mongodb/
 
 # Logs

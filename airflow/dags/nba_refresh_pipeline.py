@@ -32,6 +32,7 @@ from callbacks import on_failure, on_retry, on_success
 
 from airflow.decorators import dag, task
 from airflow.models import Variable
+from airflow.timetables.trigger import CronTriggerTimetable
 from airflow.utils.email import send_email
 
 # ============================================================================
@@ -104,8 +105,8 @@ def alert_on_failure(context: dict[str, Any]) -> None:
 
 @dag(
     dag_id="nba_refresh_pipeline",
-    description="NBA quick refresh - line movements + predictions (run anytime)",
-    schedule=None,  # Manual trigger only
+    description="NBA refresh — line movements + predictions (runs 2-6: 5AM/8AM/11AM/2PM/5PM EST)",
+    schedule=CronTriggerTimetable("0 5,8,11,14,17 * * *", timezone="America/New_York"),
     start_date=datetime(2025, 11, 7),
     catchup=False,
     tags=["nba", "predictions", "refresh", "line-movements"],
@@ -116,10 +117,35 @@ def alert_on_failure(context: dict[str, Any]) -> None:
 )
 def nba_refresh_pipeline():
     """
-    NBA Refresh Pipeline - Quick line movement capture.
+    NBA Refresh Pipeline — Runs 2-6 of the daily conviction cycle.
+
+    Captures line movements and regenerates picks 5x/day after the 2AM full run.
+    Each run writes to nba_prediction_history so Axiom can track pick consistency
+    and line movement throughout the day.
 
     Equivalent to: ./nba-predictions.sh refresh
     """
+
+    # ========================================================================
+    # Axiom Audit — Start
+    # ========================================================================
+
+    @task(task_id="audit_run_start")
+    def audit_run_start() -> dict[str, Any]:
+        """Record run start in axiom_pipeline_audit. Never fails."""
+        from zoneinfo import ZoneInfo
+
+        from nba.core.axiom_writer import audit_run_start as _start
+        from nba.core.axiom_writer import get_run_number
+
+        run_date = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+        run_number = get_run_number()
+        _start(run_date, run_number=run_number, run_type="refresh")
+        return {
+            "run_date": run_date,
+            "run_number": run_number,
+            "started_at": datetime.now().isoformat(),
+        }
 
     # ========================================================================
     # Pre-flight Checks
@@ -188,6 +214,48 @@ def nba_refresh_pipeline():
             )
 
         return {"status": result["status"]}
+
+    @task(task_id="refresh_hit_rates")
+    def refresh_hit_rates() -> dict[str, Any]:
+        """Refresh BP consensus hit rates + streaks. Non-critical."""
+        from zoneinfo import ZoneInfo
+
+        from nba.betting_xl.fetchers.fetch_bettingpros_hit_rates import BettingProsHitRateFetcher
+
+        date_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+        try:
+            with BettingProsHitRateFetcher(date=date_str, verbose=False) as fetcher:
+                records = fetcher.fetch()
+                if records:
+                    output_file = fetcher.save_hit_rates(records)
+                    print(f"[OK] Hit rates: {len(records)} records → {output_file.name}")
+                    return {"status": "success", "records": len(records)}
+            return {"status": "no_data", "records": 0}
+        except Exception as exc:
+            print(f"[WARN] refresh_hit_rates failed (non-critical): {exc}")
+            return {"status": "error", "error": str(exc)}
+
+    @task(task_id="refresh_pick_recs")
+    def refresh_pick_recs() -> dict[str, Any]:
+        """Refresh BP session-gated pick recommendations. Non-critical."""
+        from zoneinfo import ZoneInfo
+
+        from nba.betting_xl.fetchers.fetch_pick_recommendations import (
+            fetch_pick_recommendations,
+            save_recommendations,
+        )
+
+        date_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+        try:
+            picks = fetch_pick_recommendations(date_str)
+            if picks:
+                output_file = save_recommendations(date_str, picks)
+                print(f"[OK] Pick recommendations: {len(picks)} picks → {output_file.name}")
+                return {"status": "success", "picks": len(picks)}
+            return {"status": "no_data", "picks": 0}
+        except Exception as exc:
+            print(f"[WARN] refresh_pick_recs failed (non-critical): {exc}")
+            return {"status": "error", "error": str(exc)}
 
     @task(task_id="refresh_injuries")
     def refresh_injuries() -> dict[str, Any]:
@@ -322,33 +390,107 @@ def nba_refresh_pipeline():
         print(f"  Pro: {pro_result.get('total_picks', 0)}")
         return {"total_picks": total, "status": "complete"}
 
+    @task(task_id="write_to_axiom")
+    def write_to_axiom(
+        audit_info: dict[str, Any],
+        xl_result: dict[str, Any],
+        summary: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Write picks to nba_prediction_history and complete pipeline audit.
+
+        Never raises — axiom is an observer. Pipeline success is independent.
+        """
+        from zoneinfo import ZoneInfo
+
+        from nba.core.axiom_writer import audit_run_complete, count_todays_props, write_picks
+
+        run_date = audit_info["run_date"]
+        run_number = audit_info["run_number"]
+        started_at = audit_info["started_at"]
+        duration = int((datetime.now() - datetime.fromisoformat(started_at)).total_seconds())
+
+        # Count props from intel DB
+        props_fetched, books_available = count_todays_props(run_date)
+
+        # Write picks to history
+        picks_written = 0
+        xl_count = 0
+        v3_count = 0
+
+        date_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+        xl_file = f"{PREDICTIONS_DIR}/xl_picks_{date_str}.json"
+        if Path(xl_file).exists():
+            with open(xl_file) as f:
+                data = json.load(f)
+            picks = data.get("picks", [])
+            picks_written = write_picks(run_date, run_number, datetime.now().isoformat(), picks)
+            xl_count = sum(1 for p in picks if p.get("model_version") == "xl")
+            v3_count = sum(1 for p in picks if p.get("model_version") == "v3")
+
+        status = "no_games" if summary.get("status") == "no_games" else "success"
+        audit_run_complete(
+            run_date,
+            run_number,
+            status=status,
+            props_fetched=props_fetched,
+            books_available=books_available,
+            duration_seconds=duration,
+            picks_generated=picks_written,
+            xl_picks=xl_count,
+            v3_picks=v3_count,
+        )
+
+        return {"picks_written": picks_written, "duration_seconds": duration}
+
+    @task(task_id="compute_conviction")
+    def compute_conviction(axiom_result: dict[str, Any]) -> dict[str, Any]:
+        """Recompute conviction across all of today's runs so far. Never fails."""
+        from zoneinfo import ZoneInfo
+
+        from nba.core.axiom_writer import get_run_number
+        from nba.core.conviction_engine import compute_conviction as _compute
+
+        run_date = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+        run_number = get_run_number()
+        count = _compute(run_date, run_number=run_number)
+        return {"conviction_rows": count}
+
     # ========================================================================
     # Task Dependencies
     # ========================================================================
 
+    # Audit start (before anything else)
+    audit_start = audit_run_start()
+
     # Pre-flight
     health = health_check()
     stop_loss = stop_loss_check()
-    health >> stop_loss
+    audit_start >> health >> stop_loss
 
     # Refresh data (parallel)
     props = refresh_props()
     cheatsheet = refresh_cheatsheet()
+    hit_rates = refresh_hit_rates()
+    pick_recs = refresh_pick_recs()
     injuries = refresh_injuries()
     vegas = refresh_vegas()
 
-    stop_loss >> [props, cheatsheet, injuries, vegas]
+    stop_loss >> [props, cheatsheet, hit_rates, pick_recs, injuries, vegas]
 
     # Enrich after props loaded
     enriched = enrich_matchups(props)
-    [cheatsheet, injuries, vegas] >> enriched
+    [cheatsheet, hit_rates, pick_recs, injuries, vegas] >> enriched
 
     # Predictions (parallel)
     xl = generate_xl_predictions(enriched)
     pro = generate_pro_picks(enriched)
 
     # Summary
-    output_summary(xl, pro)
+    summary = output_summary(xl, pro)
+
+    # Axiom write + conviction — after summary, never block pipeline
+    axiom = write_to_axiom(audit_start, xl, summary)
+    compute_conviction(axiom)
 
 
 dag = nba_refresh_pipeline()

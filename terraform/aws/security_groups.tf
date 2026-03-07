@@ -17,11 +17,22 @@ resource "aws_security_group" "sport_suite" {
   dynamic "ingress" {
     for_each = length(var.airflow_ui_cidrs) > 0 ? [1] : []
     content {
-      description = "Airflow UI"
+      description = "Airflow UI (IPv4)"
       from_port   = 8080
       to_port     = 8080
       protocol    = "tcp"
       cidr_blocks = var.airflow_ui_cidrs
+    }
+  }
+
+  dynamic "ingress" {
+    for_each = length(var.airflow_ui_ipv6_cidrs) > 0 ? [1] : []
+    content {
+      description      = "Airflow UI (IPv6)"
+      from_port        = 8080
+      to_port          = 8080
+      protocol         = "tcp"
+      ipv6_cidr_blocks = var.airflow_ui_ipv6_cidrs
     }
   }
 

@@ -1,11 +1,11 @@
 resource "aws_s3_bucket" "backups" {
-  bucket = "sport-suite-backups-${data.aws_caller_identity.current.account_id}"
+  bucket = "sport-suite-backups-${var.aws_region}-${data.aws_caller_identity.current.account_id}"
 
   tags = { Name = "sport-suite-backups", Purpose = "postgres-backups" }
 }
 
 resource "aws_s3_bucket" "models" {
-  bucket = "sport-suite-models-${data.aws_caller_identity.current.account_id}"
+  bucket = "sport-suite-models-${var.aws_region}-${data.aws_caller_identity.current.account_id}"
 
   tags = { Name = "sport-suite-models", Purpose = "ml-model-pkl-files" }
 }

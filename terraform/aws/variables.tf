@@ -41,7 +41,13 @@ variable "allowed_ssh_cidrs" {
 }
 
 variable "airflow_ui_cidrs" {
-  description = "CIDR blocks allowed to access Airflow UI (port 8080). Use SSH tunnel instead for security."
+  description = "IPv4 CIDR blocks allowed to access Airflow UI (port 8080). Use SSH tunnel instead for security."
+  type        = list(string)
+  default     = []
+}
+
+variable "airflow_ui_ipv6_cidrs" {
+  description = "IPv6 CIDR blocks allowed to access Airflow UI (port 8080)."
   type        = list(string)
   default     = []
 }
