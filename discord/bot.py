@@ -31,6 +31,7 @@ import nba_commands
 from cephalon import BotIdentity, CephalonBrain
 from cephalon.axiom_tools import AXIOM_TOOLS, handle_tool
 from cephalon.context import axiom_context
+from cephalon.persistence import _init_dedup_table, claim_message
 from cephalon.personalities import AXIOM
 
 logging.basicConfig(
@@ -63,6 +64,8 @@ nba_commands.register(bot)
 _start_time = datetime.now(timezone.utc)
 _EST = ZoneInfo("America/New_York")
 _notified_run_ids: set[str] = set()
+
+_init_dedup_table()
 
 
 async def _send_heartbeat():
@@ -156,10 +159,6 @@ async def on_ready():
     bot.loop.create_task(_pipeline_completion_monitor())
 
 
-_processed_message_ids: set[int] = set()
-_MAX_PROCESSED_CACHE = 500
-
-
 @bot.event
 async def on_message(message):
     # Ignore own messages
@@ -171,14 +170,10 @@ async def on_message(message):
         await bot.process_commands(message)
         return
 
-    # Deduplicate: Discord can replay messages on session RESUME after reconnect
-    if message.id in _processed_message_ids:
+    # Deduplicate: SQLite-backed claim so cross-restart / two-process races are safe
+    if not claim_message(message.id):
+        log.debug(f"Skipping already-claimed message id={message.id}")
         return
-    _processed_message_ids.add(message.id)
-    if len(_processed_message_ids) > _MAX_PROCESSED_CACHE:
-        # Trim oldest entries (sets aren't ordered, just drop half)
-        while len(_processed_message_ids) > _MAX_PROCESSED_CACHE // 2:
-            _processed_message_ids.pop()
 
     # DM conversation via AI
     async with message.channel.typing():
