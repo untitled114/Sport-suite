@@ -4,9 +4,14 @@ Cephalon Axiom - Sport-suite NBA Discord Bot
 DM-only standalone bot for NBA betting picks.
 """
 
+import asyncio
 import logging
 import os
 import sys
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+import aiohttp
 
 import discord
 from discord import app_commands
@@ -47,12 +52,94 @@ brain = CephalonBrain(
         system_prompt=AXIOM,
         context_fn=axiom_context,
         admin_ids=ADMIN_IDS,
+        persistent=True,
         tools=AXIOM_TOOLS,
         tool_handler=handle_tool,
     )
 )
 
 nba_commands.register(bot)
+
+_start_time = datetime.now(timezone.utc)
+_EST = ZoneInfo("America/New_York")
+_notified_run_ids: set[str] = set()
+
+
+async def _send_heartbeat():
+    """Send heartbeat to Cephalon Atlas every 60 seconds."""
+    await bot.wait_until_ready()
+    secret = os.environ.get("ATLAS_HEARTBEAT_SECRET", "")
+    while not bot.is_closed():
+        try:
+            uptime = int((datetime.now(timezone.utc) - _start_time).total_seconds())
+            async with aiohttp.ClientSession() as session:
+                await session.post(
+                    "http://localhost:8100/heartbeat",
+                    json={"bot": "axiom", "status": "ok", "uptime": uptime, "secret": secret},
+                    timeout=aiohttp.ClientTimeout(total=5),
+                )
+        except Exception:
+            pass
+        await asyncio.sleep(60)
+
+
+async def _pipeline_completion_monitor():
+    """Poll axiom_pipeline_audit and DM admins when a pipeline run completes."""
+    await bot.wait_until_ready()
+    await asyncio.sleep(90)
+    while not bot.is_closed():
+        await asyncio.sleep(30)
+        try:
+            from cephalon.axiom_db import execute_query
+
+            rows = execute_query(
+                "axiom",
+                """
+                SELECT run_timestamp, run_number, run_type, status,
+                       picks_generated, xl_picks, v3_picks,
+                       duration_seconds, error_message
+                FROM axiom_pipeline_audit
+                WHERE run_timestamp >= %s
+                  AND status IN ('success', 'failed', 'partial')
+                ORDER BY run_timestamp DESC
+                LIMIT 10
+                """,
+                (_start_time.isoformat(),),
+            )
+            for row in rows:
+                run_id = str(row["run_timestamp"])
+                if run_id in _notified_run_ids:
+                    continue
+                _notified_run_ids.add(run_id)
+
+                status = row["status"]
+                icon = "✅" if status == "success" else ("⚠️" if status == "partial" else "❌")
+                picks = row["picks_generated"]
+                xl, v3 = row["xl_picks"], row["v3_picks"]
+                dur = row["duration_seconds"]
+                err = row["error_message"]
+                num = row["run_number"]
+                rtype = row["run_type"] or "run"
+
+                picks_str = f"{picks} picks" if picks is not None else "?"
+                if xl is not None and v3 is not None:
+                    picks_str += f" (XL:{xl} V3:{v3})"
+                dur_str = f" in {int(dur)}s" if dur else ""
+                err_str = f"\n⚠️ {err[:120]}" if err else ""
+                ts = datetime.now(_EST).strftime("%H:%M EST")
+                msg = (
+                    f"{icon} **Run {num}** ({rtype}) — {status}{dur_str}\n"
+                    f"{picks_str}{err_str}\n"
+                    f"-# {ts}"
+                )
+                for admin_id in ADMIN_IDS:
+                    try:
+                        user = await bot.fetch_user(admin_id)
+                        await user.send(msg)
+                    except Exception as dm_err:
+                        log.warning(f"Pipeline DM failed for {admin_id}: {dm_err}")
+        except Exception as e:
+            log.debug(f"Pipeline monitor error: {e}")
 
 
 @bot.event
@@ -65,6 +152,8 @@ async def on_ready():
     except Exception as e:
         log.error(f"Command sync failed: {e}")
     nba_commands.start_scheduled_tasks(bot)
+    bot.loop.create_task(_send_heartbeat())
+    bot.loop.create_task(_pipeline_completion_monitor())
 
 
 _processed_message_ids: set[int] = set()
