@@ -57,15 +57,29 @@ default_args = {
 }
 
 
-def send_health_alert(subject: str, body: str, is_critical: bool = False) -> None:
-    """Send health alert via Discord DM (primary) and email (fallback)."""
+def send_health_alert(
+    subject: str,
+    body: str,
+    is_critical: bool = False,
+    discord_summary: str | None = None,
+) -> None:
+    """Send health alert via Discord DM (primary) and email (fallback).
+
+    Args:
+        subject: Alert subject line.
+        body: HTML body for email.
+        is_critical: True for critical failures, False for warnings.
+        discord_summary: Plain-text/Markdown summary for Discord.
+                         If None, falls back to a stripped version of subject.
+    """
     from discord_notify import send_dm
 
     priority_prefix = "[CRITICAL]" if is_critical else "[WARNING]"
-
-    # Discord DM — immediate and reliable
     icon = "🚨" if is_critical else "⚠️"
-    send_dm(f"{icon} **{priority_prefix} {subject}**\n{body[:800]}")
+
+    # Discord DM — Markdown only, no HTML
+    discord_msg = discord_summary or f"{icon} **{priority_prefix} {subject}**"
+    send_dm(discord_msg)
 
     # Email fallback
     try:
@@ -266,11 +280,13 @@ def nba_health_check():
     )
     def check_data_freshness() -> dict[str, Any]:
         """Check data freshness and availability."""
+        from zoneinfo import ZoneInfo
+
         import psycopg2
 
         from nba.config.database import get_games_db_config, get_intelligence_db_config
 
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        date_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
         results = {}
         warnings = []
 
@@ -624,10 +640,32 @@ def nba_health_check():
             {f"<h4>Warnings:</h4>{warnings_html}" if warnings_html else ""}
             """
 
+            icon = "🚨" if has_failures else "⚠️"
+            db_status = db_result.get("status", "?")
+            model_files = model_result.get("pkl_count", 0)
+            props_count = data_result.get("props_count", 0)
+            disk_pct = disk_result.get("usage_percent", 0)
+            game_log_stale = game_log_result.get("days_stale", "?")
+            data_warnings = data_result.get("warnings", [])
+
+            discord_lines = [
+                f"{icon} **NBA Health: {overall_status.upper()}**",
+                f"```",
+                f"DB      {db_status}",
+                f"Models  {model_files} files",
+                f"Props   {props_count}",
+                f"Disk    {disk_pct:.1f}%",
+                f"Logs    {game_log_stale}d stale",
+                f"```",
+            ]
+            if data_warnings:
+                discord_lines.append("**Warnings:** " + " | ".join(data_warnings))
+
             send_health_alert(
                 f"NBA System Health: {overall_status.upper()}",
                 body,
                 is_critical=has_failures,
+                discord_summary="\n".join(discord_lines),
             )
 
         return {

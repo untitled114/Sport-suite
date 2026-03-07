@@ -197,7 +197,9 @@ def nba_refresh_pipeline():
     @task(task_id="refresh_vegas")
     def refresh_vegas() -> dict[str, Any]:
         """Refresh vegas lines."""
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        from zoneinfo import ZoneInfo
+
+        date_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
         return run_script(
             f"{SCRIPT_DIR}/betting_xl/fetchers/fetch_vegas_lines.py",
             ["--date", date_str, "--save-to-db"],
@@ -210,11 +212,13 @@ def nba_refresh_pipeline():
             print("[INFO] No games today - skipping enrich_matchups")
             return {"coverage": 0, "status": "no_games"}
 
+        from zoneinfo import ZoneInfo
+
         import psycopg2
 
         from nba.config.database import get_intelligence_db_config
 
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        date_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
         run_script(
             f"{SCRIPT_DIR}/betting_xl/enrich_props_with_matchups.py",
             ["--date", date_str],
@@ -257,7 +261,9 @@ def nba_refresh_pipeline():
             print("[INFO] No games today - skipping XL predictions")
             return {"total_picks": 0, "status": "no_games"}
 
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        from zoneinfo import ZoneInfo
+
+        date_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
         output_file = f"{PREDICTIONS_DIR}/xl_picks_{date_str}.json"
 
         result = run_script(
@@ -283,7 +289,9 @@ def nba_refresh_pipeline():
             print("[INFO] No games today - skipping Pro picks")
             return {"total_picks": 0, "status": "no_games"}
 
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        from zoneinfo import ZoneInfo
+
+        date_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
         output_file = f"{PREDICTIONS_DIR}/pro_picks_{date_str}.json"
 
         run_script(

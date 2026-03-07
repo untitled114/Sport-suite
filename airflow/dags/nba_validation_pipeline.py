@@ -419,7 +419,9 @@ def nba_validation_pipeline():
         """Save validation results to file."""
         Path(VALIDATION_DIR).mkdir(parents=True, exist_ok=True)
 
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        from zoneinfo import ZoneInfo
+
+        date_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
         results = {
             "validation_date": date_str,
