@@ -11,11 +11,12 @@ import logging
 import os
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger("airflow.discord_notify")
 
-OWNER_USER_ID = "759254862423916564"
+_EST = ZoneInfo("America/New_York")
 DISCORD_API = "https://discord.com/api/v10"
 
 
@@ -56,7 +57,7 @@ def send_dm(message: str) -> bool:
         # Open DM channel
         req = urllib.request.Request(
             f"{DISCORD_API}/users/@me/channels",
-            data=json.dumps({"recipient_id": OWNER_USER_ID}).encode(),
+            data=json.dumps({"recipient_id": os.environ.get("DISCORD_OWNER_ID", "")}).encode(),
             headers=headers,
             method="POST",
         )
@@ -86,7 +87,7 @@ def send_dm(message: str) -> bool:
 
 def alert_pipeline_failure(dag_id: str, task_id: str, error: str, run_id: str = "") -> bool:
     """Format and send a pipeline failure alert."""
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    ts = datetime.now(_EST).strftime("%Y-%m-%d %H:%M EST")
     msg = (
         f"🚨 **Pipeline Failure**\n"
         f"**DAG:** `{dag_id}`\n"
@@ -101,7 +102,7 @@ def alert_pipeline_failure(dag_id: str, task_id: str, error: str, run_id: str = 
 
 def alert_data_stale(check_name: str, detail: str) -> bool:
     """Format and send a data staleness alert."""
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    ts = datetime.now(_EST).strftime("%Y-%m-%d %H:%M EST")
     msg = (
         f"⚠️ **Stale Data Detected**\n"
         f"**Check:** {check_name}\n"
@@ -113,7 +114,7 @@ def alert_data_stale(check_name: str, detail: str) -> bool:
 
 def alert_health_warning(status: str, warnings: list[str]) -> bool:
     """Format and send a health check warning."""
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    ts = datetime.now(_EST).strftime("%Y-%m-%d %H:%M EST")
     warn_lines = "\n".join(f"• {w}" for w in warnings[:10])
     msg = (
         f"{'🚨' if status == 'critical' else '⚠️'} **Health Check: {status.upper()}**\n"

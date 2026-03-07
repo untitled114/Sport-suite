@@ -9,6 +9,7 @@ import logging
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 import discord
 from discord import app_commands
@@ -773,7 +774,7 @@ def register(bot):
 
 
 def start_scheduled_tasks(bot):
-    @tasks.loop(time=time(hour=14, minute=15, tzinfo=timezone.utc))
+    @tasks.loop(time=time(hour=9, minute=15, tzinfo=ZoneInfo("America/New_York")))
     async def auto_post():
         """Auto-post all picks to owner at 9:15 AM EST."""
         if not NBA_OWNER_ID:
