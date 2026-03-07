@@ -25,19 +25,31 @@ _CONNECT_TIMEOUT = 5
 # Run number
 # ─────────────────────────────────────────────────────────────────
 
-# Maps UTC hour → run_number
-# Full pipeline (run 1) starts at 2AM EST = 7 UTC
-# Refresh runs: 5AM=10, 8AM=13, 11AM=16, 2PM=19, 5PM=22 (all EST/UTC-5)
-_HOUR_TO_RUN = {7: 1, 10: 2, 13: 3, 16: 4, 19: 5, 22: 6}
+# Scheduled runs: (UTC hour, run_number)
+# Full pipeline: 2AM EST = 7 UTC
+# Refresh runs:  5AM=10, 8AM=13, 11AM=16, 2PM=19, 5PM=22 (EST = UTC-5)
+_SCHEDULED_RUNS = [(7, 1), (10, 2), (13, 3), (16, 4), (19, 5), (22, 6)]
+
+# Runs are 3 hours (180 min) apart — a ±90 min window covers each slot
+# with no overlap and no gap, so manual triggers near a window land correctly.
+_SLOT_WINDOW_MINUTES = 90
 
 
 def get_run_number() -> int:
-    """Derive run_number (1-6) from current UTC hour.
+    """Derive run_number (1-6) from current time.
 
-    Returns 1 if called outside a scheduled window (e.g. manual trigger).
+    Uses a ±90-minute window around each scheduled UTC hour so that manual
+    triggers fired close to a scheduled run are assigned that run's slot
+    rather than defaulting to 1 and corrupting the history.
+
+    Returns 1 if called entirely outside any scheduled window.
     """
-    hour = datetime.now(timezone.utc).hour
-    return _HOUR_TO_RUN.get(hour, 1)
+    now = datetime.now(timezone.utc)
+    current_minutes = now.hour * 60 + now.minute
+    for sched_hour, run_num in _SCHEDULED_RUNS:
+        if abs(current_minutes - sched_hour * 60) <= _SLOT_WINDOW_MINUTES:
+            return run_num
+    return 1
 
 
 # ─────────────────────────────────────────────────────────────────

@@ -82,16 +82,22 @@ def _connect():
 # ─────────────────────────────────────────────────────────────────
 
 
-def _score_appearance(appearances: int, entry_run: int, total_runs: int) -> float:
-    """Fraction of possible runs (since first appearance) that included this pick.
+def _score_appearance(appearances: int, entry_run: int, fired_runs: list) -> float:
+    """Fraction of runs-that-actually-fired (since first appearance) that included this pick.
 
-    A pick seen in all 6 runs scores higher than one that showed up late.
+    Uses fired_runs (the set of run_numbers that produced picks today) as the
+    denominator instead of total_runs. This prevents unfair penalisation when
+    the pipeline was paused and early runs never happened — a pick can only be
+    "absent" from a run that actually fired.
+
+    A pick seen in all fired runs scores higher than one that showed up late.
     Entry penalty: appearing first at run 4 of 6 is weaker than run 1 of 6.
     """
-    possible_runs = total_runs - entry_run + 1
-    if possible_runs <= 0:
+    runs_since_entry = [r for r in fired_runs if r >= entry_run]
+    possible = len(runs_since_entry)
+    if possible <= 0:
         return 0.0
-    consistency = appearances / possible_runs
+    consistency = appearances / possible
 
     # Entry bonus: first seen at run 1 gets full score; run 5 gets 60%
     entry_factor = 1.0 - (entry_run - 1) * 0.08  # -8% per delayed run
@@ -523,6 +529,11 @@ def compute_conviction(run_date: str, run_number: int) -> int:
         if bp_recs:
             log.info(f"conviction_engine: {len(bp_recs)} BP recommendations loaded")
 
+        # ── Actual fired runs today (used as appearance denominator) ──
+        # Derived from loaded rows — no extra DB query needed.
+        # A run "fired" if at least one pick was written for it.
+        fired_runs: list[int] = sorted({r["run_number"] for r in rows})
+
         # ── Group by (player_name, stat_type) ─────────────────────────
         groups: dict[tuple, list] = {}
         for row in rows:
@@ -576,7 +587,7 @@ def compute_conviction(run_date: str, run_number: int) -> int:
                     ctx = {}
 
             # ── Score the four components ──────────────────────────────
-            s_appearance = _score_appearance(appearances, entry_run, run_number)
+            s_appearance = _score_appearance(appearances, entry_run, fired_runs)
             s_stability = _score_stability(p_over_std)
             s_trend = _score_trend(p_over_trend)
             s_line = _score_line_movement(line_movement)
