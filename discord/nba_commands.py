@@ -113,6 +113,9 @@ def _load_picks(date_str: str = None) -> Optional[dict]:
         for p in xl_picks:
             if "source" not in p:
                 p["source"] = "XL"
+        # Filter PRO picks to players on today's slate (XL pipeline only runs for active players)
+        active_players = {p.get("player_name", "").lower() for p in xl_picks}
+        pro_picks = [p for p in pro_picks if p.get("player_name", "").lower() in active_players]
         all_picks = xl_picks + pro_picks
         xl_data["picks"] = all_picks
         xl_data["total_picks"] = len(all_picks)
