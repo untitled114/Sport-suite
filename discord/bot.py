@@ -67,6 +67,10 @@ async def on_ready():
     nba_commands.start_scheduled_tasks(bot)
 
 
+_processed_message_ids: set[int] = set()
+_MAX_PROCESSED_CACHE = 500
+
+
 @bot.event
 async def on_message(message):
     # Ignore own messages
@@ -77,6 +81,15 @@ async def on_message(message):
     if not isinstance(message.channel, discord.DMChannel):
         await bot.process_commands(message)
         return
+
+    # Deduplicate: Discord can replay messages on session RESUME after reconnect
+    if message.id in _processed_message_ids:
+        return
+    _processed_message_ids.add(message.id)
+    if len(_processed_message_ids) > _MAX_PROCESSED_CACHE:
+        # Trim oldest entries (sets aren't ordered, just drop half)
+        while len(_processed_message_ids) > _MAX_PROCESSED_CACHE // 2:
+            _processed_message_ids.pop()
 
     # DM conversation via AI
     async with message.channel.typing():
