@@ -6,6 +6,15 @@ Provides database mocking, sample data, and common test utilities.
 Note: Project paths are configured via pyproject.toml [tool.pytest.ini_options] pythonpath.
 """
 
+import os
+import sys
+
+# Make cephalon module importable when running tests locally.
+# Tests that require it use pytest.importorskip and are skipped in CI.
+_cephalons_path = os.path.expanduser("~/Cephalons")
+if os.path.isdir(_cephalons_path) and _cephalons_path not in sys.path:
+    sys.path.insert(0, _cephalons_path)
+
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch
