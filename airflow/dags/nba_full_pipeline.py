@@ -231,7 +231,9 @@ def nba_full_pipeline():
         PrizePicks provides DFS lines that are often softer than sportsbooks,
         creating high-spread opportunities for GOLDMINE picks.
         """
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        from zoneinfo import ZoneInfo
+
+        date_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
         # Fetch and load PrizePicks data. Script errors are intentionally not
         # raised here — PrizePicks is a non-critical DFS source. If it fails,
@@ -263,11 +265,13 @@ def nba_full_pipeline():
             print("[INFO] No games today - skipping enrich_matchups")
             return {"coverage": 0, "total": 0, "status": "no_games"}
 
+        from zoneinfo import ZoneInfo
+
         import psycopg2
 
         from nba.config.database import get_intelligence_db_config
 
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        date_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
         run_script(
             f"{SCRIPT_DIR}/betting_xl/enrich_props_with_matchups.py",
             ["--date", date_str],
@@ -365,7 +369,9 @@ def nba_full_pipeline():
     @task(task_id="fetch_vegas")
     def fetch_vegas() -> dict[str, Any]:
         """Fetch vegas lines."""
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        from zoneinfo import ZoneInfo
+
+        date_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
         return run_script(
             f"{SCRIPT_DIR}/betting_xl/fetchers/fetch_vegas_lines.py",
             ["--date", date_str, "--save-to-db"],
@@ -399,7 +405,9 @@ def nba_full_pipeline():
             print("[INFO] No games today - skipping XL predictions")
             return {"output_file": None, "total_picks": 0, "status": "no_games"}
 
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        from zoneinfo import ZoneInfo
+
+        date_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
         output_file = f"{PREDICTIONS_DIR}/xl_picks_{date_str}.json"
 
         # Pre-flight check: verify PrizePicks data for GOLDMINE picks
@@ -435,7 +443,9 @@ def nba_full_pipeline():
             print("[INFO] No games today - skipping Pro picks")
             return {"output_file": None, "total_picks": 0, "status": "no_games"}
 
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        from zoneinfo import ZoneInfo
+
+        date_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
         output_file = f"{PREDICTIONS_DIR}/pro_picks_{date_str}.json"
 
         result = run_script(
@@ -456,7 +466,9 @@ def nba_full_pipeline():
         pro_result: dict[str, Any],
     ) -> dict[str, Any]:
         """Output final summary."""
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        from zoneinfo import ZoneInfo
+
+        date_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
         if all(r.get("status") == "no_games" for r in [xl_result, pro_result]):
             print(f"[INFO] No NBA games on {date_str} - pipeline completed with nothing to do")
