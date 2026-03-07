@@ -11,24 +11,26 @@ so a DB issue never propagates back to fail the pipeline.
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 log = logging.getLogger("nba.axiom_writer")
 
 _AXIOM_PORT = 5541
 _AXIOM_DB = "cephalon_axiom"
 _CONNECT_TIMEOUT = 5
+_EST = ZoneInfo("America/New_York")
 
 
 # ─────────────────────────────────────────────────────────────────
 # Run number
 # ─────────────────────────────────────────────────────────────────
 
-# Scheduled runs: (UTC hour, run_number)
-# Full pipeline: 2AM EST = 7 UTC
-# Refresh runs:  5AM=10, 8AM=13, 11AM=16, 2PM=19, 5PM=22 (EST = UTC-5)
-_SCHEDULED_RUNS = [(7, 1), (10, 2), (13, 3), (16, 4), (19, 5), (22, 6)]
+# Scheduled runs: (EST hour, run_number)
+# Full pipeline: 2 AM EST (run 1)
+# Refresh runs:  5 AM, 8 AM, 11 AM, 2 PM, 5 PM EST (runs 2-6)
+_SCHEDULED_RUNS = [(2, 1), (5, 2), (8, 3), (11, 4), (14, 5), (17, 6)]
 
 # Runs are 3 hours (180 min) apart — a ±90 min window covers each slot
 # with no overlap and no gap, so manual triggers near a window land correctly.
@@ -36,15 +38,15 @@ _SLOT_WINDOW_MINUTES = 90
 
 
 def get_run_number() -> int:
-    """Derive run_number (1-6) from current time.
+    """Derive run_number (1-6) from current EST time.
 
-    Uses a ±90-minute window around each scheduled UTC hour so that manual
+    Uses a ±90-minute window around each scheduled EST hour so that manual
     triggers fired close to a scheduled run are assigned that run's slot
     rather than defaulting to 1 and corrupting the history.
 
     Returns 1 if called entirely outside any scheduled window.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(_EST)
     current_minutes = now.hour * 60 + now.minute
     for sched_hour, run_num in _SCHEDULED_RUNS:
         if abs(current_minutes - sched_hour * 60) <= _SLOT_WINDOW_MINUTES:

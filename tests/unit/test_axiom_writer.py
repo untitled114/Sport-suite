@@ -30,8 +30,8 @@ class TestConnect:
 
 
 class TestGetRunNumber:
-    def _mock_utc(self, hour, minute=0):
-        """Return a mock datetime.now() with given UTC hour:minute."""
+    def _mock_est(self, hour, minute=0):
+        """Return a mock datetime.now() with given EST hour:minute."""
         mock_now = MagicMock()
         mock_now.hour = hour
         mock_now.minute = minute
@@ -40,32 +40,32 @@ class TestGetRunNumber:
         return mock_dt
 
     def test_scheduled_hours_exact(self):
-        # Each scheduled UTC hour maps to its run number exactly
+        # Each scheduled EST hour maps to its run number exactly
         for sched_hour, expected_run in _SCHEDULED_RUNS:
-            with patch("nba.core.axiom_writer.datetime", self._mock_utc(sched_hour)):
+            with patch("nba.core.axiom_writer.datetime", self._mock_est(sched_hour)):
                 assert get_run_number() == expected_run
 
     def test_window_before_scheduled(self):
-        # 15 UTC is 60 min before run 4 (16 UTC) — within ±90 min window
-        with patch("nba.core.axiom_writer.datetime", self._mock_utc(15, 0)):
+        # 10 EST is 60 min before run 4 (11 EST) — within ±90 min window
+        with patch("nba.core.axiom_writer.datetime", self._mock_est(10, 0)):
             assert get_run_number() == 4
 
     def test_window_after_scheduled(self):
-        # 7 UTC + 30 min still in run 1's window
-        with patch("nba.core.axiom_writer.datetime", self._mock_utc(7, 30)):
+        # 2 EST + 30 min still in run 1's window
+        with patch("nba.core.axiom_writer.datetime", self._mock_est(2, 30)):
             assert get_run_number() == 1
 
     def test_off_window_returns_1(self):
-        # 0 UTC (midnight) is outside all ±90 min windows
-        with patch("nba.core.axiom_writer.datetime", self._mock_utc(0, 0)):
+        # 0 EST (midnight) is 120 min before run 1 (2 EST) — outside ±90 min window
+        with patch("nba.core.axiom_writer.datetime", self._mock_est(0, 0)):
             assert get_run_number() == 1
 
-    def test_run1_at_7utc(self):
-        with patch("nba.core.axiom_writer.datetime", self._mock_utc(7)):
+    def test_run1_at_2est(self):
+        with patch("nba.core.axiom_writer.datetime", self._mock_est(2)):
             assert get_run_number() == 1
 
-    def test_run6_at_22utc(self):
-        with patch("nba.core.axiom_writer.datetime", self._mock_utc(22)):
+    def test_run6_at_17est(self):
+        with patch("nba.core.axiom_writer.datetime", self._mock_est(17)):
             assert get_run_number() == 6
 
 
