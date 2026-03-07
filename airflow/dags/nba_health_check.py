@@ -391,13 +391,11 @@ def nba_health_check():
             conn.close()
             results["cheatsheet_count"] = cheatsheet_count
 
-            if cheatsheet_count < 50:
-                warnings.append(f"Cheatsheet data: {cheatsheet_count} props")
-                print(f"[WARN] Cheatsheet: {cheatsheet_count} props")
-            else:
-                print(f"[OK] Cheatsheet: {cheatsheet_count} props")
+            # Cheatsheet is optional enrichment — log only, never a warning
+            level = "OK" if cheatsheet_count >= 50 else "INFO"
+            print(f"[{level}] Cheatsheet: {cheatsheet_count} props")
         except Exception as e:
-            # Cheatsheet might not exist, this is optional
+            # Table may not exist yet — non-critical
             print(f"[INFO] Cheatsheet check: {e}")
             results["cheatsheet_count"] = 0
 
@@ -645,7 +643,11 @@ def nba_health_check():
             model_files = model_result.get("pkl_count", 0)
             props_count = data_result.get("props_count", 0)
             disk_pct = disk_result.get("usage_percent", 0)
-            game_log_stale = game_log_result.get("days_stale", "?")
+            game_log_stale = game_log_result.get("days_stale", 0)
+            game_log_latest = game_log_result.get("latest_date", "unknown")
+            logs_display = (
+                f"stale ({game_log_stale}d)" if game_log_stale > 3 else f"ok ({game_log_latest})"
+            )
             data_warnings = data_result.get("warnings", [])
 
             discord_lines = [
@@ -655,7 +657,7 @@ def nba_health_check():
                 f"Models  {model_files} files",
                 f"Props   {props_count}",
                 f"Disk    {disk_pct:.1f}%",
-                f"Logs    {game_log_stale}d stale",
+                f"Logs    {logs_display}",
                 f"```",
             ]
             if data_warnings:

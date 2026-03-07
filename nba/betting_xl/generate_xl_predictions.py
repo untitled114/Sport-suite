@@ -975,6 +975,11 @@ class XLPredictionsGenerator:
                                 features, stat_type, optimized["best_line"]
                             )
 
+                        # BettingPros intelligence: streak, their model projection, opp rank
+                        bp_intel = self._get_bp_intel(player_name, stat_type)
+                        if bp_intel:
+                            pick["bp_intel"] = bp_intel
+
                         # Add player context for Discord display
                         stat_key = stat_type.lower()
                         # Use L20 as proxy for season avg since season_avg feature doesn't exist
@@ -1133,6 +1138,37 @@ class XLPredictionsGenerator:
             }
 
         return enriched
+
+    def _get_bp_intel(self, player_name: str, stat_type: str) -> Optional[Dict[str, Any]]:
+        """Return BettingPros intelligence data for a player/stat.
+
+        Includes streak, their own model projection, and opposition rank.
+        Returns None if no BP data available for today.
+        """
+        record = self.hit_rate_cache.get(player_name, stat_type)
+        if not record:
+            return None
+
+        intel: Dict[str, Any] = {}
+
+        # Streak — how many games in a row has this player been OVER/UNDER this line
+        if record.get("streak") is not None:
+            intel["streak"] = record["streak"]
+            intel["streak_type"] = record.get("streak_type")
+
+        # BettingPros' own projection — second independent model opinion
+        if record.get("bp_projection") is not None:
+            intel["bp_projection"] = record["bp_projection"]
+            intel["bp_probability"] = record.get("bp_probability")
+            intel["bp_expected_value"] = record.get("bp_expected_value")
+            intel["bp_bet_rating"] = record.get("bp_bet_rating")
+            intel["bp_recommended_side"] = record.get("bp_recommended_side")
+
+        # Defense rank (1=hardest, 30=easiest to score on for this stat)
+        if record.get("opposition_rank") is not None:
+            intel["opposition_rank"] = record["opposition_rank"]
+
+        return intel if intel else None
 
     def _compute_hit_rates_from_features(self, features: dict, stat_type: str, line: float) -> dict:
         """Get hit rates from BettingPros features or compute from rolling averages."""

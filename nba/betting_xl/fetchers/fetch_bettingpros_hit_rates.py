@@ -104,6 +104,12 @@ class BettingProsHitRateFetcher(BaseFetcher):
 
         hit_rates, sample_sizes = self._build_hit_rates(performance)
 
+        # BettingPros' own model projection — second independent signal for conviction
+        projection = raw_prop.get("projection") or {}
+
+        # Defense rank vs this stat — already computed by BP, no need to recompute
+        opp_rank = (raw_prop.get("extra") or {}).get("opposition_rank") or {}
+
         record = {
             "player_name": player_name,
             "player_slug": player.get("slug"),
@@ -115,7 +121,17 @@ class BettingProsHitRateFetcher(BaseFetcher):
             "line": float(line) if line is not None else None,
             "hit_rates": hit_rates,
             "samples": sample_sizes,
-            "raw_performance": performance,
+            # Streak — consecutive over/under run vs this line
+            "streak": performance.get("streak"),
+            "streak_type": performance.get("streak_type"),  # "over" or "under"
+            # BettingPros' own model (independent second opinion)
+            "bp_projection": projection.get("value"),
+            "bp_probability": projection.get("probability"),
+            "bp_expected_value": projection.get("expected_value"),
+            "bp_bet_rating": projection.get("bet_rating"),  # 1-5 stars
+            "bp_recommended_side": projection.get("recommended_side"),  # "over" or "under"
+            # Defense rank for this stat (1=hardest, 30=easiest)
+            "opposition_rank": opp_rank.get("rank"),
         }
         return record
 

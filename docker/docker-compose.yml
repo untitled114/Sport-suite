@@ -158,6 +158,37 @@ services:
         max-file: "3"
 
   # ==========================================================================
+  # CEPHALON AXIOM DATABASE - Pipeline audit, conviction scores, bot memory
+  # ==========================================================================
+  cephalon_axiom_db:
+    image: postgres:16
+    container_name: cephalon_axiom_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cephalon_axiom
+      POSTGRES_USER: ${DB_USER:-mlb_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - cephalon_axiom_data:/var/lib/postgresql/data
+      - ./cephalon_axiom_db/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      - ./cephalon_axiom_db/schema.sql:/docker-entrypoint-initdb.d/02_schema.sql:ro
+    ports:
+      - "${CEPHALON_AXIOM_PORT:-5541}:5432"
+    networks:
+      - nba_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-mlb_user} -d cephalon_axiom"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
   # MONGODB - Document store for multi-book prop lines (XL system)
   # ==========================================================================
   mongodb:
@@ -215,4 +246,7 @@ volumes:
     driver: local
   mongodb_config:
     name: nba_mongodb_config
+    driver: local
+  cephalon_axiom_data:
+    name: cephalon_axiom_data
     driver: local

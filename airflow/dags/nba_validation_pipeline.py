@@ -1,7 +1,7 @@
 """
 NBA Validation Pipeline DAG
 
-Scheduled: Daily at 09:30 AM EST (14:30 UTC)
+Scheduled: Daily at 02:30 AM EST
 Purpose: Validate pick performance and track win rates
 
 Tasks:
@@ -84,7 +84,7 @@ def send_performance_alert(subject: str, body: str, is_critical: bool = False) -
 @dag(
     dag_id="nba_validation_pipeline",
     description="NBA pick performance validation and tracking",
-    schedule=CronTriggerTimetable("30 14 * * *", timezone="UTC"),  # 09:30 AM EST daily
+    schedule=CronTriggerTimetable("30 2 * * *", timezone="America/New_York"),  # 02:30 AM EST daily
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["nba", "validation", "performance", "tracking"],
@@ -531,6 +531,25 @@ def nba_validation_pipeline():
             "results_file": saved.get("output_file"),
         }
 
+    @task(task_id="write_actuals_to_axiom")
+    def write_actuals_to_axiom() -> dict[str, Any]:
+        """Write yesterday's actual results into nba_prediction_history.
+
+        Updates is_hit + actual_result for every pick in the axiom DB so the
+        conviction engine and Axiom brain can measure filter performance.
+        Never fails — a DB error here doesn't block the rest of validation.
+        """
+        from zoneinfo import ZoneInfo
+
+        from nba.core.axiom_writer import write_actuals
+
+        yesterday = (datetime.now(ZoneInfo("America/New_York")) - timedelta(days=1)).strftime(
+            "%Y-%m-%d"
+        )
+        updated = write_actuals(yesterday)
+        print(f"[axiom] Graded {updated} pick rows for {yesterday}")
+        return {"date": yesterday, "rows_updated": updated}
+
     # ========================================================================
     # Task Dependencies
     # ========================================================================
@@ -554,6 +573,9 @@ def nba_validation_pipeline():
         rolling_30d_result,
         alerts_result,
     )
+
+    # Write actuals to axiom DB — runs after yesterday's validation confirms game logs exist
+    write_actuals_to_axiom()
 
     # Generate final report (terminal task)
     generate_performance_report(

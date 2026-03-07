@@ -1,7 +1,7 @@
 # Copy to terraform.tfvars and fill in your values
 # terraform.tfvars is gitignored
 
-aws_region    = "us-east-1"
+aws_region    = "us-east-2"
 environment   = "prod"
 instance_type = "t3.xlarge"  # 4 vCPU / 16GB — downsize to t3.large after Hetzner split
 

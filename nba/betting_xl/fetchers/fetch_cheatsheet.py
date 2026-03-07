@@ -28,6 +28,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -143,7 +144,7 @@ class CheatSheetFetcher(BaseFetcher):
             verbose=verbose,
         )
 
-        self.date = date or datetime.now().strftime("%Y-%m-%d")
+        self.date = date or datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
         self.platform = platform.lower()
         self.include_combos = include_combos
 

@@ -711,8 +711,61 @@ def register(bot):
         embed.set_footer(text=f"Validated {days} day(s) | {_get_today_str()}")
         await interaction.edit_original_response(embed=embed)
 
+    @bot.tree.command(name="nba-card", description="Send today's conviction card (manual trigger)")
+    async def nba_card(interaction: discord.Interaction):
+        """Send the Axiom daily conviction card now (bypasses dedup)."""
+        if not _is_admin(interaction.user.id):
+            await interaction.response.send_message("Admin only", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        import sys
+
+        if NBA_PROJECT not in sys.path:
+            sys.path.insert(0, NBA_PROJECT)
+
+        from nba.core.daily_card import _load_conviction_picks, build_embed, get_first_tip_time
+
+        run_date = _get_today_str()
+
+        try:
+            loop = asyncio.get_event_loop()
+            picks, max_run = await loop.run_in_executor(None, _load_conviction_picks, run_date)
+            tip_time = await loop.run_in_executor(None, get_first_tip_time, run_date)
+            embed_data = build_embed(run_date, tip_time, picks, max_run)
+        except Exception as e:
+            await interaction.followup.send(
+                embed=discord.Embed(
+                    title="Card Error",
+                    description=f"Failed to build conviction card: {e}",
+                    color=COLOR_RED,
+                ),
+                ephemeral=True,
+            )
+            return
+
+        # Convert raw embed dict to discord.Embed
+        embed = discord.Embed(
+            title=embed_data.get("title", "NBA Picks"),
+            description=embed_data.get("description", ""),
+            color=embed_data.get("color", COLOR_GOLD),
+        )
+        for field in embed_data.get("fields", []):
+            embed.add_field(
+                name=field["name"], value=field["value"], inline=field.get("inline", False)
+            )
+        if footer := embed_data.get("footer"):
+            embed.set_footer(text=footer.get("text", ""))
+
+        # Send to channel (visible) — this is the card itself
+        await interaction.channel.send(embed=embed)
+        # Confirm to caller
+        await interaction.followup.send(f"Card sent ({len(picks)} picks).", ephemeral=True)
+
     print(
-        "[NBA] Registered: /nba, /nba-detail, /nba-refresh, /nba-run, /nba-status, /nba-reload, /nba-validate"
+        "[NBA] Registered: /nba, /nba-detail, /nba-refresh, /nba-run, "
+        "/nba-status, /nba-reload, /nba-validate, /nba-card"
     )
 
 
