@@ -1174,7 +1174,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
         try:
             from nba.features.extractors.game_context_features import GameContextFeatureExtractor
 
-            extractor = GameContextFeatureExtractor(self.games_conn, self.players_conn)
+            extractor = GameContextFeatureExtractor(self.games_conn, self.conn)
             return extractor.extract(
                 player_name=player_name,
                 game_date=game_date,
@@ -1201,7 +1201,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
         try:
             from nba.features.extractors.temporal_features import TemporalFeatureExtractor
 
-            extractor = TemporalFeatureExtractor(self.players_conn)
+            extractor = TemporalFeatureExtractor(self.conn)
             return extractor.extract(
                 player_name=player_name,
                 game_date=game_date,
