@@ -557,7 +557,26 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
         )
         player_features.update(v3_features)
 
-        # Total: ~168+ features (varies by availability)
+        # Add V4 features: BP analytics (~15 features)
+        bp_analytics_features = self.extract_bp_analytics_features(
+            player_name=player_name,
+            game_date=game_date,
+            stat_type=stat_type,
+            line=line,
+            opponent_team=opponent_team,
+        )
+        player_features.update(bp_analytics_features)
+
+        # Add V4 features: Game context (~8 features)
+        game_context_features = self.extract_game_context_features(
+            player_name=player_name,
+            game_date=game_date,
+            stat_type=stat_type,
+            opponent_team=opponent_team,
+        )
+        player_features.update(game_context_features)
+
+        # Total: ~191+ features (varies by availability)
         # Note: expected_diff (1 feature) will be added by classifier head during training
         return player_features
 
@@ -1098,6 +1117,65 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
         except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error extracting cheatsheet features for {player_name}: {e}")
             return defaults
+
+    def extract_bp_analytics_features(
+        self,
+        player_name: str,
+        game_date,
+        stat_type: str,
+        line: float = None,
+        opponent_team: str = None,
+    ) -> Dict[str, float]:
+        """Extract ~15 V4 features from BP historical analytics + DVP.
+
+        Uses BPAnalyticsFeatureExtractor which queries bp_historical_analytics
+        and bp_dvp_historical tables. Falls back to defaults if tables don't
+        exist or have no data for this prop.
+        """
+        try:
+            from nba.features.extractors.bp_analytics_features import BPAnalyticsFeatureExtractor
+
+            extractor = BPAnalyticsFeatureExtractor(self.intelligence_conn)
+            return extractor.extract(
+                player_name=player_name,
+                game_date=game_date,
+                stat_type=stat_type,
+                line=line,
+                opponent_team=opponent_team,
+            )
+        except Exception as e:
+            logger.debug(f"BP analytics features failed for {player_name}: {e}")
+            from nba.features.extractors.bp_analytics_features import BPAnalyticsFeatureExtractor
+
+            return BPAnalyticsFeatureExtractor.get_defaults()
+
+    def extract_game_context_features(
+        self,
+        player_name: str,
+        game_date,
+        stat_type: str,
+        opponent_team: str = None,
+    ) -> Dict[str, float]:
+        """Extract ~8 V4 features from game context (pace, blowout, minutes).
+
+        Uses GameContextFeatureExtractor which queries games table and
+        player_game_logs. Falls back to defaults gracefully.
+        """
+        try:
+            from nba.features.extractors.game_context_features import GameContextFeatureExtractor
+
+            extractor = GameContextFeatureExtractor(self.games_conn, self.players_conn)
+            return extractor.extract(
+                player_name=player_name,
+                game_date=game_date,
+                stat_type=stat_type,
+                opponent_team=opponent_team,
+            )
+        except Exception as e:
+            logger.debug(f"Game context features failed for {player_name}: {e}")
+            from nba.features.extractors.game_context_features import GameContextFeatureExtractor
+
+            return GameContextFeatureExtractor.get_defaults()
 
     def extract_v3_features(
         self,

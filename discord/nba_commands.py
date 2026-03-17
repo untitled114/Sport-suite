@@ -930,9 +930,131 @@ def register(bot):
         # Confirm to caller
         await interaction.followup.send(f"Card sent ({len(picks)} picks).", ephemeral=True)
 
+    @bot.tree.command(
+        name="nba-settings",
+        description="Configure Axiom's proactive intelligence features",
+    )
+    @app_commands.describe(
+        setting="Feature to configure: morning_brief, alerts, live_tracking, pregame",
+        value="on or off",
+    )
+    @app_commands.choices(
+        setting=[
+            app_commands.Choice(name="morning_brief", value="morning_brief"),
+            app_commands.Choice(name="alerts", value="alerts"),
+            app_commands.Choice(name="live_tracking", value="live_tracking"),
+            app_commands.Choice(name="pregame", value="pregame"),
+        ],
+        value=[
+            app_commands.Choice(name="on", value="on"),
+            app_commands.Choice(name="off", value="off"),
+        ],
+    )
+    async def nba_settings(
+        interaction: discord.Interaction,
+        setting: str = None,
+        value: str = None,
+    ):
+        """View or update Axiom intelligence settings."""
+        user_id = interaction.user.id
+
+        import json
+        import os
+
+        import psycopg2
+
+        def _load_settings(uid: int) -> dict:
+            try:
+                conn = psycopg2.connect(
+                    host=os.environ.get("DB_HOST", "localhost"),
+                    port=5541,
+                    dbname="cephalon_axiom",
+                    user=os.environ.get("DB_USER", "mlb_user"),
+                    password=os.environ.get("DB_PASSWORD", ""),
+                    connect_timeout=5,
+                )
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT value FROM axiom_memory WHERE key = %s",
+                    (f"settings:{uid}",),
+                )
+                row = cur.fetchone()
+                conn.close()
+                if row:
+                    v = row[0]
+                    return (
+                        json.loads(v) if isinstance(v, str) else (v if isinstance(v, dict) else {})
+                    )
+            except Exception:
+                pass
+            return {}
+
+        def _save_settings(uid: int, settings: dict):
+            try:
+                conn = psycopg2.connect(
+                    host=os.environ.get("DB_HOST", "localhost"),
+                    port=5541,
+                    dbname="cephalon_axiom",
+                    user=os.environ.get("DB_USER", "mlb_user"),
+                    password=os.environ.get("DB_PASSWORD", ""),
+                    connect_timeout=5,
+                )
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    INSERT INTO axiom_memory (key, value, updated_at)
+                    VALUES (%s, %s, NOW())
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+                    """,
+                    (f"settings:{uid}", json.dumps(settings)),
+                )
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                raise RuntimeError(f"Failed to save settings: {e}")
+
+        if setting is None:
+            # Show current settings
+            settings = _load_settings(user_id)
+            defaults = {
+                "morning_brief": True,
+                "alerts": True,
+                "live_tracking": True,
+                "pregame": True,
+            }
+            lines = ["**Axiom Intelligence Settings**\n"]
+            for feat, default in defaults.items():
+                enabled = settings.get(feat, default)
+                status = "ON" if enabled else "OFF"
+                icon = "🟢" if enabled else "🔴"
+                lines.append(f"{icon} `{feat}`: **{status}**")
+            lines.append("\nUse `/nba-settings <feature> <on|off>` to change.")
+            await interaction.response.send_message("\n".join(lines), ephemeral=True)
+            return
+
+        if value is None:
+            await interaction.response.send_message("Specify `on` or `off`.", ephemeral=True)
+            return
+
+        bool_val = value.lower() == "on"
+        try:
+            settings = _load_settings(user_id)
+            settings[setting] = bool_val
+            _save_settings(user_id, settings)
+            status = "ON" if bool_val else "OFF"
+            await interaction.response.send_message(
+                f"**{setting}** set to **{status}**. "
+                f"{'Feature enabled.' if bool_val else 'Feature disabled.'}",
+                ephemeral=True,
+            )
+        except Exception as e:
+            await interaction.response.send_message(
+                f"Failed to update settings: {e}", ephemeral=True
+            )
+
     print(
         "[NBA] Registered: /nba, /nba-detail, /nba-refresh, /nba-run, "
-        "/nba-status, /nba-reload, /nba-validate, /nba-card"
+        "/nba-status, /nba-reload, /nba-validate, /nba-card, /nba-settings"
     )
 
 
