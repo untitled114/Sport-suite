@@ -102,14 +102,14 @@ class BPAnalyticsFeatureExtractor(BaseFeatureExtractor):
             "bp_analytics_bet_rating": 3.0,
             "bp_analytics_probability": 0.5,
             "bp_analytics_opp_rank": 15.0,
-            "bp_analytics_opp_value": 0.0,
+            "bp_analytics_opp_value": 0.0,  # 0 = no data (imputer handles)
             "bp_analytics_hit_rate_L5": 0.5,
             "bp_analytics_hit_rate_L10": 0.5,
             "bp_analytics_hit_rate_L15": 0.5,
             "bp_analytics_hit_rate_season": 0.5,
             "bp_analytics_hit_rate_trend": 0.0,
             "bp_analytics_recommended_over": 0.0,
-            "dvp_stat_allowed": 0.0,
+            "dvp_stat_allowed": 0.0,  # 0 = no data (imputer handles)
             "dvp_stat_rank": 15.0,
             "bp_analytics_proj_vs_consensus": 0.0,
         }

@@ -246,15 +246,17 @@ class TestExtract:
         assert result["bp_analytics_bet_rating"] == 1.0
 
     def test_no_opponent_skips_dvp(self, extractor):
+        defaults = BPAnalyticsFeatureExtractor.get_defaults()
         with patch.object(extractor, "_safe_query", return_value=None):
             result = extractor.extract("Test", "2025-01-15", "POINTS", opponent_team=None)
-        assert result["dvp_stat_allowed"] == 0.0
-        assert result["dvp_stat_rank"] == 15.0
+        assert result["dvp_stat_allowed"] == defaults["dvp_stat_allowed"]
+        assert result["dvp_stat_rank"] == defaults["dvp_stat_rank"]
 
     def test_unknown_stat_type_skips_dvp(self, extractor):
+        defaults = BPAnalyticsFeatureExtractor.get_defaults()
         with patch.object(extractor, "_safe_query", return_value=None):
             result = extractor.extract("Test", "2025-01-15", "STEALS", opponent_team="BOS")
-        assert result["dvp_stat_allowed"] == 0.0
+        assert result["dvp_stat_allowed"] == defaults["dvp_stat_allowed"]
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -387,11 +389,12 @@ class TestComputeDvpFeatures:
         extractor._safe_query.assert_not_called()
 
     def test_dvp_no_data_keeps_defaults(self, extractor):
+        defaults = BPAnalyticsFeatureExtractor.get_defaults()
         extractor._safe_query = MagicMock(return_value=None)
         features = BPAnalyticsFeatureExtractor.get_defaults()
         extractor._compute_dvp_features("XXX", "POINTS", "2025-01-15", None, features)
-        assert features["dvp_stat_allowed"] == 0.0
-        assert features["dvp_stat_rank"] == 15.0
+        assert features["dvp_stat_allowed"] == defaults["dvp_stat_allowed"]
+        assert features["dvp_stat_rank"] == defaults["dvp_stat_rank"]
 
     def test_season_detection_october(self, extractor):
         """October = start of new season, season = year."""

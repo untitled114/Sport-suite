@@ -1,10 +1,10 @@
 """
 NBA Validation Pipeline DAG
 
-Scheduled: Daily at 2:00 AM EST (before full pipeline at 2:30 AM)
+Scheduled: Daily at 3:30 AM EST (AFTER full pipeline at 2:30 AM loads game results)
 Purpose: Grade yesterday's picks, validate performance, send report card
 
-Flow: Validation (2:00) → Full pipeline (2:30) → predictions for today
+Flow: Full pipeline (2:30) → loads game logs → Validation (3:30) → grade + report
 """
 
 from __future__ import annotations
@@ -179,7 +179,7 @@ def _build_validation_embed(perf: dict, alert_list: list) -> dict:
 @dag(
     dag_id="nba_validation_pipeline",
     description="NBA pick performance validation and tracking",
-    schedule=CronTriggerTimetable("0 2 * * *", timezone="America/New_York"),
+    schedule=CronTriggerTimetable("30 3 * * *", timezone="America/New_York"),
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["nba", "validation", "performance"],

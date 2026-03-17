@@ -63,14 +63,14 @@ class GameContextFeatureExtractor(BaseFeatureExtractor):
     @classmethod
     def get_defaults(cls) -> Dict[str, float]:
         return {
-            "game_pace": 100.0,
-            "opp_score_margin_avg": 0.0,
-            "player_minutes_stability": 5.0,
-            "player_plus_minus_L5": 0.0,
-            "player_usage_proxy": 0.0,
-            "player_scoring_efficiency": 0.0,
-            "player_blowout_risk": 0.0,
-            "player_minutes_vs_avg": 1.0,
+            "game_pace": 100.0,  # League average pace (safe neutral)
+            "opp_score_margin_avg": 0.0,  # 0 = no data (imputer handles)
+            "player_minutes_stability": 0.0,  # 0 = no data (imputer handles)
+            "player_plus_minus_L5": 0.0,  # Neutral
+            "player_usage_proxy": 0.0,  # 0 = no data (imputer handles)
+            "player_scoring_efficiency": 0.0,  # 0 = no data (imputer handles)
+            "player_blowout_risk": 0.0,  # 0 = no data (imputer handles)
+            "player_minutes_vs_avg": 1.0,  # 1.0 = playing normal load (ratio)
         }
 
     def extract(

@@ -268,17 +268,19 @@ class TestComputePlayerFeatures:
         assert features["player_minutes_vs_avg"] > 1.0
 
     def test_empty_game_logs_keeps_defaults(self, extractor):
+        defaults = GameContextFeatureExtractor.get_defaults()
         with patch("pandas.read_sql_query", return_value=pd.DataFrame()):
             features = GameContextFeatureExtractor.get_defaults()
             extractor._compute_player_features("Ghost", "2025-01-15", features)
-        assert features["player_plus_minus_L5"] == 0.0
-        assert features["player_usage_proxy"] == 0.0
+        assert features["player_plus_minus_L5"] == defaults["player_plus_minus_L5"]
+        assert features["player_usage_proxy"] == defaults["player_usage_proxy"]
 
     def test_query_error_keeps_defaults(self, extractor):
+        defaults = GameContextFeatureExtractor.get_defaults()
         with patch("pandas.read_sql_query", side_effect=Exception("db error")):
             features = GameContextFeatureExtractor.get_defaults()
             extractor._compute_player_features("Test", "2025-01-15", features)
-        assert features["player_plus_minus_L5"] == 0.0
+        assert features["player_plus_minus_L5"] == defaults["player_plus_minus_L5"]
 
     def test_minutes_stability_needs_3_games(self, extractor):
         df = pd.DataFrame(
@@ -292,8 +294,8 @@ class TestComputePlayerFeatures:
         with patch("pandas.read_sql_query", return_value=df):
             features = GameContextFeatureExtractor.get_defaults()
             extractor._compute_player_features("Test", "2025-01-15", features)
-        # Only 2 games, should keep default 5.0
-        assert features["player_minutes_stability"] == 5.0
+        # Only 2 games, should keep default 0.0
+        assert features["player_minutes_stability"] == 0.0
 
     def test_zero_fga_skips_efficiency(self, extractor):
         df = pd.DataFrame(
