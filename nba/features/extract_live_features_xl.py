@@ -51,6 +51,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
 
         # Add connection to nba_intelligence database (port 5539)
         self.intelligence_conn = psycopg2.connect(**self.INTELLIGENCE_DB_CONFIG)
+        self.intelligence_conn.autocommit = True  # Prevent transaction error cascading
 
         # Add connection to nba_team database (port 5538) for team betting performance
         self.TEAM_DB_CONFIG = {
@@ -61,6 +62,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
             "database": os.getenv("NBA_TEAM_DB_NAME", "nba_team"),
         }
         self.team_conn = psycopg2.connect(**self.TEAM_DB_CONFIG)
+        self.team_conn.autocommit = True  # Prevent transaction error cascading
 
         # Cache for team betting performance (season -> team -> metrics)
         self._team_betting_cache = {}
