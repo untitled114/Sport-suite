@@ -133,7 +133,7 @@ class GameContextFeatureExtractor(BaseFeatureExtractor):
             SELECT minutes_played, plus_minus, points, fg_attempted
             FROM player_game_logs gl
             JOIN player_profile pp ON gl.player_id = pp.player_id
-            WHERE pp.full_name = %s
+            WHERE unaccent(pp.full_name) = %s
               AND gl.game_date < %s
               AND gl.minutes_played > 0
             ORDER BY gl.game_date DESC
