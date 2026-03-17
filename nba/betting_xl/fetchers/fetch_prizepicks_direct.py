@@ -21,6 +21,7 @@ Usage:
 
 import json
 import logging
+import os
 import random
 import time
 from datetime import datetime
@@ -38,7 +39,11 @@ try:
 except ImportError:
     HAS_CURL_CFFI = False
 
+from zoneinfo import ZoneInfo
+
 from nba.betting_xl.fetchers.base_fetcher import BaseFetcher
+
+EST = ZoneInfo("America/New_York")
 
 logger = logging.getLogger(__name__)
 
@@ -121,17 +126,25 @@ class PrizePicksDirectFetcher(BaseFetcher):
             verbose=verbose,
         )
 
-        self.state_code = state_code
         self.include_combos = include_combos
         self.all_stats = all_stats
+
+        # Residential proxy for bypassing PerimeterX on datacenter IPs
+        # Format: http://user:pass@host:port (geo-targeting params go in password)
+        self._proxy_url = os.getenv("PRIZEPICKS_PROXY_URL", "")
+
+        # State code — must match proxy geo-targeting state for PrizePicks compliance
+        # Defaults to CO (Colorado) which has broad sportsbook legality
+        self.state_code = os.getenv("PRIZEPICKS_STATE_CODE", state_code)
 
     def _fetch_projections(self) -> Optional[Dict]:
         """
         Fetch projections from PrizePicks API.
 
-        Uses curl_cffi with browser TLS fingerprint impersonation to bypass
-        Cloudflare bot protection. Falls back to standard requests if curl_cffi
-        is not available.
+        Fallback chain:
+        1. curl_cffi with browser TLS impersonation (fastest)
+        2. Playwright with real Chromium browser (bypasses PerimeterX)
+        3. Standard requests (usually blocked)
 
         Returns:
             Raw API response dict or None on error
@@ -142,16 +155,28 @@ class PrizePicksDirectFetcher(BaseFetcher):
             "state_code": self.state_code,
         }
 
-        # Try curl_cffi first (bypasses Cloudflare)
+        # Try curl_cffi first (fastest, bypasses basic Cloudflare)
         if HAS_CURL_CFFI:
-            return self._fetch_with_curl_cffi(params)
+            result = self._fetch_with_curl_cffi(params)
+            if result is not None:
+                return result
 
-        # Fallback to standard requests
-        logger.warning("curl_cffi not available, falling back to requests (may get 403)")
+        # Try nodriver with real Chrome (bypasses PerimeterX)
+        result = self._fetch_with_browser(params)
+        if result is not None:
+            return result
+
+        # Fallback to standard requests (almost certainly blocked)
+        logger.warning("All bypass methods failed, trying raw requests (likely blocked)")
         return self._fetch_with_requests(params)
 
     def _fetch_with_curl_cffi(self, params: Dict) -> Optional[Dict]:
-        """Fetch using curl_cffi with browser impersonation."""
+        """Fetch using curl_cffi with browser impersonation (+ residential proxy if set)."""
+        proxies = None
+        if self._proxy_url:
+            proxies = {"https": self._proxy_url, "http": self._proxy_url}
+            logger.info("curl_cffi: using residential proxy")
+
         max_retries = 3
         for attempt in range(max_retries):
             delay = random.uniform(0.5, 1.5)
@@ -163,6 +188,7 @@ class PrizePicksDirectFetcher(BaseFetcher):
                     params=params,
                     impersonate="chrome",
                     timeout=self.timeout,
+                    proxies=proxies,
                 )
 
                 if response.status_code == 403:
@@ -229,6 +255,122 @@ class PrizePicksDirectFetcher(BaseFetcher):
         except requests.RequestException as e:
             logger.warning(f"PrizePicks request failed: {e}")
             return None
+
+    # ── Browser fetch (nodriver + Xvfb + residential proxy) ─────────────
+    # PrizePicks uses PerimeterX (HUMAN Security) which checks:
+    #   1. IP reputation (blocks datacenter IPs like AWS/Hetzner)
+    #   2. TLS fingerprint (JA3) and CDP automation artifacts
+    #   3. Client-side JS challenges
+    #
+    # Solution: nodriver (real Chrome, no CDP leaks) + residential proxy
+    # (passes IP reputation) + Xvfb (virtual display for headless servers).
+
+    def _fetch_with_browser(self, params: Dict) -> Optional[Dict]:
+        """Fetch PrizePicks using nodriver (real Chrome) + residential proxy.
+
+        On machines with a display, runs headed Chrome directly.
+        On headless servers, starts Xvfb virtual display first.
+        Residential proxy (PRIZEPICKS_PROXY_URL) routes traffic through
+        a residential IP to pass PerimeterX IP reputation checks.
+        """
+        try:
+            import nodriver as uc
+        except ImportError:
+            logger.debug("nodriver not installed, skipping browser fetch")
+            return None
+
+        import asyncio
+
+        query = "&".join(f"{k}={v}" for k, v in params.items())
+        api_url = f"{self.API_URL}?{query}"
+        proxy_url = self._proxy_url
+
+        async def _do_fetch() -> Optional[Dict]:
+            has_display = bool(os.environ.get("DISPLAY"))
+            xvfb_proc = None
+
+            # Start Xvfb if no display available (headless server)
+            if not has_display:
+                import shutil
+                import subprocess as sp
+
+                if not shutil.which("Xvfb"):
+                    logger.warning("No display and Xvfb not installed — cannot run browser")
+                    return None
+
+                try:
+                    xvfb_proc = sp.Popen(
+                        ["Xvfb", ":99", "-screen", "0", "1920x1080x24", "-nolisten", "tcp"],
+                        stdout=sp.DEVNULL,
+                        stderr=sp.DEVNULL,
+                    )
+                    os.environ["DISPLAY"] = ":99"
+                    await asyncio.sleep(1)  # Let Xvfb start
+                    logger.info("Started Xvfb virtual display on :99")
+                except Exception as e:
+                    logger.warning(f"Failed to start Xvfb: {e}")
+                    return None
+
+            try:
+                # Build browser args — add proxy if configured
+                browser_args = []
+                if proxy_url:
+                    browser_args.append(f"--proxy-server={proxy_url}")
+                    logger.info(f"Browser: using residential proxy")
+
+                logger.info("Browser: launching Chrome (nodriver)...")
+                browser = await uc.start(
+                    headless=False,
+                    browser_args=browser_args,
+                )
+
+                # Visit app to clear PerimeterX challenge
+                logger.info("Browser: visiting app.prizepicks.com to clear PerimeterX...")
+                page = await browser.get("https://app.prizepicks.com/")
+                await page.sleep(5)
+
+                title = await page.evaluate("document.title")
+                if "denied" in str(title).lower():
+                    logger.warning("Browser: PerimeterX still blocked — check proxy/IP")
+                    browser.stop()
+                    return None
+
+                logger.info(f"Browser: PerimeterX cleared (title: {title})")
+
+                # Navigate directly to API — cookies carry over
+                logger.info("Browser: fetching projections API...")
+                page = await browser.get(api_url)
+                await page.sleep(3)
+
+                body = await page.evaluate("document.body.innerText")
+                browser.stop()
+
+                data = json.loads(body)
+                projections = data.get("data", [])
+                logger.info(f"Browser: fetched {len(projections)} projections")
+                return data
+
+            except json.JSONDecodeError:
+                logger.warning("Browser: API response was not valid JSON")
+                return None
+            except Exception as e:
+                logger.warning(f"Browser fetch failed: {e}")
+                return None
+            finally:
+                if xvfb_proc:
+                    xvfb_proc.terminate()
+                    xvfb_proc.wait(timeout=5)
+                    logger.info("Stopped Xvfb")
+
+        try:
+            return asyncio.run(_do_fetch())
+        except RuntimeError:
+            # If event loop already running (e.g., in Jupyter/async context)
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(_do_fetch())
+            finally:
+                loop.close()
 
     def _build_lookups(self, included: List[Dict]) -> Dict[str, Dict]:
         """
@@ -363,9 +505,9 @@ class PrizePicksDirectFetcher(BaseFetcher):
                 game_date = dt.strftime("%Y-%m-%d")
                 game_time = dt.strftime("%H:%M:%S")
             except (ValueError, AttributeError):
-                game_date = datetime.now().strftime("%Y-%m-%d")
+                game_date = datetime.now(EST).strftime("%Y-%m-%d")
         else:
-            game_date = datetime.now().strftime("%Y-%m-%d")
+            game_date = datetime.now(EST).strftime("%Y-%m-%d")
 
         # Normalize player name
         player_name = player.get("name", player.get("display_name", "Unknown"))
@@ -429,7 +571,7 @@ class PrizePicksDirectFetcher(BaseFetcher):
             "is_live": attrs.get("is_live", False),
             "in_game": attrs.get("in_game", False),
             # Meta
-            "fetch_timestamp": datetime.now().isoformat(),
+            "fetch_timestamp": datetime.now(EST).isoformat(),
             "source": "prizepicks_direct",
         }
 
@@ -533,6 +675,25 @@ class PrizePicksDirectFetcher(BaseFetcher):
             print(f"  {stat:15s}: {count:4d} props (avg line: {avg_line:.1f})")
 
         print("=" * 70 + "\n", flush=True)
+
+        # Atlas data registry — log this ingestion
+        try:
+            from nba.core.data_registry import log_ingestion
+
+            stats = self.get_registry_stats()
+            log_ingestion(
+                "prizepicks",
+                "fetch",
+                "success",
+                records_fetched=len(props),
+                api_calls_made=stats["api_calls_made"],
+                bytes_transferred=stats["bytes_transferred"],
+                error_count=stats["error_count"],
+                error_message=stats["error_message"],
+                metadata={"state": self.state_code},
+            )
+        except Exception:
+            pass
 
         return props
 

@@ -86,6 +86,9 @@ def normalize_player_name(name: str) -> str:
 
 # Temporal split cutoffs (as date objects)
 from datetime import date
+from zoneinfo import ZoneInfo
+
+EST = ZoneInfo("America/New_York")
 
 TRAIN_START = date(2023, 10, 24)  # Start of 2023-24 season - matches The Odds API prop coverage
 TRAIN_END = date(2025, 12, 1)  # Training cutoff - includes Nov 2025 season data
@@ -1218,7 +1221,7 @@ class XLDatasetBuilder:
         """
         report = []
         report.append("# XL TRAINING DATASET VALIDATION REPORT")
-        report.append(f"\n**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        report.append(f"\n**Generated:** {datetime.now(EST).strftime('%Y-%m-%d %H:%M:%S')}")
         report.append(f"\n**Temporal Split:**")
         report.append(f"- Training: {TRAIN_START} to {TRAIN_END}")
         report.append(f"- Validation: {VAL_START} to {VAL_END}")

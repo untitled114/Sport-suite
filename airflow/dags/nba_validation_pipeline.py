@@ -1,18 +1,10 @@
 """
 NBA Validation Pipeline DAG
 
-Scheduled: Daily at 02:30 AM EST
-Purpose: Validate pick performance and track win rates
+Scheduled: Daily at 2:00 AM EST (before full pipeline at 2:30 AM)
+Purpose: Grade yesterday's picks, validate performance, send report card
 
-Tasks:
-1. validate_yesterday - Validate yesterday's picks against actuals
-2. validate_rolling_7d - Rolling 7-day performance by system
-3. validate_rolling_30d - Rolling 30-day performance trends
-4. check_performance_alerts - Alert if win rate drops below thresholds
-5. save_validation_results - Store results for historical tracking
-6. generate_performance_report - Create daily performance summary
-
-Author: Claude Code
+Flow: Validation (2:00) → Full pipeline (2:30) → predictions for today
 """
 
 from __future__ import annotations
@@ -23,37 +15,31 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from callbacks import on_failure, on_retry, on_success
 
 from airflow.decorators import dag, task
 from airflow.models import Variable
 from airflow.timetables.trigger import CronTriggerTimetable
-from airflow.utils.email import send_email
 
 # ============================================================================
 # Configuration
 # ============================================================================
 
 PROJECT_ROOT = Variable.get("nba_project_root", default_var="/home/untitled/Sport-suite")
-SCRIPT_DIR = f"{PROJECT_ROOT}/nba"
-PREDICTIONS_DIR = f"{SCRIPT_DIR}/betting_xl/predictions"
-VALIDATION_DIR = f"{SCRIPT_DIR}/betting_xl/validation_results"
+VALIDATION_DIR = f"{PROJECT_ROOT}/nba/betting_xl/validation_results"
+_EST = ZoneInfo("America/New_York")
 
-# Add project to path for imports
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-# Performance thresholds for alerts
 MIN_WIN_RATE = float(Variable.get("nba_min_win_rate", default_var="52.0"))
 MIN_ROI = float(Variable.get("nba_min_roi", default_var="-5.0"))
 
 default_args = {
     "owner": "nba_pipeline",
     "depends_on_past": False,
-    "email": Variable.get("alert_email", default_var="alerts@example.com").split(","),
-    "email_on_failure": True,
-    "email_on_retry": False,
     "retries": 2,
     "retry_delay": timedelta(minutes=5),
     "execution_timeout": timedelta(minutes=15),
@@ -63,528 +49,301 @@ default_args = {
 }
 
 
-def send_performance_alert(subject: str, body: str, is_critical: bool = False) -> None:
-    """Send performance alert via email."""
-    priority_prefix = "[CRITICAL]" if is_critical else "[WARNING]"
-    try:
-        send_email(
-            to=default_args["email"],
-            subject=f"{priority_prefix} {subject}",
-            html_content=body,
+def _wr(w, losses):
+    t = w + losses
+    return f"{w}W-{losses}L ({w / t * 100:.0f}%)" if t else "—"
+
+
+def _bucket_line(name, s):
+    w, losses = s.get("w", 0), s.get("l", 0)
+    t = w + losses
+    if t == 0:
+        return None
+    roi = s.get("profit", 0) / t * 100
+    return f"{name}: {_wr(w, losses)} {roi:+.0f}% ROI"
+
+
+def _build_validation_embed(perf: dict, alert_list: list) -> dict:
+    """Build rich Discord embed from validation performance data."""
+    r7 = perf.get("rolling_7d", {})
+    r30 = perf.get("rolling_30d", {})
+    y = perf.get("yesterday", {})
+
+    # Header
+    t7 = r7.get("total", 0)
+    if t7:
+        title = f"Validation — {r7['wins']}W-{r7['losses']}L ({r7['win_rate']:.0f}% WR, {r7['roi']:+.1f}% ROI)"
+    else:
+        title = "Validation Report"
+
+    # Color based on 7-day WR
+    wr7 = r7.get("win_rate", 0)
+    color = 0x2ECC71 if wr7 >= 55 else (0xE67E22 if wr7 >= 50 else 0xE74C3C)
+
+    fields = []
+
+    # Yesterday
+    yt = y.get("total", 0)
+    if yt:
+        details = y.get("details", [])
+        lines = []
+        for p in sorted(details, key=lambda x: x.get("outcome", "")):
+            icon = "W" if p["outcome"] == "WIN" else "L"
+            conv = f"{p['conviction']:.0%}" if p.get("conviction") else "—"
+            lines.append(
+                f"`{icon}` {p['player'][:18]} {p['market'][:3]} O{p['line']} → {p['actual']} [{conv}]"
+            )
+        fields.append(
+            {
+                "name": f"Yesterday ({y['date']}): {_wr(y['wins'], yt - y['wins'])}",
+                "value": "\n".join(lines[:10]) or "—",
+                "inline": False,
+            }
         )
-    except Exception as e:
-        print(f"Failed to send alert: {e}")
+    else:
+        fields.append({"name": "Yesterday", "value": "No graded picks", "inline": False})
 
+    # By Model (7d)
+    by_model = r7.get("by_model", {})
+    if by_model:
+        lines = [
+            line
+            for line in (_bucket_line(m.upper(), s) for m, s in sorted(by_model.items()))
+            if line
+        ]
+        if lines:
+            fields.append({"name": "By Model (7d)", "value": "\n".join(lines), "inline": True})
 
-# ============================================================================
-# DAG Definition
-# ============================================================================
+    # By Market (7d)
+    by_market = r7.get("by_market", {})
+    if by_market:
+        lines = [
+            line for line in (_bucket_line(m, s) for m, s in sorted(by_market.items())) if line
+        ]
+        if lines:
+            fields.append({"name": "By Market (7d)", "value": "\n".join(lines), "inline": True})
+
+    # By Conviction (7d)
+    by_conv = r7.get("by_conviction_band", {})
+    if by_conv:
+        lines = [line for line in (_bucket_line(b, s) for b, s in sorted(by_conv.items())) if line]
+        if lines:
+            fields.append(
+                {"name": "By Conviction (7d)", "value": "\n".join(lines), "inline": False}
+            )
+
+    # By BP Signal (7d)
+    by_bp = r7.get("by_bp_signal", {})
+    if by_bp:
+        lines = [
+            line
+            for line in (
+                _bucket_line(b, s)
+                for b, s in sorted(by_bp.items())
+                if (s.get("w", 0) + s.get("l", 0)) >= 2
+            )
+            if line
+        ]
+        if lines:
+            fields.append({"name": "By BP Signal (7d)", "value": "\n".join(lines), "inline": False})
+
+    # 30-day summary
+    t30 = r30.get("total", 0)
+    if t30:
+        fields.append(
+            {
+                "name": "30-Day",
+                "value": f"{r30['wins']}W-{r30['losses']}L ({r30['win_rate']:.0f}% WR, {r30['roi']:+.1f}% ROI)",
+                "inline": False,
+            }
+        )
+
+    # Alerts
+    if alert_list:
+        fields.append(
+            {
+                "name": "Alerts",
+                "value": "\n".join(f"- {a}" for a in alert_list[:5]),
+                "inline": False,
+            }
+        )
+
+    return {
+        "title": title,
+        "color": color,
+        "fields": fields,
+        "footer": {"text": datetime.now(_EST).strftime("%Y-%m-%d %I:%M %p EST")},
+    }
 
 
 @dag(
     dag_id="nba_validation_pipeline",
     description="NBA pick performance validation and tracking",
-    schedule=CronTriggerTimetable("30 2 * * *", timezone="America/New_York"),  # 02:30 AM EST daily
+    schedule=CronTriggerTimetable("0 2 * * *", timezone="America/New_York"),
     start_date=datetime(2026, 1, 1),
     catchup=False,
-    tags=["nba", "validation", "performance", "tracking"],
+    tags=["nba", "validation", "performance"],
     default_args=default_args,
     max_active_runs=1,
     doc_md=__doc__,
 )
 def nba_validation_pipeline():
-    """
-    NBA Pick Validation Pipeline
 
-    Validates betting picks against actual results:
-    - XL picks (ML model predictions)
-    - PRO picks (BettingPros cheatsheet filters)
+    @task(task_id="backfill_actuals")
+    def backfill_actuals() -> dict[str, Any]:
+        """Grade picks from last 3 days against player_game_logs.
 
-    Tracks performance over time and alerts on degradation.
-    """
+        Covers yesterday + 2 prior days to catch any missed grading.
+        """
+        from nba.core.axiom_writer import write_actuals
 
-    @task(
-        task_id="validate_yesterday",
-        doc_md="""
-        ### Validate Yesterday's Picks
+        now = datetime.now(_EST)
+        total = 0
+        results = {}
 
-        Runs validation for yesterday's picks against actual game results.
-        Returns detailed breakdown by system, market, and filter.
-        """,
-    )
-    def validate_yesterday() -> dict[str, Any]:
-        """Validate yesterday's picks."""
-        import subprocess
+        for days_ago in range(1, 4):
+            d = (now - timedelta(days=days_ago)).strftime("%Y-%m-%d")
+            updated = write_actuals(d)
+            results[d] = updated
+            total += updated
+            if updated:
+                print(f"  {d}: graded {updated} picks")
 
-        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        script_path = f"{SCRIPT_DIR}/betting_xl/validate_predictions.py"
+        print(f"[axiom] Backfill complete: {total} picks graded")
+        return {"total_graded": total, "by_date": results}
 
-        result = subprocess.run(
-            [
-                "python3",
-                script_path,
-                "--date",
-                yesterday,
-            ],
-            capture_output=True,
-            text=True,
-            cwd=PROJECT_ROOT,
-            env={**os.environ, "PYTHONPATH": PROJECT_ROOT},
-            timeout=300,
-        )
+    @task(task_id="validate_performance")
+    def validate_performance(backfill: dict[str, Any]) -> dict[str, Any]:
+        """Run DB-based validation for 1d, 7d, and 30d windows."""
+        from nba.betting_xl.validate_from_db import run_validation
 
-        # Parse output for key metrics
-        output = result.stdout
-        metrics = {
-            "date": yesterday,
-            "raw_output": output,
-            "returncode": result.returncode,
+        now = datetime.now(_EST)
+        yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        # Yesterday
+        print("\n=== YESTERDAY ===")
+        r_1d = run_validation(yesterday, yesterday)
+
+        # 7-day rolling
+        start_7d = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+        print("\n=== 7-DAY ROLLING ===")
+        r_7d = run_validation(start_7d, yesterday)
+
+        # 30-day rolling
+        start_30d = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+        print("\n=== 30-DAY ROLLING ===")
+        r_30d = run_validation(start_30d, yesterday)
+
+        def _extract(r):
+            return {
+                "total": r.get("total", 0),
+                "wins": r.get("wins", 0),
+                "losses": r.get("losses", 0),
+                "win_rate": r.get("win_rate", 0),
+                "roi": r.get("roi", 0),
+                "profit": r.get("profit", 0),
+                "by_model": r.get("by_model", {}),
+                "by_market": r.get("by_market", {}),
+                "by_conviction_band": r.get("by_conviction_band", {}),
+                "by_bp_signal": r.get("by_bp_signal", {}),
+                "details": r.get("details", []),
+            }
+
+        return {
+            "yesterday": {"date": yesterday, **_extract(r_1d)},
+            "rolling_7d": {"start": start_7d, "end": yesterday, **_extract(r_7d)},
+            "rolling_30d": {"start": start_30d, "end": yesterday, **_extract(r_30d)},
         }
 
-        # Extract system results from output
-        for system in ["XL", "PRO"]:
-            # Look for lines like "XL           44       26     18     0      59.1%"
-            for line in output.split("\n"):
-                if line.strip().startswith(system):
-                    parts = line.split()
-                    if len(parts) >= 6:
-                        try:
-                            metrics[f"{system.lower()}_graded"] = int(parts[1])
-                            metrics[f"{system.lower()}_wins"] = int(parts[2])
-                            metrics[f"{system.lower()}_losses"] = int(parts[3])
-                            metrics[f"{system.lower()}_wr"] = float(parts[5].replace("%", ""))
-                        except (ValueError, IndexError):
-                            pass
-
-        print(output)
-        return metrics
-
-    @task(
-        task_id="validate_rolling_7d",
-        doc_md="""
-        ### Validate Rolling 7-Day Performance
-
-        Calculates rolling 7-day win rates for trend analysis.
-        """,
-    )
-    def validate_rolling_7d() -> dict[str, Any]:
-        """Validate rolling 7-day performance."""
-        import subprocess
-
-        end_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        start_date = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-
-        script_path = f"{SCRIPT_DIR}/betting_xl/validate_predictions.py"
-
-        result = subprocess.run(
-            [
-                "python3",
-                script_path,
-                "--start-date",
-                start_date,
-                "--end-date",
-                end_date,
-            ],
-            capture_output=True,
-            text=True,
-            cwd=PROJECT_ROOT,
-            env={**os.environ, "PYTHONPATH": PROJECT_ROOT},
-            timeout=300,
-        )
-
-        output = result.stdout
-        metrics = {
-            "period": "7d",
-            "start_date": start_date,
-            "end_date": end_date,
-            "raw_output": output,
-        }
-
-        # Extract TOTAL line
-        for line in output.split("\n"):
-            if line.strip().startswith("TOTAL"):
-                parts = line.split()
-                if len(parts) >= 6:
-                    try:
-                        metrics["total_graded"] = int(parts[1])
-                        metrics["total_wins"] = int(parts[2])
-                        metrics["total_losses"] = int(parts[3])
-                        metrics["total_wr"] = float(parts[5].replace("%", ""))
-                        metrics["total_roi"] = float(parts[6].replace("%", "").replace("+", ""))
-                    except (ValueError, IndexError):
-                        pass
-
-        # Extract by system
-        for system in ["XL", "PRO"]:
-            for line in output.split("\n"):
-                if line.strip().startswith(system) and "SYSTEM" not in line:
-                    parts = line.split()
-                    if len(parts) >= 6:
-                        try:
-                            metrics[f"{system.lower()}_wr"] = float(parts[5].replace("%", ""))
-                            metrics[f"{system.lower()}_roi"] = float(
-                                parts[6].replace("%", "").replace("+", "")
-                            )
-                        except (ValueError, IndexError):
-                            pass
-
-        wr = metrics.get("total_wr", 0)
-        roi = metrics.get("total_roi", 0)
-        print(f"7-Day Rolling: {wr:.1f}% WR, {roi:+.1f}% ROI")
-        return metrics
-
-    @task(
-        task_id="validate_rolling_30d",
-        doc_md="""
-        ### Validate Rolling 30-Day Performance
-
-        Calculates rolling 30-day win rates for long-term trend analysis.
-        """,
-    )
-    def validate_rolling_30d() -> dict[str, Any]:
-        """Validate rolling 30-day performance."""
-        import subprocess
-
-        end_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        start_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
-
-        script_path = f"{SCRIPT_DIR}/betting_xl/validate_predictions.py"
-
-        result = subprocess.run(
-            [
-                "python3",
-                script_path,
-                "--start-date",
-                start_date,
-                "--end-date",
-                end_date,
-            ],
-            capture_output=True,
-            text=True,
-            cwd=PROJECT_ROOT,
-            env={**os.environ, "PYTHONPATH": PROJECT_ROOT},
-            timeout=300,
-        )
-
-        output = result.stdout
-        metrics = {
-            "period": "30d",
-            "start_date": start_date,
-            "end_date": end_date,
-        }
-
-        # Extract TOTAL line
-        for line in output.split("\n"):
-            if line.strip().startswith("TOTAL"):
-                parts = line.split()
-                if len(parts) >= 6:
-                    try:
-                        metrics["total_graded"] = int(parts[1])
-                        metrics["total_wins"] = int(parts[2])
-                        metrics["total_losses"] = int(parts[3])
-                        metrics["total_wr"] = float(parts[5].replace("%", ""))
-                        metrics["total_roi"] = float(parts[6].replace("%", "").replace("+", ""))
-                    except (ValueError, IndexError):
-                        pass
-
-        # Extract by system
-        for system in ["XL", "PRO"]:
-            for line in output.split("\n"):
-                if line.strip().startswith(system) and "SYSTEM" not in line:
-                    parts = line.split()
-                    if len(parts) >= 6:
-                        try:
-                            metrics[f"{system.lower()}_wr"] = float(parts[5].replace("%", ""))
-                            metrics[f"{system.lower()}_roi"] = float(
-                                parts[6].replace("%", "").replace("+", "")
-                            )
-                        except (ValueError, IndexError):
-                            pass
-
-        wr = metrics.get("total_wr", 0)
-        roi = metrics.get("total_roi", 0)
-        print(f"30-Day Rolling: {wr:.1f}% WR, {roi:+.1f}% ROI")
-        return metrics
-
-    @task(
-        task_id="check_performance_alerts",
-        doc_md="""
-        ### Check Performance Alerts
-
-        Monitors performance metrics and sends alerts if thresholds are breached:
-        - Win rate below minimum (default 52%)
-        - ROI below minimum (default -5%)
-        - Individual system degradation
-        """,
-    )
-    def check_performance_alerts(
-        yesterday: dict[str, Any],
-        rolling_7d: dict[str, Any],
-        rolling_30d: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Check performance thresholds and send alerts."""
+    @task(task_id="check_alerts")
+    def check_alerts(perf: dict[str, Any]) -> dict[str, Any]:
+        """Check performance thresholds and log alerts."""
         alerts = []
 
-        # Check 7-day rolling performance
-        wr_7d = rolling_7d.get("total_wr", 0)
-        roi_7d = rolling_7d.get("total_roi", 0)
+        wr_7d = perf.get("rolling_7d", {}).get("win_rate", 0)
+        roi_7d = perf.get("rolling_7d", {}).get("roi", 0)
+        wr_30d = perf.get("rolling_30d", {}).get("win_rate", 0)
+        total_7d = perf.get("rolling_7d", {}).get("total", 0)
 
-        if wr_7d > 0 and wr_7d < MIN_WIN_RATE:
+        if total_7d >= 5 and wr_7d < MIN_WIN_RATE:
             alerts.append(f"7-Day Win Rate ({wr_7d:.1f}%) below threshold ({MIN_WIN_RATE}%)")
 
-        if roi_7d < MIN_ROI:
+        if total_7d >= 5 and roi_7d < MIN_ROI:
             alerts.append(f"7-Day ROI ({roi_7d:+.1f}%) below threshold ({MIN_ROI:+.1f}%)")
 
-        # Check individual system performance (7-day)
-        for system in ["xl", "pro"]:
-            sys_wr = rolling_7d.get(f"{system}_wr", 0)
-            sys_roi = rolling_7d.get(f"{system}_roi", 0)
-
-            if sys_wr > 0 and sys_wr < 50.0:
-                alerts.append(f"{system.upper()} 7-Day Win Rate ({sys_wr:.1f}%) below 50%")
-
-            if sys_roi < -20.0:
-                alerts.append(f"{system.upper()} 7-Day ROI ({sys_roi:+.1f}%) severely negative")
-
-        # Check 30-day trends
-        wr_30d = rolling_30d.get("total_wr", 0)
-        if wr_30d > 0 and wr_30d < MIN_WIN_RATE:
+        total_30d = perf.get("rolling_30d", {}).get("total", 0)
+        if total_30d >= 10 and wr_30d < MIN_WIN_RATE:
             alerts.append(
-                f"30-Day Win Rate ({wr_30d:.1f}%) below threshold - consider model review"
+                f"30-Day Win Rate ({wr_30d:.1f}%) below threshold — consider model review"
             )
 
-        # Send alert if any issues
+        # Check model-specific performance
+        by_model = perf.get("rolling_7d", {}).get("by_model", {})
+        for model_name, stats in by_model.items():
+            t = stats.get("w", 0) + stats.get("l", 0)
+            if t >= 3:
+                model_wr = stats["w"] / t * 100
+                if model_wr < 45.0:
+                    alerts.append(
+                        f"Model {model_name} 7-Day Win Rate ({model_wr:.1f}%) critically low"
+                    )
+
         if alerts:
-            body = f"""
-            <h3>NBA Pick Performance Alert</h3>
-            <p><b>Date:</b> {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
-
-            <h4>Alerts:</h4>
-            <ul>
-                {"".join(f"<li>{a}</li>" for a in alerts)}
-            </ul>
-
-            <h4>7-Day Performance:</h4>
-            <table border="1" cellpadding="5">
-                <tr><th>Metric</th><th>Value</th></tr>
-                <tr><td>Total Win Rate</td><td>{wr_7d:.1f}%</td></tr>
-                <tr><td>Total ROI</td><td>{roi_7d:+.1f}%</td></tr>
-                <tr><td>XL Win Rate</td><td>{rolling_7d.get('xl_wr', 0):.1f}%</td></tr>
-                <tr><td>PRO Win Rate</td><td>{rolling_7d.get('pro_wr', 0):.1f}%</td></tr>
-            </table>
-
-            <h4>30-Day Performance:</h4>
-            <table border="1" cellpadding="5">
-                <tr><th>Metric</th><th>Value</th></tr>
-                <tr><td>Total Win Rate</td><td>{wr_30d:.1f}%</td></tr>
-                <tr><td>Total ROI</td><td>{rolling_30d.get('total_roi', 0):+.1f}%</td></tr>
-            </table>
-
-            <p>Review performance and consider adjusting filters or thresholds.</p>
-            """
-
-            is_critical = wr_7d < 48.0 or roi_7d < -15.0
-            send_performance_alert(
-                "NBA Pick Performance Degradation",
-                body,
-                is_critical=is_critical,
-            )
-
-            print(f"[ALERT] {len(alerts)} performance alerts triggered")
-            for alert in alerts:
-                print(f"  - {alert}")
+            print(f"[ALERT] {len(alerts)} performance alerts:")
+            for a in alerts:
+                print(f"  - {a}")
         else:
             print("[OK] All performance metrics within thresholds")
 
-        return {
-            "alerts_count": len(alerts),
-            "alerts": alerts,
-            "status": "alert" if alerts else "ok",
-        }
+        return {"alerts": alerts, "status": "alert" if alerts else "ok"}
 
-    @task(
-        task_id="save_validation_results",
-        doc_md="""
-        ### Save Validation Results
-
-        Stores validation results to JSON for historical tracking.
-        """,
-    )
-    def save_validation_results(
-        yesterday: dict[str, Any],
-        rolling_7d: dict[str, Any],
-        rolling_30d: dict[str, Any],
+    @task(task_id="save_results")
+    def save_results(
+        perf: dict[str, Any],
         alerts: dict[str, Any],
     ) -> dict[str, Any]:
-        """Save validation results to file."""
+        """Save validation results to JSON."""
         Path(VALIDATION_DIR).mkdir(parents=True, exist_ok=True)
 
-        from zoneinfo import ZoneInfo
-
-        date_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
-
+        date_str = datetime.now(_EST).strftime("%Y-%m-%d")
         results = {
             "validation_date": date_str,
-            "generated_at": datetime.now().isoformat(),
-            "yesterday": {
-                "date": yesterday.get("date"),
-                "xl": {
-                    "graded": yesterday.get("xl_graded", 0),
-                    "wins": yesterday.get("xl_wins", 0),
-                    "losses": yesterday.get("xl_losses", 0),
-                    "win_rate": yesterday.get("xl_wr", 0),
-                },
-                "pro": {
-                    "graded": yesterday.get("pro_graded", 0),
-                    "wins": yesterday.get("pro_wins", 0),
-                    "losses": yesterday.get("pro_losses", 0),
-                    "win_rate": yesterday.get("pro_wr", 0),
-                },
-            },
-            "rolling_7d": {
-                "period": rolling_7d.get("period"),
-                "start_date": rolling_7d.get("start_date"),
-                "end_date": rolling_7d.get("end_date"),
-                "total_graded": rolling_7d.get("total_graded", 0),
-                "total_wins": rolling_7d.get("total_wins", 0),
-                "total_losses": rolling_7d.get("total_losses", 0),
-                "total_win_rate": rolling_7d.get("total_wr", 0),
-                "total_roi": rolling_7d.get("total_roi", 0),
-                "xl_win_rate": rolling_7d.get("xl_wr", 0),
-                "pro_win_rate": rolling_7d.get("pro_wr", 0),
-            },
-            "rolling_30d": {
-                "period": rolling_30d.get("period"),
-                "start_date": rolling_30d.get("start_date"),
-                "end_date": rolling_30d.get("end_date"),
-                "total_graded": rolling_30d.get("total_graded", 0),
-                "total_win_rate": rolling_30d.get("total_wr", 0),
-                "total_roi": rolling_30d.get("total_roi", 0),
-            },
+            "generated_at": datetime.now(_EST).isoformat(),
+            "performance": perf,
             "alerts": alerts,
         }
 
-        # Save daily result
         output_file = f"{VALIDATION_DIR}/validation_{date_str}.json"
         with open(output_file, "w") as f:
-            json.dump(results, f, indent=2)
+            json.dump(results, f, indent=2, default=str)
 
-        print(f"[OK] Saved validation results to {output_file}")
+        print(f"[OK] Saved to {output_file}")
+        return {"output_file": output_file}
 
-        return {"output_file": output_file, "status": "saved"}
+    @task(task_id="send_validation_card")
+    def send_validation_card(perf: dict[str, Any], alerts: dict[str, Any]) -> dict[str, Any]:
+        """Send validation summary to Discord via Axiom DM."""
+        from nba.core.daily_card import _post_dm_embed
 
-    @task(
-        task_id="generate_performance_report",
-        doc_md="""
-        ### Generate Performance Report
+        if not perf:
+            print("[SKIP] No performance data")
+            return {"sent": False, "reason": "no_data"}
 
-        Creates a summary report of pick performance.
-        """,
-    )
-    def generate_performance_report(
-        yesterday: dict[str, Any],
-        rolling_7d: dict[str, Any],
-        rolling_30d: dict[str, Any],
-        saved: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Generate and print performance report."""
-        print("\n" + "=" * 70)
-        print("NBA PICK VALIDATION SUMMARY")
-        print("=" * 70)
+        embed = _build_validation_embed(perf, (alerts or {}).get("alerts", []))
+        msg_id = _post_dm_embed(embed)
+        if msg_id:
+            print(f"[OK] Validation card sent (msg={msg_id})")
+            return {"sent": True, "message_id": msg_id}
+        else:
+            print("[WARN] Validation card send failed")
+            return {"sent": False, "reason": "discord_error"}
 
-        print(f"\nValidation Date: {datetime.now().strftime('%Y-%m-%d')}")
-
-        # Yesterday's results
-        print(f"\n--- YESTERDAY ({yesterday.get('date', 'N/A')}) ---")
-        for system in ["xl", "pro"]:
-            graded = yesterday.get(f"{system}_graded", 0)
-            wins = yesterday.get(f"{system}_wins", 0)
-            losses = yesterday.get(f"{system}_losses", 0)
-            wr = yesterday.get(f"{system}_wr", 0)
-            if graded > 0:
-                print(f"  {system.upper():10s}: {wins}W-{losses}L ({wr:.1f}%)")
-
-        # 7-day rolling
-        print("\n--- 7-DAY ROLLING ---")
-        print(
-            f"  Total: {rolling_7d.get('total_wins', 0)}W-{rolling_7d.get('total_losses', 0)}L "
-            f"({rolling_7d.get('total_wr', 0):.1f}%) | ROI: {rolling_7d.get('total_roi', 0):+.1f}%"
-        )
-        for system in ["xl", "pro"]:
-            wr = rolling_7d.get(f"{system}_wr", 0)
-            roi = rolling_7d.get(f"{system}_roi", 0)
-            if wr > 0:
-                print(f"  {system.upper():10s}: {wr:.1f}% WR | {roi:+.1f}% ROI")
-
-        # 30-day rolling
-        print("\n--- 30-DAY ROLLING ---")
-        print(
-            f"  Total: {rolling_30d.get('total_graded', 0)} picks | "
-            f"{rolling_30d.get('total_wr', 0):.1f}% WR | "
-            f"{rolling_30d.get('total_roi', 0):+.1f}% ROI"
-        )
-
-        print("\n" + "=" * 70)
-
-        return {
-            "status": "completed",
-            "results_file": saved.get("output_file"),
-        }
-
-    @task(task_id="write_actuals_to_axiom")
-    def write_actuals_to_axiom() -> dict[str, Any]:
-        """Write yesterday's actual results into nba_prediction_history.
-
-        Updates is_hit + actual_result for every pick in the axiom DB so the
-        conviction engine and Axiom brain can measure filter performance.
-        Never fails — a DB error here doesn't block the rest of validation.
-        """
-        from zoneinfo import ZoneInfo
-
-        from nba.core.axiom_writer import write_actuals
-
-        yesterday = (datetime.now(ZoneInfo("America/New_York")) - timedelta(days=1)).strftime(
-            "%Y-%m-%d"
-        )
-        updated = write_actuals(yesterday)
-        print(f"[axiom] Graded {updated} pick rows for {yesterday}")
-        return {"date": yesterday, "rows_updated": updated}
-
-    # ========================================================================
-    # Task Dependencies
-    # ========================================================================
-
-    # Run validations in parallel
-    yesterday_result = validate_yesterday()
-    rolling_7d_result = validate_rolling_7d()
-    rolling_30d_result = validate_rolling_30d()
-
-    # Check alerts after all validations complete
-    alerts_result = check_performance_alerts(
-        yesterday_result,
-        rolling_7d_result,
-        rolling_30d_result,
-    )
-
-    # Save results
-    saved_result = save_validation_results(
-        yesterday_result,
-        rolling_7d_result,
-        rolling_30d_result,
-        alerts_result,
-    )
-
-    # Write actuals to axiom DB — runs after yesterday's validation confirms game logs exist
-    write_actuals_to_axiom()
-
-    # Generate final report (terminal task)
-    generate_performance_report(
-        yesterday_result,
-        rolling_7d_result,
-        rolling_30d_result,
-        saved_result,
-    )
+    # ── Task Dependencies ──────────────────────────────────────────
+    backfill = backfill_actuals()
+    perf = validate_performance(backfill)
+    alerts = check_alerts(perf)
+    save_results(perf, alerts)
+    send_validation_card(perf, alerts)
 
 
-# Instantiate the DAG
 dag = nba_validation_pipeline()

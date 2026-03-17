@@ -193,7 +193,7 @@ class TestGetLabel:
         assert _get_label(0.95, 1) == "EARLY"
 
     def test_locked_requires_high_conviction_and_appearances(self):
-        assert _get_label(0.85, 3) == "LOCKED"
+        assert _get_label(0.90, 3) == "LOCKED"
         assert _get_label(0.85, 5) == "LOCKED"
 
     def test_locked_blocked_below_min_appearances(self):
@@ -201,22 +201,31 @@ class TestGetLabel:
         assert _get_label(0.85, 2) == "STRONG"
 
     def test_strong(self):
-        assert _get_label(0.70, 3) == "STRONG"
-        assert _get_label(0.60, 2) == "STRONG"
+        assert _get_label(0.80, 3) == "STRONG"
+        assert _get_label(0.75, 2) == "STRONG"
+
+    def test_moderate_is_watch(self):
+        # 0.60-0.74 range is now WATCH (not published)
+        assert _get_label(0.70, 3) == "WATCH"
+        assert _get_label(0.60, 4) == "WATCH"
 
     def test_watch(self):
-        assert _get_label(0.50, 3) == "WATCH"
-        assert _get_label(0.40, 4) == "WATCH"
+        assert _get_label(0.55, 3) == "WATCH"
+        assert _get_label(0.50, 4) == "WATCH"
 
     def test_skip(self):
+        assert _get_label(0.45, 4) == "SKIP"
         assert _get_label(0.30, 4) == "SKIP"
         assert _get_label(0.0, 6) == "SKIP"
 
-    def test_boundary_locked_at_0_80(self):
-        assert _get_label(0.80, 3) == "LOCKED"
+    def test_boundary_locked_at_0_85(self):
+        assert _get_label(0.85, 3) == "LOCKED"
 
-    def test_boundary_strong_at_0_60(self):
-        assert _get_label(0.60, 3) == "STRONG"
+    def test_boundary_strong_at_0_75(self):
+        assert _get_label(0.75, 3) == "STRONG"
+
+    def test_boundary_below_strong_is_watch(self):
+        assert _get_label(0.74, 3) == "WATCH"
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -535,7 +544,7 @@ class TestScoreBpRec:
 
     def test_over_5star_with_market_ev(self):
         delta, ctx = _score_bp_rec(self._rec(5, "over", best_ev=0.06))
-        assert delta == 0.11
+        assert delta == pytest.approx(0.11)
         assert ctx["bp_rec_stars"] == 5
         assert ctx["bp_rec_side"] == "over"
 

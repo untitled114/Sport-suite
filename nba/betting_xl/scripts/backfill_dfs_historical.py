@@ -38,7 +38,11 @@ import psycopg2
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
+from zoneinfo import ZoneInfo
+
 from nba.betting_xl.fetchers.fetch_bettingpros import BettingProsFetcher
+
+EST = ZoneInfo("America/New_York")
 
 # Database config
 DB_CONFIG = {
@@ -133,7 +137,7 @@ class DFSBackfiller:
         checkpoint = {
             "last_date": current_date,
             "last_platform": platform,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(EST).isoformat(),
             "stats": self.stats,
         }
         with open(CHECKPOINT_FILE, "w") as f:

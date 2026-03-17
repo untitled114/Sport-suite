@@ -40,7 +40,7 @@ class TeamBettingExtractor(BaseFeatureExtractor):
         Initialize team betting extractor.
 
         Args:
-            conn: Database connection to nba_team database
+            conn: Database connection to nba_intelligence database (nba_props_xl)
         """
         super().__init__(conn, name="TeamBetting")
         self._cache = {}  # Cache for team stats
@@ -120,23 +120,22 @@ class TeamBettingExtractor(BaseFeatureExtractor):
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        # Query team betting stats
+        # Query team betting stats from nba_props_xl
         query = """
         SELECT
             stat_type,
             COUNT(*) as total,
-            SUM(CASE WHEN actual_result > over_line THEN 1 ELSE 0 END) as overs
+            SUM(CASE WHEN actual_value > over_line THEN 1 ELSE 0 END) as overs
         FROM (
             SELECT DISTINCT ON (p.player_name, p.game_date, p.stat_type)
                 p.stat_type,
                 p.over_line,
-                p.actual_result
-            FROM nba_prop_lines p
-            JOIN player_profile pp ON p.player_name = pp.full_name
-            WHERE pp.team_abbrev = %s
+                p.actual_value
+            FROM nba_props_xl p
+            WHERE p.player_team = %s
               AND p.game_date < %s
               AND p.game_date >= %s::date - interval '60 days'
-              AND p.actual_result IS NOT NULL
+              AND p.actual_value IS NOT NULL
         ) sub
         GROUP BY stat_type
         """
@@ -189,22 +188,20 @@ class TeamBettingExtractor(BaseFeatureExtractor):
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        # Query opponent's defense stats
+        # Query opponent's defense stats from nba_props_xl
         query = """
         SELECT
             COUNT(*) as total,
-            SUM(CASE WHEN actual_result > over_line THEN 1 ELSE 0 END) as overs
+            SUM(CASE WHEN actual_value > over_line THEN 1 ELSE 0 END) as overs
         FROM (
             SELECT DISTINCT ON (p.player_name, p.game_date, p.stat_type)
                 p.over_line,
-                p.actual_result
-            FROM nba_prop_lines p
-            JOIN player_game_logs pgl ON p.player_name = pgl.player_name
-                AND p.game_date = pgl.game_date
-            WHERE pgl.opponent_team = %s
+                p.actual_value
+            FROM nba_props_xl p
+            WHERE p.opponent_team = %s
               AND p.game_date < %s
               AND p.game_date >= %s::date - interval '60 days'
-              AND p.actual_result IS NOT NULL
+              AND p.actual_value IS NOT NULL
         ) sub
         """
         try:

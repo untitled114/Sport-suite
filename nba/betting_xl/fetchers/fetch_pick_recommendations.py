@@ -125,6 +125,7 @@ def fetch_pick_recommendations(date: str) -> list[dict[str, Any]]:
             data = json.loads(resp.read())
     except urllib.error.HTTPError as e:
         body = e.read().decode()[:200]
+        error_msg = f"HTTP {e.code}: {body[:100]}"
         if e.code == 401 or e.code == 403:
             log.warning(
                 f"BP pick-recommendations auth failed (HTTP {e.code}) — "
@@ -132,9 +133,35 @@ def fetch_pick_recommendations(date: str) -> list[dict[str, Any]]:
             )
         else:
             log.error(f"BP pick-recommendations HTTP {e.code}: {body}")
+        try:
+            from nba.core.data_registry import log_ingestion
+
+            log_ingestion(
+                "bettingpros_pick_recs",
+                "fetch",
+                "failed",
+                error_count=1,
+                error_message=error_msg,
+                metadata={"game_date": date},
+            )
+        except Exception:
+            pass
         return []
     except Exception as exc:
         log.error(f"BP pick-recommendations request failed: {exc}")
+        try:
+            from nba.core.data_registry import log_ingestion
+
+            log_ingestion(
+                "bettingpros_pick_recs",
+                "fetch",
+                "failed",
+                error_count=1,
+                error_message=str(exc)[:200],
+                metadata={"game_date": date},
+            )
+        except Exception:
+            pass
         return []
 
     picks = []
@@ -144,6 +171,21 @@ def fetch_pick_recommendations(date: str) -> list[dict[str, Any]]:
             record = _parse_pick(pick, shelf_label, date)
             if record:
                 picks.append(record)
+
+    # Atlas data registry — log this ingestion
+    try:
+        from nba.core.data_registry import log_ingestion
+
+        log_ingestion(
+            "bettingpros_pick_recs",
+            "fetch",
+            "success",
+            records_fetched=len(picks),
+            api_calls_made=1,
+            metadata={"game_date": date},
+        )
+    except Exception:
+        pass
 
     return picks
 
@@ -174,16 +216,43 @@ def _parse_pick(pick: dict, shelf_label: str, date: str) -> Optional[dict[str, A
     market_id = offer.get("market_id")
     stat_type = _MARKET_STAT.get(market_id, f"MARKET_{market_id}")
 
-    # Recommended side from justification (most reliable signal)
+    # Scan justification for all signals
     justification = pick.get("justification") or []
     rec_side = None
     bp_projection_value = None
+    performance_splits: list[dict] = []
+    prop_streak_val = None
+    prop_streak_text = None
+    bp_opponent_rank = None
+    tailing_pct = None
+
     for j in justification:
-        if j.get("key") == "model_projection":
+        key = j.get("key")
+        if key == "model_projection" and rec_side is None:
             over_under = j.get("over_under", "")
             rec_side = over_under.lower() if over_under else None
             bp_projection_value = j.get("value")
-            break
+        elif key == "performance_splits":
+            val = j.get("value") or {}
+            if val.get("games"):
+                pills = val.get("pill") or []
+                performance_splits.append(
+                    {
+                        "label": "/".join(pills) if pills else "overall",
+                        "wins": val.get("wins"),
+                        "losses": val.get("losses"),
+                        "games": val.get("games"),
+                        "roi": round(float(val.get("roi") or 0), 1),
+                        "text": j.get("text", ""),
+                    }
+                )
+        elif key == "prop_streak" and prop_streak_val is None:
+            prop_streak_val = j.get("value")
+            prop_streak_text = j.get("text", "")
+        elif key == "opponent_ranking" and bp_opponent_rank is None:
+            bp_opponent_rank = j.get("value")
+        elif key == "tailing" and tailing_pct is None:
+            tailing_pct = j.get("value")
 
     # Find the matching selection (over or under) to get line + per-book data
     selections = offer.get("selections") or []
@@ -222,12 +291,16 @@ def _parse_pick(pick: dict, shelf_label: str, date: str) -> Optional[dict[str, A
                     best_book_line = book_line
             break  # only main line per book
 
-    # Hit rate from other_factors (key == "hit_rate")
+    # other_factors: hit_rate, opponent_ranking, tailing fallbacks
     hit_rate_raw: Optional[dict] = None
     for factor in pick.get("other_factors") or []:
-        if factor.get("key") == "hit_rate":
+        fkey = factor.get("key")
+        if fkey == "hit_rate" and hit_rate_raw is None:
             hit_rate_raw = factor.get("value") or {}
-            break
+        elif fkey == "opponent_ranking" and bp_opponent_rank is None:
+            bp_opponent_rank = factor.get("value")
+        elif fkey == "tailing" and tailing_pct is None:
+            tailing_pct = factor.get("value")
 
     return {
         "player_name": player_name,
@@ -260,6 +333,12 @@ def _parse_pick(pick: dict, shelf_label: str, date: str) -> Optional[dict[str, A
         "hit_rate_wins": hit_rate_raw.get("wins") if hit_rate_raw else None,
         "hit_rate_losses": hit_rate_raw.get("losses") if hit_rate_raw else None,
         "hit_rate_games": hit_rate_raw.get("games") if hit_rate_raw else None,
+        # Situational / trend signals from justification
+        "performance_splits": performance_splits,
+        "prop_streak": int(prop_streak_val) if prop_streak_val is not None else None,
+        "prop_streak_text": prop_streak_text,
+        "bp_opponent_rank": int(bp_opponent_rank) if bp_opponent_rank is not None else None,
+        "tailing_pct": round(float(tailing_pct), 3) if tailing_pct is not None else None,
     }
 
 

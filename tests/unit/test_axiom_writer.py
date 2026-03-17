@@ -162,7 +162,7 @@ class TestBuildContextSnapshot:
     def test_trend_from_player_context(self):
         pick = {"player_context": {"trend": "hot"}}
         ctx = _build_context_snapshot(pick)
-        assert ctx["trend"] == "hot"
+        assert ctx["player_context"]["trend"] == "hot"
 
     def test_confidence_captured(self):
         pick = {"confidence": "HIGH"}

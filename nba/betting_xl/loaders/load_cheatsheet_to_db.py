@@ -22,7 +22,11 @@ import psycopg2
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+from zoneinfo import ZoneInfo
+
 from nba.config.database import get_intelligence_db_config
+
+EST = ZoneInfo("America/New_York")
 
 # Database connection
 DB_CONFIG = get_intelligence_db_config()
@@ -111,9 +115,9 @@ def insert_cheatsheet_data(conn, props: List[Dict[str, Any]], platform: str) -> 
                 try:
                     fetch_timestamp = datetime.fromisoformat(fetch_ts.replace("Z", "+00:00"))
                 except (ValueError, AttributeError):
-                    fetch_timestamp = datetime.now()
+                    fetch_timestamp = datetime.now(EST)
             else:
-                fetch_timestamp = datetime.now()
+                fetch_timestamp = datetime.now(EST)
 
             # Prepare record
             record = {

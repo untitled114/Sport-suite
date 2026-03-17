@@ -57,7 +57,11 @@ CALIBRATION_LOG_DIR = Path(
 import sys
 
 sys.path.insert(0, str(PROJECT_ROOT))
+from zoneinfo import ZoneInfo
+
 from nba.config.database import get_intelligence_db_config
+
+EST = ZoneInfo("America/New_York")
 
 # Database configuration (centralized)
 DB_INTELLIGENCE = get_intelligence_db_config()
@@ -144,7 +148,7 @@ class JSONCalibrator:
             lookback_days: Number of days to look back for performance metrics
                           If None, uses market-specific default from MARKET_CONFIG
             predictions_dir: Directory containing prediction JSON files
-            as_of_date: Historical date for backtesting (default: None = use datetime.now())
+            as_of_date: Historical date for backtesting (default: None = use datetime.now(EST))
             db_only: If True, load predictions from database instead of JSON files
                     (useful for backtesting when JSON files don't exist)
             model_version: 'xl' or 'v3' - only use predictions from this model for calibration
@@ -171,7 +175,7 @@ class JSONCalibrator:
         # Reference date for lookback calculations
         # In production: datetime.now()
         # In backtest: the provided as_of_date
-        self._reference_date = as_of_date if as_of_date else datetime.now()
+        self._reference_date = as_of_date if as_of_date else datetime.now(EST)
 
         # Set predictions directory
         if predictions_dir is None:
@@ -209,7 +213,7 @@ class JSONCalibrator:
         if self.as_of_date is None:
             return False
         # Backtest if as_of_date is in the past
-        return self.as_of_date.date() < datetime.now().date()
+        return self.as_of_date.date() < datetime.now(EST).date()
 
     def _get_db_connection(self):
         """Get database connection."""
@@ -219,7 +223,7 @@ class JSONCalibrator:
         """Check if cache is still valid."""
         if self._metrics_cache is None or self._cache_timestamp is None:
             return False
-        age = (datetime.now() - self._cache_timestamp).total_seconds()
+        age = (datetime.now(EST) - self._cache_timestamp).total_seconds()
         return age < self._cache_ttl_seconds
 
     def _return_no_data_metrics(self) -> Dict:
@@ -233,7 +237,7 @@ class JSONCalibrator:
             "predictions_with_actuals": 0,
             "is_stale": True,
             "lookback_days": self.lookback_days,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(EST).isoformat(),
         }
 
     def _load_predictions(self) -> List[Dict]:
@@ -606,7 +610,7 @@ class JSONCalibrator:
             "lookback_days": self.lookback_days,
             "over_predictions_count": int(over_mask.sum()),
             "under_predictions_count": int(under_mask.sum()),
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(EST).isoformat(),
         }
 
     def _update_calibration_state(self, metrics: Dict):
@@ -673,7 +677,7 @@ class JSONCalibrator:
                 metrics = self._return_no_data_metrics()
                 # Cache the "no data" result to avoid repeated loads
                 self._metrics_cache = metrics
-                self._cache_timestamp = datetime.now()
+                self._cache_timestamp = datetime.now(EST)
                 return metrics
 
             # Step 2: Get actual values from database
@@ -683,7 +687,7 @@ class JSONCalibrator:
                 metrics = self._return_no_data_metrics()
                 # Cache the "no data" result to avoid repeated loads
                 self._metrics_cache = metrics
-                self._cache_timestamp = datetime.now()
+                self._cache_timestamp = datetime.now(EST)
                 return metrics
 
             # Step 3: Calculate performance metrics
@@ -694,7 +698,7 @@ class JSONCalibrator:
 
             # Cache results
             self._metrics_cache = metrics
-            self._cache_timestamp = datetime.now()
+            self._cache_timestamp = datetime.now(EST)
 
             return metrics
 
@@ -805,7 +809,7 @@ class JSONCalibrator:
             "player_name": player_name,
             "game_date": game_date,
             "line": float(line) if line is not None else None,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(EST).isoformat(),
         }
 
         # Log adjustment
@@ -817,7 +821,7 @@ class JSONCalibrator:
         """Log adjustment to file for audit trail."""
         log_file = (
             self._log_dir
-            / f"{self.market.lower()}_json_adjustments_{datetime.now().strftime('%Y%m%d')}.jsonl"
+            / f"{self.market.lower()}_json_adjustments_{datetime.now(EST).strftime('%Y%m%d')}.jsonl"
         )
         try:
             with open(log_file, "a") as f:
@@ -829,7 +833,7 @@ class JSONCalibrator:
         """Get summary of adjustments applied today."""
         log_file = (
             self._log_dir
-            / f"{self.market.lower()}_json_adjustments_{datetime.now().strftime('%Y%m%d')}.jsonl"
+            / f"{self.market.lower()}_json_adjustments_{datetime.now(EST).strftime('%Y%m%d')}.jsonl"
         )
 
         if not log_file.exists():
@@ -928,7 +932,7 @@ class JSONCalibrationManager:
         """Print status report for all markets."""
         print("\n" + "=" * 80)
         print("JSON CALIBRATION STATUS REPORT (Using REAL Predictions)")
-        print(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Generated: {datetime.now(EST).strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"Lookback: {self.lookback_days} days")
         print("=" * 80)
 

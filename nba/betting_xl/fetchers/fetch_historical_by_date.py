@@ -49,7 +49,11 @@ import requests
 
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent))
+from zoneinfo import ZoneInfo
+
 from base_fetcher import BaseFetcher
+
+EST = ZoneInfo("America/New_York")
 
 # BettingPros Premium API configuration
 API_BASE_URL = "https://api.bettingpros.com/v3/props"
@@ -361,7 +365,7 @@ class HistoricalDateFetcher(BaseFetcher):
                 "opponent_team": "",  # Will be enriched later
                 "is_home": None,  # Will be enriched later
                 "season": int(date.split("-")[0]) if date else None,
-                "fetch_timestamp": datetime.now().isoformat(),
+                "fetch_timestamp": datetime.now(EST).isoformat(),
                 "source": "bettingpros_historical",
             }
 
@@ -492,6 +496,29 @@ class HistoricalDateFetcher(BaseFetcher):
             print(f"\n📊 Progress: {i}/{len(dates)} dates ({i/len(dates)*100:.1f}%)")
             print(f"   API calls: {self.total_api_calls}")
             print(f"   Props fetched: {self.total_props_fetched}")
+
+        # Atlas data registry — log this ingestion
+        try:
+            from nba.core.data_registry import log_ingestion
+
+            stats = self.get_registry_stats()
+            log_ingestion(
+                "bettingpros_historical",
+                "backfill",
+                "success",
+                records_fetched=len(all_props),
+                api_calls_made=stats["api_calls_made"],
+                bytes_transferred=stats["bytes_transferred"],
+                error_count=stats["error_count"],
+                error_message=stats["error_message"],
+                metadata={
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "days": len(dates),
+                },
+            )
+        except Exception:
+            pass
 
         return all_props
 

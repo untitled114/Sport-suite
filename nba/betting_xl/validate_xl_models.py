@@ -19,6 +19,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -27,6 +28,8 @@ import psycopg2
 from nba.config.database import get_intelligence_db_config, get_players_db_config
 from nba.core.logging_config import get_logger, setup_logging
 from nba.features.extract_live_features_xl import LiveFeatureExtractorXL
+
+EST = ZoneInfo("America/New_York")
 
 # Initialize logger
 logger = get_logger(__name__)
@@ -361,7 +364,7 @@ class XLHistoricalValidator:
         report_lines = []
         report_lines.append("# NBA XL vs V3 Models Validation Report")
         report_lines.append(f"**Period:** {self.start_date} to {self.end_date}")
-        report_lines.append(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        report_lines.append(f"**Generated:** {datetime.now(EST).strftime('%Y-%m-%d %H:%M:%S')}")
         report_lines.append("")
 
         # XL vs V3 Comparison Summary

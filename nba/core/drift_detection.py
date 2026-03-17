@@ -32,10 +32,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
 from scipy import stats
+
+EST = ZoneInfo("America/New_York")
 
 logger = logging.getLogger(__name__)
 
@@ -337,7 +340,7 @@ class DriftDetector:
                 drifted_count += 1
 
         report = DriftReport(
-            timestamp=datetime.now(),
+            timestamp=datetime.now(EST),
             reference_samples=len(ref_data),
             current_samples=len(current_data),
             total_features=len(results),

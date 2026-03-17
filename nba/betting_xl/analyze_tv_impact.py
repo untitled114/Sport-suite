@@ -29,7 +29,7 @@ DB_CONFIG = {
     "port": 5536,
     "dbname": "nba_players",
     "user": os.environ.get("DB_USER", "mlb_user"),
-    "password": os.environ["DB_PASSWORD"],
+    "password": os.environ.get("DB_PASSWORD", ""),
 }
 
 ESPN_TEAM_MAP = {

@@ -27,8 +27,11 @@ import unicodedata
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 import psycopg2
+
+EST = ZoneInfo("America/New_York")
 
 
 class NameNormalizer:
@@ -196,7 +199,7 @@ class NameNormalizer:
 
         try:
             # Check cache age
-            cache_age = datetime.now() - datetime.fromtimestamp(self.CACHE_FILE.stat().st_mtime)
+            cache_age = datetime.now(EST) - datetime.fromtimestamp(self.CACHE_FILE.stat().st_mtime)
             if cache_age > timedelta(hours=self.CACHE_MAX_AGE_HOURS):
                 print(f"Cache is {cache_age.total_seconds()/3600:.1f} hours old, rebuilding...")
                 return False
@@ -223,7 +226,7 @@ class NameNormalizer:
                     {
                         "mapping": self.mapping,
                         "reverse_mapping": self.reverse_mapping,
-                        "created_at": datetime.now().isoformat(),
+                        "created_at": datetime.now(EST).isoformat(),
                     },
                     f,
                 )

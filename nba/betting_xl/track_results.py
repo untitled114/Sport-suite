@@ -34,8 +34,12 @@ _project_root = str(Path(__file__).resolve().parents[2])
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
+from zoneinfo import ZoneInfo
+
 from nba.config import STAT_COLUMN_MAP
 from nba.config.database import get_intelligence_db_config, get_players_db_config
+
+EST = ZoneInfo("America/New_York")
 
 # Database configs (centralized in nba.config.database)
 DB_INTELLIGENCE = get_intelligence_db_config()
@@ -305,7 +309,7 @@ def main():
         tracker.connect()
 
         for days_ago in range(args.backfill_days):
-            date = (datetime.now() - timedelta(days=days_ago)).strftime("%Y-%m-%d")
+            date = (datetime.now(EST) - timedelta(days=days_ago)).strftime("%Y-%m-%d")
             logger.info(f"\nProcessing {date}...")
             tracker.process_pending_picks(game_date=date)
 

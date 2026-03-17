@@ -21,7 +21,11 @@ import psycopg2
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
+from zoneinfo import ZoneInfo
+
 from betting_xl.config.production_policies import DATA_FRESHNESS_POLICY
+
+EST = ZoneInfo("America/New_York")
 
 # Database configuration (override with environment variables as needed)
 # Note: Production uses mlb_user for all databases (legacy naming)
@@ -69,7 +73,7 @@ class DataFreshnessValidator:
             "game_results_freshness": self._validate_game_results_freshness(),
             "injury_reports_freshness": self._validate_injury_reports_freshness(),
             "model_age": self._validate_model_age(),
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(EST).isoformat(),
         }
 
         # Overall success if no critical failures
@@ -148,7 +152,7 @@ class DataFreshnessValidator:
                 result["latest_game_date"] = str(latest_game)
 
                 # Calculate age in hours
-                age = datetime.now().date() - latest_game
+                age = datetime.now(EST).date() - latest_game
                 age_hours = age.total_seconds() / 3600
 
                 result["age_hours"] = round(age_hours, 1)
@@ -206,7 +210,10 @@ class DataFreshnessValidator:
                 result["latest_update"] = latest_update.isoformat()
 
                 # Calculate age in hours
-                age = datetime.now() - latest_update
+                # Handle both naive and aware datetimes from DB
+                if latest_update.tzinfo is None:
+                    latest_update = latest_update.replace(tzinfo=EST)
+                age = datetime.now(EST) - latest_update
                 age_hours = age.total_seconds() / 3600
 
                 result["age_hours"] = round(age_hours, 1)
@@ -261,7 +268,7 @@ class DataFreshnessValidator:
             if trained_date_str:
                 # Parse date (format: 2025-11-07T02:00:00-05:00)
                 trained_date = datetime.fromisoformat(trained_date_str.replace("Z", "+00:00"))
-                age = datetime.now() - trained_date.replace(tzinfo=None)
+                age = datetime.now(EST) - trained_date.astimezone(EST)
                 age_days = age.days
 
                 result["model_age_days"] = age_days

@@ -9,16 +9,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from zoneinfo import ZoneInfo
+
 import psycopg2
 
 from nba.config.database import get_games_db_config, get_players_db_config, get_team_db_config
+
+EST = ZoneInfo("America/New_York")
 
 print("=" * 80)
 print("NBA 2025-2026 SEASON DATA STATUS CHECK")
 print("=" * 80)
 print()
 
-print(f"Current date: {datetime.now().strftime('%Y-%m-%d')}")
+print(f"Current date: {datetime.now(EST).strftime('%Y-%m-%d')}")
 print()
 
 # Database connections
@@ -162,8 +166,8 @@ print("DATA GAPS FOR 2025-2026 SEASON")
 print("=" * 80)
 print()
 
-if result[0] < datetime.now().date():
-    days_behind = (datetime.now().date() - result[0]).days
+if result[0] < datetime.now(EST).date():
+    days_behind = (datetime.now(EST).date() - result[0]).days
     print(f"🚨 DATA IS {days_behind} DAYS BEHIND!")
     print()
     print("Missing data:")

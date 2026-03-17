@@ -99,62 +99,65 @@ class TestHandleGetPicks:
             ]
         }
 
-    def test_returns_picks_from_file(self, tmp_path):
-        picks_file = tmp_path / "xl_picks_2026-03-07.json"
-        picks_file.write_text(json.dumps(self._make_xl_data()))
+    def _make_db_row(self, **overrides):
+        base = {
+            "player_name": "Anthony Edwards",
+            "stat_type": "POINTS",
+            "conviction": 0.85,
+            "conviction_label": "LOCKED",
+            "line_latest": 30.5,
+            "book_latest": "draftkings",
+            "p_over_latest": 0.78,
+            "p_over_trend": 0.06,
+            "appearances": 5,
+            "total_runs": 6,
+            "status": "active",
+            "narrative": "Consistent across runs",
+            "line_movement": -1.0,
+            "line_direction": "falling",
+            "context_snapshot": "{}",
+        }
+        base.update(overrides)
+        return base
 
-        with patch("cephalon.axiom_tools._PREDICTIONS_DIRS", [str(tmp_path)]):
+    def test_returns_picks_from_db(self):
+        rows = [self._make_db_row()]
+        with patch("cephalon.axiom_db.execute_query", return_value=rows):
             result = _handle_get_picks({"date": "2026-03-07"})
-
         assert "Anthony Edwards" in result
-        assert "POINTS OVER 30.5" in result
-        assert "XL/GOLDMINE" in result
-        assert "+5.4%" in result
+        assert "POINTS" in result
+        assert "LOCKED" in result
 
-    def test_no_file_returns_not_found(self, tmp_path):
-        with patch("cephalon.axiom_tools._PREDICTIONS_DIRS", [str(tmp_path)]):
+    def test_no_rows_returns_not_found(self):
+        with patch("cephalon.axiom_db.execute_query", return_value=[]):
             result = _handle_get_picks({"date": "2026-03-07"})
         assert "No picks found" in result
 
-    def test_uses_today_by_default(self, tmp_path):
+    def test_uses_today_by_default(self):
+        rows = [self._make_db_row()]
+        with patch("cephalon.axiom_db.execute_query", return_value=rows) as mock_q:
+            result = _handle_get_picks({})
+        assert "Anthony Edwards" in result
+        # Verify it queried with today's date
+        call_args = mock_q.call_args
+        date_param = call_args[0][2][0]  # (db_name, query, (date,))
         from datetime import datetime
         from zoneinfo import ZoneInfo
 
         today = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
-        picks_file = tmp_path / f"xl_picks_{today}.json"
-        picks_file.write_text(json.dumps(self._make_xl_data()))
+        assert date_param == today
 
-        with patch("cephalon.axiom_tools._PREDICTIONS_DIRS", [str(tmp_path)]):
-            result = _handle_get_picks({})
-
-        assert "Anthony Edwards" in result
-
-    def test_pro_picks_shown_separately(self, tmp_path):
-        xl_file = tmp_path / "xl_picks_2026-03-07.json"
-        xl_file.write_text(json.dumps(self._make_xl_data()))
-        pro_file = tmp_path / "pro_picks_2026-03-07.json"
-        pro_file.write_text(
-            json.dumps(
-                {
-                    "picks": [
-                        {
-                            "player_name": "Dosunmu",
-                            "stat_type": "POINTS",
-                            "line": 10.5,
-                            "ev_pct": 30.6,
-                            "confidence": "MEDIUM",
-                        }
-                    ]
-                }
-            )
-        )
-
-        with patch("cephalon.axiom_tools._PREDICTIONS_DIRS", [str(tmp_path)]):
+    def test_multiple_labels_grouped(self):
+        rows = [
+            self._make_db_row(conviction_label="LOCKED"),
+            self._make_db_row(player_name="Jayson Tatum", conviction_label="STRONG"),
+        ]
+        with patch("cephalon.axiom_db.execute_query", return_value=rows):
             result = _handle_get_picks({"date": "2026-03-07"})
-
-        assert "XL Model" in result
-        assert "PRO Cheatsheet" in result
-        assert "Dosunmu" in result
+        assert "LOCKED" in result
+        assert "STRONG" in result
+        assert "Anthony Edwards" in result
+        assert "Jayson Tatum" in result
 
 
 # ─────────────────────────────────────────────────────────────────

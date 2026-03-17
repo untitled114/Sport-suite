@@ -6,8 +6,11 @@ Endpoints for monitoring API and system health.
 
 import logging
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import psycopg2
+
+EST = ZoneInfo("America/New_York")
 from fastapi import APIRouter, Depends
 
 from nba.api import __version__
@@ -40,7 +43,7 @@ async def health_check() -> HealthResponse:
     return HealthResponse(
         status="healthy",
         version=__version__,
-        timestamp=datetime.now(),
+        timestamp=datetime.now(EST),
     )
 
 
@@ -88,7 +91,7 @@ async def models_health_check() -> ModelsHealthResponse:
         models=models,
         total_loaded=total_loaded,
         enabled_markets=manager.enabled_markets,
-        timestamp=datetime.now(),
+        timestamp=datetime.now(EST),
     )
 
 
@@ -121,7 +124,7 @@ async def database_health_check() -> DatabaseHealthResponse:
         status=result["status"],
         databases=databases,
         total_connected=result["total_connected"],
-        timestamp=datetime.now(),
+        timestamp=datetime.now(EST),
     )
 
 
@@ -171,5 +174,5 @@ async def readiness_check() -> HealthResponse:
     return HealthResponse(
         status=status,
         version=__version__,
-        timestamp=datetime.now(),
+        timestamp=datetime.now(EST),
     )

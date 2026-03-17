@@ -35,11 +35,14 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 import psycopg2
 
 from nba.betting_xl.generate_xl_predictions import XLPredictionsGenerator
 from nba.config.database import get_intelligence_db_config
+
+EST = ZoneInfo("America/New_York")
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -539,7 +542,7 @@ class HistoricalBacktest:
             "end_date": self.end_date.strftime("%Y-%m-%d"),
             "underdog_only": self.underdog_only,
             "model_versions": self.model_versions,
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": datetime.now(EST).isoformat(),
             "total_days": len(self.results),
             "total_picks": sum(r.picks_generated for r in self.results),
             "total_validated": sum(r.validated for r in self.results),

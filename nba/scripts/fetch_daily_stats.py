@@ -21,12 +21,15 @@ import json
 import logging
 import time
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import psycopg2
 import requests
 
 from nba.config.database import get_games_db_config, get_players_db_config
 from nba.utils.team_utils import normalize_team_abbrev
+
+EST = ZoneInfo("America/New_York")
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
@@ -161,6 +164,11 @@ class NBAStatsUpdater:
             threes = int(stats_dict.get("3PM", 0) or 0)
             fgm = int(stats_dict.get("FGM", 0) or 0)
             fga = int(stats_dict.get("FGA", 0) or 0)
+            plus_minus_raw = stats_dict.get("+/-", stats_dict.get("PLUSMINUS", 0))
+            try:
+                plus_minus = int(float(plus_minus_raw or 0))
+            except (ValueError, TypeError):
+                plus_minus = 0
 
         except (ValueError, TypeError):
             return False
@@ -185,6 +193,7 @@ class NBAStatsUpdater:
             "three_pointers_made": threes,
             "fg_made": fgm,
             "fg_attempted": fga,
+            "plus_minus": plus_minus,
         }
 
         # Check if exists (use composite key: player_id + game_date)
@@ -205,7 +214,7 @@ class NBAStatsUpdater:
                 UPDATE player_game_logs
                 SET game_id = %s, season = %s, team_abbrev = %s, opponent_abbrev = %s, is_home = %s,
                     minutes_played = %s, points = %s, rebounds = %s, assists = %s,
-                    three_pointers_made = %s, fg_made = %s, fg_attempted = %s
+                    three_pointers_made = %s, fg_made = %s, fg_attempted = %s, plus_minus = %s
                 WHERE player_id = %s AND game_date = %s
             """,
                 (
@@ -221,6 +230,7 @@ class NBAStatsUpdater:
                     game_data["three_pointers_made"],
                     game_data["fg_made"],
                     game_data["fg_attempted"],
+                    game_data["plus_minus"],
                     player_id,
                     game_data["game_date"],
                 ),
@@ -232,8 +242,9 @@ class NBAStatsUpdater:
                 """
                 INSERT INTO player_game_logs (
                     player_id, game_id, game_date, season, team_abbrev, opponent_abbrev, is_home,
-                    minutes_played, points, rebounds, assists, three_pointers_made, fg_made, fg_attempted
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    minutes_played, points, rebounds, assists, three_pointers_made, fg_made, fg_attempted,
+                    plus_minus
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
                 tuple(game_data.values()),
             )
@@ -359,7 +370,7 @@ def main():
     if args.date:
         start_date = args.date
     else:
-        yesterday = datetime.now() - timedelta(days=1)
+        yesterday = datetime.now(EST) - timedelta(days=1)
         start_date = yesterday.strftime("%Y-%m-%d")
 
     updater = NBAStatsUpdater()

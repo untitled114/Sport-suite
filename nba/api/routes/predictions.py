@@ -8,8 +8,11 @@ import logging
 import time
 from datetime import date, datetime
 from typing import List
+from zoneinfo import ZoneInfo
 
 import psycopg2
+
+EST = ZoneInfo("America/New_York")
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from nba.api.dependencies import ModelManager, get_model_manager
@@ -183,7 +186,7 @@ def make_prediction(
             opponent_team=request.opponent_team,
             game_date=game_date,
             model_version="xl",
-            timestamp=datetime.now(),
+            timestamp=datetime.now(EST),
         )
 
     except HTTPException:
@@ -293,7 +296,7 @@ async def predict_batch(
         successful=len(predictions),
         failed=failed,
         processing_time_ms=round(processing_time_ms, 2),
-        timestamp=datetime.now(),
+        timestamp=datetime.now(EST),
     )
 
 

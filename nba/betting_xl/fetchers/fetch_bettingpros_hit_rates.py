@@ -8,8 +8,11 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from nba.betting_xl.fetchers.base_fetcher import BaseFetcher
+
+EST = ZoneInfo("America/New_York")
 
 
 class BettingProsHitRateFetcher(BaseFetcher):
@@ -37,7 +40,7 @@ class BettingProsHitRateFetcher(BaseFetcher):
             timeout=30,
             verbose=verbose,
         )
-        self.date = date or datetime.now().strftime("%Y-%m-%d")
+        self.date = date or datetime.now(EST).strftime("%Y-%m-%d")
 
     def fetch_market(self, market_name: str, market_id: int) -> List[Dict[str, Any]]:
         page = 1
@@ -177,7 +180,28 @@ class BettingProsHitRateFetcher(BaseFetcher):
             key = (record["player_name"], record["stat_type"])
             deduped[key] = record
 
-        return list(deduped.values())
+        result = list(deduped.values())
+
+        # Atlas data registry — log this ingestion
+        try:
+            from nba.core.data_registry import log_ingestion
+
+            stats = self.get_registry_stats()
+            log_ingestion(
+                "bettingpros_hit_rates",
+                "fetch",
+                "success",
+                records_fetched=len(result),
+                api_calls_made=stats["api_calls_made"],
+                bytes_transferred=stats["bytes_transferred"],
+                error_count=stats["error_count"],
+                error_message=stats["error_message"],
+                metadata={"game_date": self.date},
+            )
+        except Exception:
+            pass
+
+        return result
 
     def save_hit_rates(self, records: List[Dict[str, Any]]) -> Path:
         output_dir = Path(__file__).parent.parent / "lines"
@@ -186,7 +210,7 @@ class BettingProsHitRateFetcher(BaseFetcher):
 
         payload = {
             "date": self.date,
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": datetime.now(EST).isoformat(),
             "total_records": len(records),
             "records": records,
         }

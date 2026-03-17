@@ -14,10 +14,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from zoneinfo import ZoneInfo
+
 import psycopg2
 import requests
 
 from nba.config.database import get_intelligence_db_config, get_players_db_config
+
+EST = ZoneInfo("America/New_York")
 
 DB_CONFIG = get_intelligence_db_config()
 
@@ -27,7 +31,7 @@ def fetch_injuries():
     print("\n" + "=" * 80)
     print("NBA INJURY UPDATE - ESPN API")
     print("=" * 80)
-    print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+    print(f"Time: {datetime.now(EST).strftime('%Y-%m-%d %H:%M')}\n")
 
     url = "https://site.web.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
 
@@ -55,10 +59,43 @@ def fetch_injuries():
                 )
 
         print(f"✅ Fetched {len(injuries)} injuries from ESPN\n")
+
+        # Atlas data registry — log this ingestion
+        try:
+            from nba.core.data_registry import log_ingestion
+
+            log_ingestion(
+                "injuries",
+                "fetch",
+                "success",
+                records_fetched=len(injuries),
+                api_calls_made=1,
+                bytes_transferred=len(response.content),
+                metadata={"source": "espn"},
+            )
+        except Exception:
+            pass
+
         return injuries
 
     except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
         print(f"❌ Failed to fetch: {e}")
+
+        # Atlas data registry — log failure
+        try:
+            from nba.core.data_registry import log_ingestion
+
+            log_ingestion(
+                "injuries",
+                "fetch",
+                "failed",
+                error_count=1,
+                error_message=str(e),
+                metadata={"source": "espn"},
+            )
+        except Exception:
+            pass
+
         return []
 
 
@@ -155,7 +192,7 @@ def main():
         print("\n" + "=" * 80)
         print("✅ INJURY UPDATE COMPLETE")
         print("=" * 80)
-        print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        print(f"Timestamp: {datetime.now(EST).strftime('%Y-%m-%d %H:%M')}")
         print("\n💡 Next: Run daily predictions")
         print("   python3 nba/betting/daily_predictions_PRODUCTION.py")
     else:

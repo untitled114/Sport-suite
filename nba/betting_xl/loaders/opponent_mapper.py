@@ -19,11 +19,14 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 import psycopg2
 import requests
 
 from nba.utils.team_utils import normalize_team_abbrev
+
+EST = ZoneInfo("America/New_York")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -344,7 +347,7 @@ def main():
     parser.add_argument(
         "--date",
         type=str,
-        default=datetime.now().strftime("%Y-%m-%d"),
+        default=datetime.now(EST).strftime("%Y-%m-%d"),
         help="Game date (YYYY-MM-DD)",
     )
     args = parser.parse_args()

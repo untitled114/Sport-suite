@@ -28,10 +28,13 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 import psycopg2
 
 from nba.config.database import get_players_db_config
+
+EST = ZoneInfo("America/New_York")
 
 # Stat type -> game log column mapping
 STAT_COLUMN_MAP = {
@@ -50,7 +53,12 @@ COMBO_STAT_MAP = {
 }
 
 
-def load_all_predictions(date: str, predictions_dir: str = "predictions") -> Dict[str, List]:
+_DEFAULT_PREDICTIONS_DIR = str(Path(__file__).resolve().parent / "predictions")
+
+
+def load_all_predictions(
+    date: str, predictions_dir: str = _DEFAULT_PREDICTIONS_DIR
+) -> Dict[str, List]:
     """
     Load predictions from all sources (XL, PRO).
 
@@ -221,7 +229,7 @@ def validate_pick(pick: Dict, actuals: Dict) -> Dict:
 def validate_date_range(
     start_date: str,
     end_date: str,
-    predictions_dir: str = "predictions",
+    predictions_dir: str = _DEFAULT_PREDICTIONS_DIR,
     system_filter: Optional[str] = None,
     verbose: bool = False,
 ) -> Dict:
@@ -535,8 +543,8 @@ def main():
     parser.add_argument("--end-date", help="End date for range validation (YYYY-MM-DD)")
     parser.add_argument(
         "--predictions-dir",
-        default="predictions",
-        help="Directory containing prediction files (default: predictions/)",
+        default=_DEFAULT_PREDICTIONS_DIR,
+        help="Directory containing prediction files",
     )
     parser.add_argument(
         "--system",
@@ -559,7 +567,7 @@ def main():
         end = args.date
     else:
         # Default to last 7 days
-        today = datetime.now().date()
+        today = datetime.now(EST).date()
         end = today.strftime("%Y-%m-%d")
         start = (today - timedelta(days=7)).strftime("%Y-%m-%d")
 

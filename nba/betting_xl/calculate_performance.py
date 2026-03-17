@@ -36,7 +36,11 @@ import psycopg2
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+from zoneinfo import ZoneInfo
+
 from nba.config.database import get_intelligence_db_config
+
+EST = ZoneInfo("America/New_York")
 
 DB_INTELLIGENCE = get_intelligence_db_config()
 
@@ -179,7 +183,7 @@ class PerformanceCalculator:
 
         # 7-day rolling
         recent_7d = self.picks_df[
-            self.picks_df["pick_date"] >= (datetime.now() - timedelta(days=7)).date()
+            self.picks_df["pick_date"] >= (datetime.now(EST) - timedelta(days=7)).date()
         ]
 
         if len(recent_7d) > 0:
@@ -196,7 +200,7 @@ class PerformanceCalculator:
 
         # 30-day rolling
         recent_30d = self.picks_df[
-            self.picks_df["pick_date"] >= (datetime.now() - timedelta(days=30)).date()
+            self.picks_df["pick_date"] >= (datetime.now(EST) - timedelta(days=30)).date()
         ]
 
         if len(recent_30d) > 0:
@@ -271,7 +275,7 @@ class PerformanceCalculator:
 
         report_lines = []
         report_lines.append("# NBA XL System Performance Report")
-        report_lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        report_lines.append(f"Generated: {datetime.now(EST).strftime('%Y-%m-%d %H:%M:%S')}")
         report_lines.append(f"Period: Last {self.days} days\n")
 
         # Overall performance
@@ -405,7 +409,7 @@ def main():
     if not args.output:
         output_dir = Path(__file__).parent / "reports"
         output_dir.mkdir(exist_ok=True)
-        args.output = output_dir / f"performance_{datetime.now().strftime('%Y-%m-%d')}.md"
+        args.output = output_dir / f"performance_{datetime.now(EST).strftime('%Y-%m-%d')}.md"
 
     calculator = PerformanceCalculator(days=args.days)
     calculator.run(output_file=args.output)

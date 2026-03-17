@@ -40,7 +40,11 @@ import requests
 
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent))
+from zoneinfo import ZoneInfo
+
 from base_fetcher import BaseFetcher
+
+EST = ZoneInfo("America/New_York")
 
 # BettingPros Premium API configuration
 API_BASE_URL = "https://api.bettingpros.com/v3/props/analysis"
@@ -288,7 +292,7 @@ class HistoricalBettingProsFetcher(BaseFetcher):
                     "opponent_team": opponent_team,
                     "is_home": is_home,
                     "season": season,
-                    "fetch_timestamp": datetime.now().isoformat(),
+                    "fetch_timestamp": datetime.now(EST).isoformat(),
                     "source": "bettingpros_historical",
                 }
 

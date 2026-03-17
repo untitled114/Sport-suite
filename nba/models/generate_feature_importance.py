@@ -22,9 +22,12 @@ import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
+
+EST = ZoneInfo("America/New_York")
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
@@ -312,7 +315,7 @@ def update_model_card(market: str, importance_tables: Dict[str, str]) -> None:
     # Add new section
     importance_section = [
         f"\n{section_marker}\n",
-        f"\n*Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}*\n",
+        f"\n*Generated: {datetime.now(EST).strftime('%Y-%m-%d %H:%M')}*\n",
     ]
 
     for model_type, table in importance_tables.items():

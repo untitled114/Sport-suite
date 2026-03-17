@@ -898,6 +898,13 @@ full_workflow() {
         fi
     fi
 
+    section "Matchup History" "H2H stats refresh"
+    if [ -f "$SCRIPT_DIR/scripts/compute_matchup_history.py" ]; then
+        if verbose_run python3 "$SCRIPT_DIR/scripts/compute_matchup_history.py" --incremental --days 7; then
+            success "Matchup history updated"
+        fi
+    fi
+
     # Generate predictions
     generate_all_predictions
 

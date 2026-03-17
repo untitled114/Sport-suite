@@ -28,9 +28,9 @@ _EST = ZoneInfo("America/New_York")
 # ─────────────────────────────────────────────────────────────────
 
 # Scheduled runs: (EST hour, run_number)
-# Full pipeline: 2 AM EST (run 1)
-# Refresh runs:  5 AM, 8 AM, 11 AM, 2 PM, 5 PM EST (runs 2-6)
-_SCHEDULED_RUNS = [(2, 1), (5, 2), (8, 3), (11, 4), (14, 5), (17, 6)]
+# Full pipeline runs every 3 hours from 2:30 AM to 8:30 PM EST
+# ±90 min window covers the :30 offset
+_SCHEDULED_RUNS = [(2, 1), (5, 2), (8, 3), (11, 4), (14, 5), (17, 6), (20, 7)]
 
 # Runs are 3 hours (180 min) apart — a ±90 min window covers each slot
 # with no overlap and no gap, so manual triggers near a window land correctly.
@@ -210,31 +210,30 @@ def _build_context_snapshot(pick: dict[str, Any]) -> dict[str, Any]:
         # Risk filter output — already computed by the risk engine
         "risk_level": pick.get("risk_level"),
         "risk_flags": pick.get("risk_flags", []),
-        # Player momentum
-        "trend": pick.get("player_context", {}).get("trend"),
+        # Player performance context — L5/L10/L20 averages, H2H, trend
+        "player_context": pick.get("player_context"),
         # Model confidence label (HIGH / MEDIUM / STANDARD)
         "confidence": pick.get("confidence"),
+        # Model projection and edge — the core signal
+        "prediction": pick.get("prediction"),
+        "edge": pick.get("edge"),
+        # Matchup context
+        "opponent_team": pick.get("opponent_team"),
+        "is_home": pick.get("is_home"),
         # Line context — needed to track consensus movement separately from best_line
         "consensus_line": pick.get("consensus_line"),
         # Which tier of PrizePicks line this is (goblin / demon / standard book)
-        # Tracks across runs: goblin→demon = model got more confident
         "best_book_type": pick.get("best_book"),
-        # Kelly sizing — carry this through to the conviction card, don't recompute
+        # Kelly sizing
         "recommended_stake": pick.get("recommended_stake"),
         "stake_reason": pick.get("stake_reason"),
         # Filter tier (Goldmine, X, Z, META, etc.)
         "filter_tier": pick.get("filter_tier"),
-        # Historical hit rates — currently 50% defaults; will be replaced by
-        # BettingPros /v3/props/streaks when that enrichment is added
+        # Historical hit rates
         "hit_rate_L5": l5.get("rate"),
         "hit_rate_L15": l15.get("rate"),
         "hit_rate_season": season.get("rate"),
-        # BettingPros intelligence — populated from bp_intel in the pick dict
-        # streak: how many games in a row OVER/UNDER this line
-        # bp_projection: BP's own model projected value (independent second opinion)
-        # bp_probability: BP's p_over (compare to our p_over for agreement check)
-        # bp_bet_rating: 1-5 stars from BettingPros
-        # opposition_rank: defense rank (1=hardest, 30=easiest)
+        # BettingPros intelligence
         "bp_streak": bp.get("streak"),
         "bp_streak_type": bp.get("streak_type"),
         "bp_projection": bp.get("bp_projection"),

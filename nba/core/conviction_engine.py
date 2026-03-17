@@ -147,11 +147,11 @@ def _score_line_movement(line_movement: float) -> float:
 def _get_label(conviction: float, appearances: int) -> str:
     if appearances < 2:
         return "EARLY"
-    if conviction >= 0.80 and appearances >= _MIN_APPEARANCES_FOR_LOCKED:
+    if conviction >= 0.85 and appearances >= _MIN_APPEARANCES_FOR_LOCKED:
         return "LOCKED"
-    if conviction >= 0.60:
+    if conviction >= 0.75:
         return "STRONG"
-    if conviction >= 0.40:
+    if conviction >= 0.50:
         return "WATCH"
     return "SKIP"
 
@@ -254,6 +254,25 @@ def _build_narrative(
         rating = ctx["bp_bet_rating"]
         bp_side = ctx.get("bp_recommended_side", "?")
         parts.append(f"BP rating: {rating}/5 ({bp_side}).")
+
+    # BP prop streak (from pick recommendations)
+    streak_text = ctx.get("bp_prop_streak_text")
+    if streak_text:
+        parts.append(f"BP: {streak_text}")
+
+    # BP hit rate L15
+    hr = ctx.get("bp_hit_rate_L15")
+    hr_wins = ctx.get("bp_hit_rate_wins")
+    hr_games = ctx.get("bp_hit_rate_games")
+    if hr is not None and hr_games:
+        parts.append(f"BP L{hr_games}: {hr_wins}-{hr_games - hr_wins} ({hr:.0%} hit rate).")
+
+    # BP performance splits (top 2 situational records)
+    splits = ctx.get("bp_performance_splits") or []
+    for split in splits[:2]:
+        text = split.get("text", "")
+        if text:
+            parts.append(f"BP: {text}")
 
     # BP pick-recommendations signal (independent third signal)
     bp_stars = ctx.get("bp_rec_stars")
@@ -443,6 +462,11 @@ def _score_bp_rec(
     best_book = bp_rec.get("best_book")
     bp_projection = bp_rec.get("bp_projection")
 
+    hit_rate = bp_rec.get("hit_rate_L15")
+    hit_wins = bp_rec.get("hit_rate_wins")
+    hit_losses = bp_rec.get("hit_rate_losses")
+    hit_games = bp_rec.get("hit_rate_games")
+
     extra_ctx = {
         "bp_rec_stars": stars,
         "bp_rec_side": rec_side,
@@ -450,12 +474,23 @@ def _score_bp_rec(
         "bp_rec_market_ev": round(float(market_ev), 4) if market_ev else None,
         "bp_rec_best_book": best_book,
         "bp_rec_projection": bp_projection,
+        # New: situational/trend signals
+        "bp_hit_rate_L15": round(float(hit_rate), 3) if hit_rate is not None else None,
+        "bp_hit_rate_wins": hit_wins,
+        "bp_hit_rate_losses": hit_losses,
+        "bp_hit_rate_games": hit_games,
+        "bp_performance_splits": bp_rec.get("performance_splits") or [],
+        "bp_prop_streak": bp_rec.get("prop_streak"),
+        "bp_prop_streak_text": bp_rec.get("prop_streak_text"),
+        "bp_opponent_rank": bp_rec.get("bp_opponent_rank"),
+        "bp_tailing_pct": bp_rec.get("tailing_pct"),
     }
 
     if rec_side == "over":
         star_bonus = _BP_REC_STAR_BONUS.get(stars, 0.0)
         market_bonus = _BP_REC_MARKET_EV_BONUS if market_ev >= 0.05 else 0.0
-        delta = min(0.11, star_bonus + market_bonus)
+        hit_bonus = 0.03 if (hit_rate is not None and hit_rate >= 0.60) else 0.0
+        delta = min(0.12, star_bonus + market_bonus + hit_bonus)
     elif rec_side == "under" and stars >= 4:
         # Only penalize when BP's projection is close to our target line.
         # If bp_projection is well below our line, BP is pricing vs their

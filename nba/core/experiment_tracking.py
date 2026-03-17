@@ -40,6 +40,9 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
+
+EST = ZoneInfo("America/New_York")
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +132,7 @@ class ExperimentTracker:
             return
 
         default_tags = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(EST).isoformat(),
             "environment": os.getenv("ENV", "development"),
         }
         if tags:
@@ -403,7 +406,7 @@ def log_training_run(
     """
     tracker = ExperimentTracker(experiment_name=experiment_name)
 
-    run_name = f"{market}_training_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    run_name = f"{market}_training_{datetime.now(EST).strftime('%Y%m%d_%H%M%S')}"
 
     with tracker.start_run(run_name=run_name, tags={"market": market}):
         tracker.log_params({"market": market, **params})

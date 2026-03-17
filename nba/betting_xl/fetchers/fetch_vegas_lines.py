@@ -48,7 +48,11 @@ MARKET_IDS = {
 
 # Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from zoneinfo import ZoneInfo
+
 from nba.config.database import get_games_db_config
+
+EST = ZoneInfo("America/New_York")
 
 # Database config (centralized)
 DB_CONFIG = get_games_db_config()
@@ -93,7 +97,7 @@ class VegasLinesFetcher:
             date: Date to fetch (YYYY-MM-DD). Defaults to today.
             rate_limit: Seconds between API requests.
         """
-        self.date = date or datetime.now().strftime("%Y-%m-%d")
+        self.date = date or datetime.now(EST).strftime("%Y-%m-%d")
         self.rate_limit = rate_limit
         self.events = []
 
@@ -387,7 +391,7 @@ class VegasLinesFetcher:
                 "total_opening": None,
                 "total_best": None,
                 "total_books": [],
-                "fetch_timestamp": datetime.now().isoformat(),
+                "fetch_timestamp": datetime.now(EST).isoformat(),
                 "source": "espn",
             }
 
@@ -413,7 +417,22 @@ class VegasLinesFetcher:
 
         if not self.events:
             logger.info("BettingPros unavailable, trying ESPN fallback...")
-            return self.fetch_from_espn()
+            espn_lines = self.fetch_from_espn()
+            # Atlas data registry — log ESPN fallback ingestion
+            try:
+                from nba.core.data_registry import log_ingestion
+
+                log_ingestion(
+                    "vegas_lines",
+                    "fetch",
+                    "success" if espn_lines else "failed",
+                    records_fetched=len(espn_lines),
+                    api_calls_made=1,
+                    metadata={"game_date": self.date, "source": "espn_fallback"},
+                )
+            except Exception:
+                pass
+            return espn_lines
 
         all_lines = []
 
@@ -452,7 +471,7 @@ class VegasLinesFetcher:
                 "total_best": total_data.get("best_total") if total_data else None,
                 "total_books": total_data.get("books", []) if total_data else [],
                 # Metadata
-                "fetch_timestamp": datetime.now().isoformat(),
+                "fetch_timestamp": datetime.now(EST).isoformat(),
             }
 
             all_lines.append(game_lines)
@@ -466,6 +485,21 @@ class VegasLinesFetcher:
             )
             logger.info(f"  Spread: {spread_str}, Total: {total_str}")
 
+        # Atlas data registry — log this ingestion
+        try:
+            from nba.core.data_registry import log_ingestion
+
+            log_ingestion(
+                "vegas_lines",
+                "fetch",
+                "success",
+                records_fetched=len(all_lines),
+                api_calls_made=len(all_lines) * 2 + 1,  # events + spread + total per game
+                metadata={"game_date": self.date, "games": len(all_lines)},
+            )
+        except Exception:
+            pass
+
         return all_lines
 
     def save_to_json(self, lines: List[Dict]) -> str:
@@ -478,7 +512,11 @@ class VegasLinesFetcher:
 
         with open(filepath, "w") as f:
             json.dump(
-                {"date": self.date, "fetch_timestamp": datetime.now().isoformat(), "games": lines},
+                {
+                    "date": self.date,
+                    "fetch_timestamp": datetime.now(EST).isoformat(),
+                    "games": lines,
+                },
                 f,
                 indent=2,
             )

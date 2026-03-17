@@ -3,16 +3,27 @@
 Populate actual_value in nba_props_xl from player_game_logs
 
 Uses name normalization to match players across different ID systems.
+
+Lunara integration: before the game-log pass, applies same-day results
+from pick_results_{date}.json files written by Lunara's pick_tracker_poller.
+This closes the feedback loop — results arrive same-day instead of next morning.
 """
 
 import argparse
+import glob
+import json
+import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import psycopg2
 
 from nba.betting_xl.utils.logging_config import add_logging_args, get_logger, setup_logging
 from nba.config.database import get_intelligence_db_config, get_players_db_config
 from nba.utils.name_normalizer import NameNormalizer
+
+EST = ZoneInfo("America/New_York")
 
 # Logger will be configured in main block
 logger = get_logger(__name__)
@@ -24,7 +35,7 @@ def get_current_season():
     NBA season uses END year (2025-26 season = 2026).
     Season starts in October, so Oct-Dec uses next year's number.
     """
-    now = datetime.now()
+    now = datetime.now(EST)
     return now.year + 1 if now.month >= 10 else now.year
 
 
@@ -42,6 +53,90 @@ STAT_MAP = {
 }
 
 
+_PREDICTIONS_DIR = Path(__file__).resolve().parent / "predictions"
+_PICK_UUID_NAMESPACE = uuid.NAMESPACE_DNS  # must match nba/api/routes/picks.py
+
+
+def _pick_id(player_name: str, game_date: str, stat_type: str) -> str:
+    return str(uuid.uuid5(_PICK_UUID_NAMESPACE, f"{player_name}:{game_date}:{stat_type}"))
+
+
+def apply_lunara_results(conn_intel, days_back: int) -> int:
+    """
+    Apply pick results received from Lunara's pick_tracker_poller.
+
+    Reads pick_results_{date}.json files (written by PATCH /picks/{id}/result),
+    matches UUIDs to nba_props_xl rows via the corresponding xl_picks files,
+    and updates actual_value + result_source.
+
+    Returns number of rows updated.
+    """
+    start_date = (datetime.now(EST) - timedelta(days=days_back)).strftime("%Y-%m-%d")
+
+    # Load all pick_results files within the date window
+    results_by_uuid: dict[str, dict] = {}
+    for path in sorted(_PREDICTIONS_DIR.glob("pick_results_*.json")):
+        date_str = path.stem.replace("pick_results_", "")
+        if date_str >= start_date:
+            try:
+                with open(path) as f:
+                    results_by_uuid.update(json.load(f))
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning(f"Could not read {path.name}: {e}")
+
+    if not results_by_uuid:
+        return 0
+
+    # Build reverse map: UUID → (player_name, game_date, stat_type)
+    # by scanning corresponding xl_picks files
+    uuid_to_pick: dict[str, tuple[str, str, str]] = {}
+    for path in sorted(_PREDICTIONS_DIR.glob("xl_picks_*.json")):
+        date_str = path.stem.replace("xl_picks_", "")
+        if date_str < start_date:
+            continue
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            for pick in data.get("picks", []):
+                player_name = pick.get("player_name", "")
+                stat_type = pick.get("stat_type", "")
+                pid = _pick_id(player_name, date_str, stat_type)
+                uuid_to_pick[pid] = (player_name, date_str, stat_type)
+        except (json.JSONDecodeError, OSError):
+            continue
+
+    # Apply results to nba_props_xl
+    updated = 0
+    cur = conn_intel.cursor()
+    for pick_uuid, result in results_by_uuid.items():
+        if pick_uuid not in uuid_to_pick:
+            continue
+        player_name, game_date, stat_type = uuid_to_pick[pick_uuid]
+        actual_value = result.get("actual_value")
+        if actual_value is None:
+            continue
+        cur.execute(
+            """
+            UPDATE nba_props_xl
+            SET actual_value = %s,
+                result_source = %s
+            WHERE player_name ILIKE %s
+              AND game_date = %s
+              AND stat_type = %s
+              AND actual_value IS NULL
+        """,
+            (actual_value, result.get("source", "lunara"), player_name, game_date, stat_type),
+        )
+        updated += cur.rowcount
+
+    conn_intel.commit()
+    cur.close()
+
+    if updated:
+        logger.info(f"[Lunara] Applied {updated} results from pick_results files")
+    return updated
+
+
 def populate_actual_values(days_back=14):
     """
     Populate actual_value in nba_props_xl from player_game_logs
@@ -52,13 +147,18 @@ def populate_actual_values(days_back=14):
     conn_intel = psycopg2.connect(**DB_INTELLIGENCE)
     conn_players = psycopg2.connect(**DB_PLAYERS)
 
-    start_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+    start_date = (datetime.now(EST) - timedelta(days=days_back)).strftime("%Y-%m-%d")
 
     print(f"\n{'='*80}")
     print(f"POPULATING ACTUAL VALUES FROM {start_date} TO TODAY")
     print(f"{'='*80}\n")
 
     try:
+        # Apply Lunara same-day results first (faster, more accurate than game-log matching)
+        lunara_updated = apply_lunara_results(conn_intel, days_back)
+        if lunara_updated:
+            print(f"[Lunara] Pre-filled {lunara_updated} results from pick_results files")
+
         cursor_intel = conn_intel.cursor()
         cursor_players = conn_players.cursor()
 

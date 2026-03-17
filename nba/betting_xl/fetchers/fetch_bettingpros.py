@@ -20,10 +20,13 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 import requests
 
 from nba.betting_xl.fetchers.base_fetcher import BaseFetcher
+
+EST = ZoneInfo("America/New_York")
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -293,16 +296,18 @@ class BettingProsFetcher(BaseFetcher):
             game_id = game_info.get("id", "")
             game_time = game_info.get("start", "")
 
-            # Parse game date/time - convert UTC to ET so evening games (7+ PM ET)
-            # don't get misdated as the next day (e.g. 7:30 PM ET = 00:30 UTC next day)
+            # Parse game date/time - use UTC date for game_date to align with PrizePicks
+            # slate organization. Games tipping after 7 PM ET (midnight UTC) are stored
+            # under the next UTC date, matching how PrizePicks organizes its slate.
+            # game_time_str is kept in ET for human-readable display.
             if game_time:
                 try:
                     from zoneinfo import ZoneInfo
 
                     game_dt_utc = datetime.fromisoformat(game_time.replace("Z", "+00:00"))
                     game_dt_et = game_dt_utc.astimezone(ZoneInfo("America/New_York"))
-                    game_date = game_dt_et.strftime("%Y-%m-%d")
-                    game_time_str = game_dt_et.strftime("%H:%M:%S")
+                    game_date = game_dt_utc.strftime("%Y-%m-%d")  # UTC date (PrizePicks-aligned)
+                    game_time_str = game_dt_et.strftime("%H:%M:%S")  # ET time for display
                 except (ValueError, AttributeError, ImportError):
                     game_date = self.date
                     game_time_str = None
@@ -351,7 +356,7 @@ class BettingProsFetcher(BaseFetcher):
                 "game_time": game_time_str,
                 "opponent_team": opponent,
                 "is_home": is_home,
-                "fetch_timestamp": datetime.now().isoformat(),
+                "fetch_timestamp": datetime.now(EST).isoformat(),
                 "source": self.source_name,
             }
 
@@ -360,6 +365,54 @@ class BettingProsFetcher(BaseFetcher):
                 prop["consensus_line"] = float(consensus_line)
                 prop["consensus_odds_over"] = consensus_odds_over
                 prop["consensus_odds_under"] = consensus_odds_under
+
+            # ── BP enrichment data (for future V4 features / retraining) ──
+
+            # BP model projection
+            proj = raw_prop.get("projection", {})
+            if proj:
+                prop["bp_projection"] = proj.get("value")
+                prop["bp_probability"] = proj.get("probability")
+                prop["bp_expected_value"] = proj.get("expected_value")
+                prop["bp_bet_rating"] = proj.get("bet_rating")
+                prop["bp_recommended_side"] = proj.get("recommended_side")
+                prop["bp_diff"] = proj.get("diff")
+
+            # Per-side probability and EV
+            prop["over_probability"] = over_data.get("probability")
+            prop["over_ev"] = over_data.get("expected_value")
+            prop["over_bet_rating"] = over_data.get("bet_rating")
+            prop["under_probability"] = under_data.get("probability")
+            prop["under_ev"] = under_data.get("expected_value")
+            prop["under_bet_rating"] = under_data.get("bet_rating")
+
+            # Performance / hit rates
+            perf = raw_prop.get("performance", {})
+            if perf:
+                for window in (
+                    "last_5",
+                    "last_10",
+                    "last_15",
+                    "last_20",
+                    "season",
+                    "prior_season",
+                    "h2h",
+                ):
+                    w = perf.get(window, {})
+                    if w:
+                        total = w.get("over", 0) + w.get("under", 0) + w.get("push", 0)
+                        prop[f"bp_hit_{window}"] = w.get("over", 0) / total if total > 0 else None
+                prop["bp_streak"] = perf.get("streak")
+                prop["bp_streak_type"] = perf.get("streak_type")
+
+            # Opposition rank
+            opp_rank = raw_prop.get("extra", {}).get("opposition_rank", {})
+            if opp_rank:
+                prop["bp_opp_rank"] = opp_rank.get("rank")
+                prop["bp_opp_rank_value"] = opp_rank.get("value")
+
+            # Player popularity
+            prop["bp_popularity"] = participant_info.get("popularity")
 
             return prop
 
@@ -403,16 +456,14 @@ class BettingProsFetcher(BaseFetcher):
                 competition = competitions[0]
                 competitors = competition.get("competitors", [])
 
-                # Get game date from event - convert UTC to ET
+                # Get game date from event - use UTC date to align with PrizePicks slate
                 game_date_str = event.get("date", "")
                 if game_date_str:
                     try:
-                        from zoneinfo import ZoneInfo
-
                         game_dt_utc = datetime.fromisoformat(game_date_str.replace("Z", "+00:00"))
-                        game_date = game_dt_utc.astimezone(ZoneInfo("America/New_York")).strftime(
+                        game_date = game_dt_utc.strftime(
                             "%Y-%m-%d"
-                        )
+                        )  # UTC date (PrizePicks-aligned)
                     except (ValueError, AttributeError, ImportError):
                         game_date = self.date
                 else:
@@ -600,6 +651,25 @@ class BettingProsFetcher(BaseFetcher):
                 print(f"  {book:15s}: {book_counts[book]:4d} props")
 
         print("=" * 70 + "\n", flush=True)
+
+        # Atlas data registry — log this ingestion
+        try:
+            from nba.core.data_registry import log_ingestion
+
+            stats = self.get_registry_stats()
+            log_ingestion(
+                "bettingpros_props",
+                "fetch",
+                "success",
+                records_fetched=len(deduped_props),
+                api_calls_made=stats["api_calls_made"],
+                bytes_transferred=stats["bytes_transferred"],
+                error_count=stats["error_count"],
+                error_message=stats["error_message"],
+                metadata={"game_date": self.date, "books_mode": self.books_mode},
+            )
+        except Exception:
+            pass
 
         return deduped_props
 

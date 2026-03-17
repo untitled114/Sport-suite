@@ -149,20 +149,21 @@ def _fmt_line(line_at_entry, line_latest, line_direction: str) -> str:
     entry = float(line_at_entry)
     latest = float(line_latest)
     if line_direction == "falling":
-        return f"line {entry}->{latest} (dropped)"
+        return f"Line dropped {entry} \u2192 {latest}"
     elif line_direction == "rising":
-        return f"line {entry}->{latest} (up)"
-    return f"line stable @ {latest}"
+        return f"Line rose {entry} \u2192 {latest}"
+    return f"Line holding at {latest}"
 
 
 def _fmt_p_over(p_entry, p_latest, p_trend) -> str:
     pe, pl = float(p_entry), float(p_latest)
+    pe_pct, pl_pct = round(pe * 100), round(pl * 100)
     trend = float(p_trend) if p_trend is not None else 0.0
     if abs(trend) < 0.005:
-        return f"p_over stable ({pl:.3f})"
+        return f"Probability steady at {pl_pct}%"
     elif trend > 0:
-        return f"p_over {pe:.3f}->{pl:.3f} (up)"
-    return f"p_over {pe:.3f}->{pl:.3f} (down)"
+        return f"Probability {pe_pct}% \u2192 {pl_pct}% (rising)"
+    return f"Probability {pe_pct}% \u2192 {pl_pct}% (fading)"
 
 
 def _bp_stars(ctx: dict) -> str:
@@ -179,8 +180,94 @@ def _bp_stars(ctx: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _conviction_color(picks: list[dict]) -> int:
+    """Embed sidebar color based on average conviction."""
+    if not picks:
+        return 0x36393F  # dark gray
+    avg = sum(float(p["conviction"]) for p in picks) / len(picks)
+    if avg >= 0.90:
+        return 0xFFD700  # gold — elite slate
+    if avg >= 0.85:
+        return 0x2ECC71  # green — strong slate
+    return 0x3498DB  # blue — standard
+
+
+def _bp_signal(ctx: dict) -> str:
+    """Format BP signal as alignment/conflict — never show raw 'under'."""
+    rating = ctx.get("bp_bet_rating")
+    if not rating:
+        return ""
+    rating = int(rating)
+    side = (ctx.get("bp_recommended_side") or "").lower()
+
+    # We always take OVER — BP either confirms or conflicts
+    if side == "over":
+        if rating >= 5:
+            return f"BP {rating}/5 — sharp alignment"
+        return f"BP {rating}/5 confirms"
+    elif side == "under":
+        return f"BP {rating}/5 leans other way (contrarian)"
+    return f"BP {rating}/5"
+
+
+def _axiom_note(pick: dict, rank: int, total: int) -> str:
+    """Generate Axiom's analytical note for a pick."""
+    ctx = pick.get("context_snapshot") or {}
+    conv = float(pick["conviction"])
+    appearances = pick["appearances"]
+    total_runs = pick["total_runs"]
+    trend = float(pick["p_over_trend"]) if pick.get("p_over_trend") is not None else 0.0
+    line_dir = pick.get("line_direction", "stable")
+    models = ctx.get("models_agreeing", [])
+    bp_rating = int(ctx.get("bp_bet_rating", 0) or 0)
+    bp_side = (ctx.get("bp_recommended_side") or "").lower()
+
+    notes = []
+
+    # Conviction-based
+    if rank == 1 and conv >= 0.93:
+        notes.append("Top play of the slate")
+    elif conv >= 0.95:
+        notes.append("Elite conviction")
+
+    # Model consensus
+    if len(models) >= 2:
+        notes.append("both models agree")
+
+    # Consistency across runs
+    if appearances == total_runs and total_runs >= 3:
+        notes.append(f"picked every run ({appearances}/{total_runs})")
+    elif appearances >= 3:
+        notes.append(f"{appearances}/{total_runs} runs")
+
+    # BP alignment
+    if bp_rating >= 5 and bp_side == "over":
+        notes.append("BP sharp money confirms")
+    elif bp_rating >= 4 and bp_side == "over":
+        notes.append("BP aligns")
+    elif bp_side == "under" and bp_rating >= 3:
+        notes.append("contrarian vs BP")
+
+    # Trend
+    if trend > 0.01:
+        notes.append("probability rising")
+    elif trend < -0.01:
+        notes.append("slight fade across runs")
+
+    # Line movement
+    if line_dir == "falling":
+        notes.append("line moved our way")
+    elif line_dir == "rising":
+        notes.append("line moved against")
+
+    if not notes:
+        notes.append(f"{appearances}/{total_runs} runs")
+
+    return " — ".join(notes[:3])
+
+
 def build_embed(run_date: str, tip_time: str, picks: list[dict], max_run: int) -> dict:
-    """Build a Discord embed payload dict (raw JSON, not discord.py Embed)."""
+    """Build a unified Discord embed — one field per pick with Axiom analysis."""
     dt = datetime.strptime(run_date, "%Y-%m-%d")
     date_display = dt.strftime("%b %-d, %Y")
     now_est = datetime.now(_EST).isoformat()
@@ -189,58 +276,162 @@ def build_embed(run_date: str, tip_time: str, picks: list[dict], max_run: int) -
         return {
             "title": "NBA Picks",
             "description": (
-                f"**{date_display}**  |  Games tip at {tip_time}\n\n"
+                f"**{date_display}** | Games tip at {tip_time}\n\n"
                 "Nothing meets conviction threshold tonight.\n"
-                "Monitoring all picks."
+                "Monitoring all picks across runs."
             ),
             "color": 0x36393F,
-            "footer": {"text": f"0 picks  |  Run {max_run} of 6"},
+            "footer": {"text": f"Run {max_run} of 7 | 0 picks"},
             "timestamp": now_est,
         }
 
-    fields = []
+    # Gather stats
     models_seen = set()
-
-    for pick in picks:
-        ctx = pick.get("context_snapshot") or {}
-        label = pick["conviction_label"]
-        emoji = _LABEL_EMOJI.get(label, "")
-        book = _BOOK_DISPLAY.get(pick.get("book_latest", ""), pick.get("book_latest", ""))
-        conviction = float(pick["conviction"])
-        stat = _STAT_ABBREV.get(pick["stat_type"], pick["stat_type"][:3])
-
-        line_info = _fmt_line(
-            pick["line_at_entry"], pick["line_latest"], pick["line_direction"] or "stable"
-        )
-        p_info = _fmt_p_over(pick["p_over_at_entry"], pick["p_over_latest"], pick["p_over_trend"])
-
-        models = ctx.get("models_agreeing", [])
-        model_str = "+".join(m.upper() for m in models) if models else "XL"
-        models_seen.update(m.upper() for m in models)
-
-        bp = _bp_stars(ctx)
-        bp_part = f"  |  {bp}" if bp else ""
-
-        name = (
-            f"{emoji} {label}  {pick['player_name']} "
-            f"OVER {float(pick['line_latest'])} {stat}  @{book}"
-        )
-        value = (
-            f"{pick['appearances']}/{pick['total_runs']} runs  |  {p_info}  |  {line_info}\n"
-            f"**conviction: {conviction:.3f}**  |  [{model_str}]{bp_part}"
-        )
-        fields.append({"name": name, "value": value, "inline": False})
-
+    locked = sum(1 for p in picks if p["conviction_label"] == "LOCKED")
+    strong = sum(1 for p in picks if p["conviction_label"] == "STRONG")
+    for p in picks:
+        ctx = p.get("context_snapshot") or {}
+        for m in ctx.get("models_agreeing", []):
+            models_seen.add(m.upper())
     models_str = "+".join(sorted(models_seen)) if models_seen else "XL"
+
+    # Header
+    label_parts = []
+    if locked:
+        label_parts.append(f"{locked} locked")
+    if strong:
+        label_parts.append(f"{strong} strong")
+
+    description = (
+        f"**{date_display}** | Games tip at {tip_time}\n"
+        f"Run {max_run} of 7 | {', '.join(label_parts)} | {models_str}"
+    )
+
+    # Group by market, then build fields
+    market_order = ["POINTS", "REBOUNDS", "ASSISTS", "THREES", "STEALS", "BLOCKS"]
+    markets: dict[str, list[dict]] = {}
+    for p in picks:
+        markets.setdefault(p["stat_type"], []).append(p)
+
+    fields = []
+    pick_rank = 0
+
+    for market in market_order:
+        market_picks = markets.get(market)
+        if not market_picks:
+            continue
+
+        abbrev = _STAT_ABBREV.get(market, market[:3])
+
+        # Market separator
+        fields.append(
+            {
+                "name": f"\u2500\u2500\u2500 {abbrev} ({len(market_picks)}) \u2500\u2500\u2500",
+                "value": "\u200b",  # required non-empty
+                "inline": False,
+            }
+        )
+
+        for p in market_picks:
+            pick_rank += 1
+            ctx = p.get("context_snapshot") or {}
+            conv = float(p["conviction"])
+            conv_pct = round(conv * 100, 1)
+            label = p["conviction_label"]
+            line_val = float(p["line_latest"])
+            book = _BOOK_DISPLAY.get(p.get("book_latest", ""), p.get("book_latest", ""))
+            models = ctx.get("models_agreeing", [])
+            model_tag = "+".join(m.upper() for m in models) if models else "XL"
+
+            p_info = _fmt_p_over(p["p_over_at_entry"], p["p_over_latest"], p["p_over_trend"])
+            line_info = _fmt_line(
+                p["line_at_entry"], p["line_latest"], p.get("line_direction") or "stable"
+            )
+            bp = _bp_signal(ctx)
+            axiom = _axiom_note(p, pick_rank, len(picks))
+
+            # --- Build rich context lines ---
+            tag = "LOCKED" if label == "LOCKED" else "STRONG"
+            field_name = f"{p['player_name']} \u2014 OVER {line_val:g} | {conv_pct}% [{tag}]"
+
+            # Line 1: where to bet + model + consistency
+            value_lines = [
+                f"{book} | {model_tag} | {p['appearances']} of {p['total_runs']} runs",
+            ]
+
+            # Line 2: player context — recent averages, matchup, home/away
+            player_ctx = ctx.get("player_context") or {}
+            opp = ctx.get("opponent_team", "")
+            is_home = ctx.get("is_home")
+            projection = ctx.get("prediction")
+            edge = ctx.get("edge")
+            avg_l5 = player_ctx.get("avg_L5")
+            avg_l10 = player_ctx.get("avg_L10")
+            h2h_avg = player_ctx.get("h2h_avg")
+            h2h_games = player_ctx.get("h2h_games", 0)
+            trend_label = player_ctx.get("trend", "")
+            opp_rank = ctx.get("opposition_rank") or ctx.get("opp_rank")
+
+            perf_parts = []
+            if avg_l5 is not None and avg_l10 is not None:
+                perf_parts.append(f"Avg L5: **{avg_l5}** | L10: **{avg_l10}**")
+            if h2h_avg is not None and h2h_games and int(h2h_games) >= 2:
+                perf_parts.append(f"vs {opp}: {h2h_avg} ({h2h_games}g)")
+            elif opp:
+                loc = "home" if is_home else "away" if is_home is not None else ""
+                perf_parts.append(f"{'vs' if is_home else '@'} {opp}" if loc else f"vs {opp}")
+            if trend_label and trend_label not in ("STABLE", ""):
+                perf_parts.append(trend_label)
+            if perf_parts:
+                value_lines.append(" | ".join(perf_parts))
+
+            # Line 3: projection + edge (if available) or probability + line
+            if projection is not None and edge is not None:
+                value_lines.append(
+                    f"Projects **{float(projection):.1f}** (edge {float(edge):+.1f}) | {line_info}"
+                )
+            else:
+                value_lines.append(f"{p_info} | {line_info}")
+
+            # Line 4: hit rates + opp defense rank
+            hr_parts = []
+            hit_l5 = ctx.get("hit_rate_L5")
+            hit_szn = ctx.get("hit_rate_season")
+            if hit_l5 is not None:
+                hr_parts.append(f"Hit rate L5: {round(float(hit_l5) * 100)}%")
+            if hit_szn is not None:
+                hr_parts.append(f"Season: {round(float(hit_szn) * 100)}%")
+            if opp_rank:
+                suffix = {1: "st", 2: "nd", 3: "rd"}.get(int(opp_rank) % 10, "th")
+                if 11 <= int(opp_rank) <= 13:
+                    suffix = "th"
+                hr_parts.append(f"Opp defense: {opp_rank}{suffix}")
+            if hr_parts:
+                value_lines.append(" | ".join(hr_parts))
+
+            # Line 5: BP signal
+            if bp:
+                value_lines.append(bp)
+
+            # Line 6: Axiom analysis
+            value_lines.append(f"\u25b8 *{axiom}*")
+
+            fields.append(
+                {
+                    "name": field_name,
+                    "value": "\n".join(value_lines),
+                    "inline": False,
+                }
+            )
+
     count = len(picks)
-    pick_word = "pick" if count == 1 else "picks"
 
     return {
         "title": "NBA Picks",
-        "description": f"**{date_display}**  |  Games tip at {tip_time}",
-        "color": 0xFFD700,
+        "description": description,
+        "color": _conviction_color(picks),
         "fields": fields,
-        "footer": {"text": f"{count} {pick_word}  |  Run {max_run} of 6  |  {models_str}"},
+        "footer": {"text": f"{count} picks | Run {max_run} of 7 | {models_str}"},
         "timestamp": now_est,
     }
 

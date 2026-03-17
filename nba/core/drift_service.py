@@ -22,12 +22,15 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
 import psycopg2
 
 from nba.core.reference_distributions import ReferenceDistributions
+
+EST = ZoneInfo("America/New_York")
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +157,7 @@ class DriftService:
         if self.reference is None:
             return DriftCheckResult(
                 market=self.market,
-                timestamp=datetime.now().isoformat(),
+                timestamp=datetime.now(EST).isoformat(),
                 total_features=len(features),
                 checked_features=0,
                 severity="unknown",
@@ -221,7 +224,7 @@ class DriftService:
 
         return DriftCheckResult(
             market=self.market,
-            timestamp=datetime.now().isoformat(),
+            timestamp=datetime.now(EST).isoformat(),
             total_features=len(features),
             checked_features=checked,
             drifted_features=drifted,
@@ -246,7 +249,7 @@ class DriftService:
         if self.reference is None or len(feature_df) == 0:
             return DriftCheckResult(
                 market=self.market,
-                timestamp=datetime.now().isoformat(),
+                timestamp=datetime.now(EST).isoformat(),
                 total_features=len(feature_df.columns),
                 checked_features=0,
                 severity="unknown",
@@ -310,7 +313,7 @@ class DriftService:
 
         return DriftCheckResult(
             market=self.market,
-            timestamp=datetime.now().isoformat(),
+            timestamp=datetime.now(EST).isoformat(),
             total_features=len(feature_df.columns),
             checked_features=checked,
             drifted_features=drifted,

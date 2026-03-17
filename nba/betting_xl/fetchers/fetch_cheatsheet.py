@@ -30,6 +30,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 from zoneinfo import ZoneInfo
 
+EST = ZoneInfo("America/New_York")
+
 import requests
 
 from nba.betting_xl.fetchers.base_fetcher import BaseFetcher
@@ -473,7 +475,7 @@ class CheatSheetFetcher(BaseFetcher):
                 "season_over": season_data.get("over", 0),
                 "season_under": season_data.get("under", 0),
                 # Metadata
-                "fetch_timestamp": datetime.now().isoformat(),
+                "fetch_timestamp": datetime.now(EST).isoformat(),
                 "source": f"bettingpros_{self.platform}",
             }
 
@@ -570,6 +572,25 @@ class CheatSheetFetcher(BaseFetcher):
                 )
 
         print("=" * 70 + "\n", flush=True)
+
+        # Atlas data registry — log this ingestion
+        try:
+            from nba.core.data_registry import log_ingestion
+
+            stats = self.get_registry_stats()
+            log_ingestion(
+                "bettingpros_cheatsheet",
+                "fetch",
+                "success",
+                records_fetched=len(deduped_props),
+                api_calls_made=stats["api_calls_made"],
+                bytes_transferred=stats["bytes_transferred"],
+                error_count=stats["error_count"],
+                error_message=stats["error_message"],
+                metadata={"game_date": self.date, "platform": self.platform},
+            )
+        except Exception:
+            pass
 
         return deduped_props
 

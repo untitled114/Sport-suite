@@ -34,6 +34,7 @@ import re
 import sys
 from datetime import datetime
 from typing import Dict, List, Tuple
+from zoneinfo import ZoneInfo
 
 import psycopg2
 import requests
@@ -41,6 +42,8 @@ import requests
 from nba.betting_xl.utils.logging_config import add_logging_args, get_logger, setup_logging
 from nba.config.database import get_intelligence_db_config, get_players_db_config
 from nba.utils.team_utils import normalize_team_abbrev
+
+EST = ZoneInfo("America/New_York")
 
 # Logger will be configured in main()
 logger = get_logger(__name__)
@@ -52,7 +55,7 @@ def get_current_season():
     NBA season uses END year (2025-26 season = 2026).
     Season starts in October, so Oct-Dec uses next year's number.
     """
-    now = datetime.now()
+    now = datetime.now(EST)
     return now.year + 1 if now.month >= 10 else now.year
 
 
@@ -770,7 +773,7 @@ def main():
     )
     parser.add_argument(
         "--date",
-        default=datetime.now().strftime("%Y-%m-%d"),
+        default=datetime.now(EST).strftime("%Y-%m-%d"),
         help="Game date (YYYY-MM-DD, default: today)",
     )
     parser.add_argument(

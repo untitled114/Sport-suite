@@ -10,6 +10,9 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+EST = ZoneInfo("America/New_York")
 
 # ANSI colors
 BOLD = "\033[1m"
@@ -565,10 +568,10 @@ def main():
     )
     args = parser.parse_args()
 
-    date_str = args.date or datetime.now().strftime("%Y-%m-%d")
+    date_str = args.date or datetime.now(EST).strftime("%Y-%m-%d")
 
     print(f"\n  {BOLD}NBA PICKS FOR {date_str}{RESET}")
-    print(f"  {MUTED}Generated: {datetime.now().strftime('%I:%M %p')}{RESET}")
+    print(f"  {MUTED}Generated: {datetime.now(EST).strftime('%I:%M %p')}{RESET}")
 
     if args.xl_only:
         show_xl_picks(date_str, compact=args.compact)

@@ -204,6 +204,31 @@ echo "[OK] Code synced"
 if [ "$RESTART" = true ]; then
   echo ""
   echo "=== Restarting Airflow services ==="
+
+  # Check for active DAG runs before restarting — killing mid-flight runs leaves
+  # zombie tasks that block subsequent scheduled runs for up to 90 minutes.
+  ACTIVE_RUNS=$(ssh $SERVER "sqlite3 $REMOTE_DIR/airflow/airflow.db \
+    \"SELECT dag_id, run_id FROM dag_run WHERE state='running' AND dag_id LIKE 'nba_%';\" \
+    2>/dev/null" || true)
+
+  if [ -n "$ACTIVE_RUNS" ]; then
+    echo ""
+    echo "[WARNING] Active pipeline runs detected — restarting Airflow now will kill them"
+    echo "          and leave zombie tasks blocking the next scheduled run for ~90 minutes."
+    echo ""
+    echo "$ACTIVE_RUNS"
+    echo ""
+    echo "Options:"
+    echo "  1. Wait for runs to finish, then re-run with --restart"
+    echo "  2. Force restart anyway: set FORCE_RESTART=1 before running deploy.sh"
+    echo ""
+    if [ "${FORCE_RESTART:-0}" != "1" ]; then
+      echo "[SKIPPED] Airflow restart aborted. Use FORCE_RESTART=1 to override."
+      exit 0
+    fi
+    echo "[FORCE_RESTART=1] Proceeding anyway..."
+  fi
+
   ssh $SERVER "sudo systemctl restart airflow-scheduler airflow-webserver"
   echo "[OK] Services restarted"
 

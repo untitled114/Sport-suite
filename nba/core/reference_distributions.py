@@ -19,9 +19,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
+
+EST = ZoneInfo("America/New_York")
 
 logger = logging.getLogger(__name__)
 
@@ -196,7 +199,7 @@ def build_reference_distributions(
 
     return ReferenceDistributions(
         market=market,
-        created_at=datetime.now().isoformat(),
+        created_at=datetime.now(EST).isoformat(),
         training_samples=len(df),
         features=features,
     )

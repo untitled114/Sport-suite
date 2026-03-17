@@ -28,6 +28,9 @@ import sys
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+EST = ZoneInfo("America/New_York")
 
 # Check for DEBUG environment variable (set by shell script)
 DEBUG_ENV = os.environ.get("DEBUG", "0") == "1"
@@ -68,7 +71,7 @@ def setup_logging(
     logs_dir.mkdir(parents=True, exist_ok=True)
 
     # Log file with date
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = datetime.now(EST).strftime("%Y-%m-%d")
     log_file = logs_dir / f"{log_name}_{today}.log"
 
     # Get root logger

@@ -51,7 +51,7 @@ class PropHistoryExtractor(BaseFeatureExtractor):
         Initialize prop history extractor.
 
         Args:
-            conn: Database connection to nba_intelligence database
+            conn: Database connection to nba_intelligence database (nba_props_xl)
         """
         super().__init__(conn, name="PropHistory")
 
@@ -93,18 +93,18 @@ class PropHistoryExtractor(BaseFeatureExtractor):
         """
         game_date_str = self._normalize_date(game_date)
 
-        # Query historical props with outcomes
+        # Query historical props with outcomes from nba_props_xl
         query = """
         SELECT
             game_date,
             over_line,
-            actual_result,
-            (actual_result - over_line) as margin
-        FROM nba_prop_lines
+            actual_value as actual_result,
+            (actual_value - over_line) as margin
+        FROM nba_props_xl
         WHERE player_name = %s
           AND stat_type = %s
           AND game_date < %s
-          AND actual_result IS NOT NULL
+          AND actual_value IS NOT NULL
           AND over_line IS NOT NULL
         ORDER BY game_date DESC
         LIMIT 50

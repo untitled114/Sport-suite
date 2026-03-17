@@ -23,8 +23,11 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 import requests
+
+EST = ZoneInfo("America/New_York")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -51,6 +54,7 @@ class BaseFetcher(ABC):
         max_retries: int = 3,
         timeout: int = 30,
         verbose: bool = True,
+        proxy_profile: Optional[str] = None,
     ):
         """
         Initialize base fetcher.
@@ -61,12 +65,15 @@ class BaseFetcher(ABC):
             max_retries: Maximum number of retry attempts
             timeout: Request timeout in seconds
             verbose: Enable verbose logging
+            proxy_profile: Proxy profile name ('sportsbooks' for Colorado,
+                          'prizepicks' for Florida). None = no proxy.
         """
         self.source_name = source_name
         self.rate_limit = rate_limit
         self.max_retries = max_retries
         self.timeout = timeout
         self.verbose = verbose
+        self.proxy_profile = proxy_profile
 
         # Track request timing for rate limiting
         self.last_request_time = 0
@@ -74,9 +81,27 @@ class BaseFetcher(ABC):
         # Session for connection pooling
         self.session = requests.Session()
 
+        # Configure proxy on session if profile specified
+        if proxy_profile:
+            from nba.betting_xl.fetchers.proxy_manager import get_proxy_manager
+
+            pm = get_proxy_manager()
+            proxies = pm.get_proxies_dict(proxy_profile)
+            if proxies:
+                self.session.proxies.update(proxies)
+                if verbose:
+                    state = pm.PROFILE_STATES.get(proxy_profile, proxy_profile)
+                    logger.info(f"[{source_name}] Using {state} proxy")
+
         # Output directory
         self.output_dir = Path(__file__).parent.parent / "lines"
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Atlas data registry — tracks API calls and bytes for ingestion auditing
+        self._api_calls = 0
+        self._bytes_transferred = 0
+        self._error_count = 0
+        self._last_error = None
 
     def _get_headers(self) -> Dict[str, str]:
         """Get headers with random user agent"""
@@ -148,6 +173,10 @@ class BaseFetcher(ABC):
                 # Check status
                 response.raise_for_status()
 
+                # Track for Atlas data registry
+                self._api_calls += 1
+                self._bytes_transferred += len(response.content)
+
                 if self.verbose:
                     logger.info(
                         f"[{self.source_name}] Success: {response.status_code} ({len(response.content)} bytes)"
@@ -156,6 +185,9 @@ class BaseFetcher(ABC):
                 return response
 
             except requests.exceptions.HTTPError as e:
+                self._api_calls += 1
+                self._error_count += 1
+                self._last_error = str(e)
                 logger.warning(f"[{self.source_name}] HTTP Error on attempt {attempt + 1}: {e}")
 
                 # Don't retry on 4xx errors (client errors)
@@ -166,9 +198,15 @@ class BaseFetcher(ABC):
                     return None
 
             except requests.exceptions.Timeout as e:
+                self._api_calls += 1
+                self._error_count += 1
+                self._last_error = str(e)
                 logger.warning(f"[{self.source_name}] Timeout on attempt {attempt + 1}: {e}")
 
             except requests.exceptions.RequestException as e:
+                self._api_calls += 1
+                self._error_count += 1
+                self._last_error = str(e)
                 logger.warning(f"[{self.source_name}] Request error on attempt {attempt + 1}: {e}")
 
             # Exponential backoff before retry
@@ -274,7 +312,7 @@ class BaseFetcher(ABC):
         Returns:
             Path to saved file
         """
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        timestamp = datetime.now(EST).strftime("%Y-%m-%d_%H-%M-%S")
         filename = f"{self.source_name}_{timestamp}"
         if suffix:
             filename = f"{filename}_{suffix}"
@@ -284,7 +322,7 @@ class BaseFetcher(ABC):
 
         output_data = {
             "source": self.source_name,
-            "fetch_timestamp": datetime.now().isoformat(),
+            "fetch_timestamp": datetime.now(EST).isoformat(),
             "total_props": len(props),
             "props": props,
         }
@@ -315,14 +353,17 @@ class BaseFetcher(ABC):
                     logger.warning(f"[{self.source_name}] Invalid prop: missing {field}")
                 return False
 
-        # Validate line is numeric
+        # Validate line is numeric and positive
         try:
-            float(prop["line"])
+            line_val = float(prop["line"])
         except (ValueError, TypeError):
             if self.verbose:
                 logger.warning(
                     f"[{self.source_name}] Invalid prop: line not numeric: {prop.get('line')}"
                 )
+            return False
+
+        if line_val <= 0:
             return False
 
         return True
@@ -356,6 +397,25 @@ class BaseFetcher(ABC):
             logger.info(f"[{self.source_name}] Removed {len(props) - len(deduped)} duplicate props")
 
         return deduped
+
+    def get_registry_stats(self) -> Dict[str, Any]:
+        """Get accumulated stats for Atlas data registry logging.
+
+        Returns dict compatible with IngestionTracker / log_ingestion().
+        """
+        return {
+            "api_calls_made": self._api_calls,
+            "bytes_transferred": self._bytes_transferred,
+            "error_count": self._error_count,
+            "error_message": self._last_error,
+        }
+
+    def reset_registry_stats(self):
+        """Reset accumulated stats (call between logical operations)."""
+        self._api_calls = 0
+        self._bytes_transferred = 0
+        self._error_count = 0
+        self._last_error = None
 
     def close(self):
         """Close session"""

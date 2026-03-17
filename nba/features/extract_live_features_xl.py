@@ -1194,65 +1194,62 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
         minutes_L10 = float(existing.get("ema_minutes_L10", 28.0) or 28.0)
         minutes_L20 = float(existing.get("ema_minutes_L20", 28.0) or 28.0)
 
-        # Query std values from player_rolling_stats if available
+        # Compute std values on-the-fly from player_game_logs (matches training)
+        stat_col_map = {
+            "points": "points",
+            "rebounds": "rebounds",
+            "assists": "assists",
+            "threes": "three_pointers_made",
+        }
+        stat_col = stat_col_map.get(stat_key, "points")
         try:
-            query = """
-            SELECT
-                points_std_L5, points_std_L10,
-                rebounds_std_L5, rebounds_std_L10,
-                assists_std_L5, assists_std_L10,
-                minutes_std_L5, minutes_std_L10,
-                fga_std_L5
-            FROM player_rolling_stats
-            WHERE player_name = %s
-              AND stat_date <= %s
-            ORDER BY stat_date DESC
-            LIMIT 1
+            std_query = """
+            SELECT pgl.points, pgl.rebounds, pgl.assists,
+                   pgl.minutes_played, pgl.fg_attempted
+            FROM player_game_logs pgl
+            JOIN player_profile pp ON pgl.player_id = pp.player_id
+            WHERE LOWER(pp.full_name) = LOWER(%s)
+              AND pgl.game_date < %s
+              AND pgl.minutes_played > 0
+            ORDER BY pgl.game_date DESC
+            LIMIT 10
             """
             with self.conn.cursor() as cur:
-                cur.execute(query, (player_name, game_date))
-                result = cur.fetchone()
+                cur.execute(std_query, (player_name, game_date))
+                rows = cur.fetchall()
 
-                if result:
-                    # Use actual values
+                if rows and len(rows) >= 3:
+                    # rows: (points, rebounds, assists, minutes, fga)
+                    stat_idx = {"points": 0, "rebounds": 1, "assists": 2}.get(stat_key, 0)
+                    stat_vals = [float(r[stat_idx] or 0) for r in rows]
+                    min_vals = [float(r[3] or 0) for r in rows]
+                    fga_vals = [float(r[4] or 0) for r in rows]
+
                     features[f"{stat_key}_std_L5"] = (
-                        float(
-                            result[0]
-                            if stat_key == "points"
-                            else (
-                                result[2]
-                                if stat_key == "rebounds"
-                                else result[4] if stat_key == "assists" else result[0]
-                            )
-                        )
-                        if result[0]
-                        else 4.0
+                        float(np.std(stat_vals[:5]))
+                        if len(stat_vals) >= 5
+                        else float(np.std(stat_vals))
                     )
-                    features[f"{stat_key}_std_L10"] = (
-                        float(
-                            result[1]
-                            if stat_key == "points"
-                            else (
-                                result[3]
-                                if stat_key == "rebounds"
-                                else result[5] if stat_key == "assists" else result[1]
-                            )
-                        )
-                        if result[1]
-                        else 4.0
+                    features[f"{stat_key}_std_L10"] = float(np.std(stat_vals[:10]))
+                    features["minutes_std_L5"] = (
+                        float(np.std(min_vals[:5]))
+                        if len(min_vals) >= 5
+                        else float(np.std(min_vals))
                     )
-                    features["minutes_std_L5"] = float(result[6]) if result[6] else 3.0
-                    features["minutes_std_L10"] = float(result[7]) if result[7] else 3.0
-                    features["fga_std_L5"] = float(result[8]) if result[8] else 2.0
+                    features["minutes_std_L10"] = float(np.std(min_vals[:10]))
+                    features["fga_std_L5"] = (
+                        float(np.std(fga_vals[:5]))
+                        if len(fga_vals) >= 5
+                        else float(np.std(fga_vals))
+                    )
                 else:
-                    # Defaults based on typical NBA volatility
                     features[f"{stat_key}_std_L5"] = 4.0 if stat_key == "points" else 2.0
                     features[f"{stat_key}_std_L10"] = 4.0 if stat_key == "points" else 2.0
                     features["minutes_std_L5"] = 3.0
                     features["minutes_std_L10"] = 3.0
                     features["fga_std_L5"] = 2.0
         except (psycopg2.Error, KeyError, TypeError) as e:
-            logger.debug(f"Could not query std features: {e}")
+            logger.debug(f"Could not compute std features: {e}")
             features[f"{stat_key}_std_L5"] = 4.0 if stat_key == "points" else 2.0
             features[f"{stat_key}_std_L10"] = 4.0 if stat_key == "points" else 2.0
             features["minutes_std_L5"] = 3.0

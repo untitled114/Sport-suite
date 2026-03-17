@@ -30,8 +30,12 @@ from nba.config.database import get_team_db_config
 # Add utilities to path
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utilities"))
 
+from zoneinfo import ZoneInfo
+
 from nba_api.stats.endpoints import leaguedashteamstats
 from nba_api.stats.static import teams as static_teams
+
+EST = ZoneInfo("America/New_York")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -42,7 +46,7 @@ TEAM_DB = get_team_db_config()
 
 def get_current_season() -> str:
     """Get current NBA season in API format (e.g., '2025-26')"""
-    now = datetime.now()
+    now = datetime.now(EST)
     if now.month >= 10:
         return f"{now.year}-{str(now.year + 1)[-2:]}"
     else:

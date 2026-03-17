@@ -503,6 +503,171 @@ class PickPaginator(discord.ui.View):
         self.page_indicator.label = "Expired"
 
 
+# ==================== VALIDATION HELPERS ====================
+
+
+def _run_db_validation(days: int) -> dict:
+    """Run DB-based validation (called in executor thread)."""
+    import io
+    import sys as _sys
+
+    if NBA_PROJECT not in _sys.path:
+        _sys.path.insert(0, NBA_PROJECT)
+
+    from nba.betting_xl.validate_from_db import run_validation
+
+    est = ZoneInfo("America/New_York")
+    now = datetime.now(est)
+    end = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    start = (now - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    # Suppress stdout (full report) — we only need the return dict
+    old_stdout = _sys.stdout
+    _sys.stdout = io.StringIO()
+    try:
+        return run_validation(start, end)
+    finally:
+        _sys.stdout = old_stdout
+
+
+def _tbl_row(label, w, losses, profit=0.0):
+    """Format a table row: label  W-L (WR%)  ROI%"""
+    t = w + losses
+    if t == 0:
+        return None
+    wr = w / t * 100
+    roi = profit / t * 100
+    return f"{label:<12} {w:>2}W-{losses:<2}L  {wr:>4.0f}%  {roi:>+5.0f}%"
+
+
+def _build_validation_embed(r: dict, days: int) -> discord.Embed:
+    """Build a structured Discord embed from validation results."""
+    total = r.get("total", 0)
+    wins = r.get("wins", 0)
+    losses = r.get("losses", 0)
+    wr = r.get("win_rate", 0)
+    roi = r.get("roi", 0)
+    profit = r.get("profit", 0)
+
+    color = COLOR_GREEN if wr >= 55 else (COLOR_ORANGE if wr >= 50 else COLOR_RED)
+
+    embed = discord.Embed(
+        title=f"Validation Report — {days}d",
+        color=color,
+    )
+
+    if not total:
+        embed.description = f"No graded picks in the last {days} days."
+        return embed
+
+    # Header stats
+    embed.description = (
+        f"```\n"
+        f"Record:  {wins}W-{losses}L ({wr:.1f}% WR)\n"
+        f"ROI:     {roi:+.1f}%\n"
+        f"Profit:  {profit:+.2f}u on {total} picks\n"
+        f"```"
+    )
+
+    # By Model — code block table
+    by_model = r.get("by_model", {})
+    if by_model:
+        header = f"{'Model':<12} {'Record':<9} {'WR':>4}  {'ROI':>5}"
+        lines = [header, "-" * 36]
+        for m in sorted(by_model.keys()):
+            s = by_model[m]
+            row = _tbl_row(m.upper(), s["w"], s["l"], s.get("profit", 0))
+            if row:
+                lines.append(row)
+        embed.add_field(name="By Model", value=f"```\n{chr(10).join(lines)}\n```", inline=False)
+
+    # By Market + By Tier side by side
+    by_market = r.get("by_market", {})
+    if by_market:
+        lines = []
+        for m in sorted(by_market.keys()):
+            s = by_market[m]
+            row = _tbl_row(m, s["w"], s["l"], s.get("profit", 0))
+            if row:
+                lines.append(row)
+        embed.add_field(name="By Market", value=f"```\n{chr(10).join(lines)}\n```", inline=True)
+
+    by_tier = r.get("by_tier", {})
+    if by_tier:
+        lines = []
+        for t_name in sorted(by_tier.keys()):
+            s = by_tier[t_name]
+            if (s.get("w", 0) + s.get("l", 0)) >= 2:
+                row = _tbl_row(t_name, s["w"], s["l"], s.get("profit", 0))
+                if row:
+                    lines.append(row)
+        if lines:
+            embed.add_field(name="By Tier", value=f"```\n{chr(10).join(lines)}\n```", inline=True)
+
+    # By Conviction — critical for evaluating the gate
+    by_conv = r.get("by_conviction_band", {})
+    if by_conv:
+        lines = []
+        for b in sorted(by_conv.keys()):
+            s = by_conv[b]
+            if (s.get("w", 0) + s.get("l", 0)) > 0:
+                # Shorten band names
+                short = b.replace("No conviction data", "Pre-conviction")
+                row = _tbl_row(short[:12], s["w"], s["l"], s.get("profit", 0))
+                if row:
+                    lines.append(row)
+        if lines:
+            embed.add_field(
+                name="By Conviction", value=f"```\n{chr(10).join(lines)}\n```", inline=False
+            )
+
+    # By BP Signal
+    by_bp = r.get("by_bp_signal", {})
+    if by_bp:
+        lines = []
+        for sig in sorted(by_bp.keys()):
+            s = by_bp[sig]
+            if (s.get("w", 0) + s.get("l", 0)) >= 2:
+                short = sig.replace("No BP data", "No data").replace("CS ", "")
+                row = _tbl_row(short[:12], s["w"], s["l"], s.get("profit", 0))
+                if row:
+                    lines.append(row)
+        if lines:
+            embed.add_field(
+                name="By BP Signal", value=f"```\n{chr(10).join(lines)}\n```", inline=False
+            )
+
+    # Daily breakdown
+    details = r.get("details", [])
+    if details:
+        by_date = {}
+        for p in details:
+            d = p["date"]
+            if d not in by_date:
+                by_date[d] = {"w": 0, "l": 0, "profit": 0.0}
+            if p["outcome"] == "WIN":
+                by_date[d]["w"] += 1
+                by_date[d]["profit"] += 0.909
+            else:
+                by_date[d]["l"] += 1
+                by_date[d]["profit"] -= 1.0
+
+        lines = []
+        for d in sorted(by_date.keys(), reverse=True)[:10]:
+            s = by_date[d]
+            t = s["w"] + s["l"]
+            wr_d = s["w"] / t * 100 if t else 0
+            lines.append(
+                f"{d[5:]}  {s['w']:>2}W-{s['l']:<2}L  {wr_d:>4.0f}%  {s['profit']:>+6.2f}u"
+            )
+        embed.add_field(
+            name="Daily Results", value=f"```\n{chr(10).join(lines)}\n```", inline=False
+        )
+
+    embed.set_footer(text=f"XL/V3 models only | DB graded | {_get_today_str()}")
+    return embed
+
+
 # ==================== COMMANDS ====================
 
 
@@ -511,6 +676,25 @@ def register(bot):
     @bot.tree.command(name="nba", description="Show today's NBA betting picks")
     async def nba(interaction: discord.Interaction):
         await interaction.response.defer()
+
+        # Use conviction-based card (same as daily DM)
+        try:
+            from nba.core.daily_card import _load_conviction_picks
+            from nba.core.daily_card import build_embed as build_conviction_embed
+            from nba.core.daily_card import get_first_tip_time
+
+            date_str = _get_today_str()
+            picks, max_run = _load_conviction_picks(date_str)
+            if picks:
+                tip_time = get_first_tip_time(date_str)
+                embed_dict = build_conviction_embed(date_str, tip_time, picks, max_run)
+                embed = discord.Embed.from_dict(embed_dict)
+                await interaction.followup.send(embed=embed)
+                return
+        except Exception as e:
+            logging.warning(f"/nba conviction load failed, falling back to JSON: {e}")
+
+        # Fallback: raw picks from JSON (first run before conviction is computed)
         data = _load_picks()
         if not data or not data.get("picks"):
             embed = discord.Embed(
@@ -649,71 +833,50 @@ def register(bot):
             await interaction.followup.send(f"Reload failed: {e}", ephemeral=True)
 
     @bot.tree.command(name="nba-validate", description="Show validation results for recent picks")
-    @app_commands.describe(days="Number of days to validate (1-7, default 1)")
-    async def nba_validate(interaction: discord.Interaction, days: int = 1):
-        """Show validation results for recent picks."""
+    @app_commands.describe(days="Number of days to validate (1-30, default 7)")
+    async def nba_validate(interaction: discord.Interaction, days: int = 7):
+        """Show DB-based validation results — sends as DM to avoid interaction timeouts."""
+        try:
+            await interaction.response.send_message(
+                "Running validation... results will DM you.", ephemeral=True
+            )
+        except Exception:
+            pass  # interaction may already be expired, continue anyway
+
         if not _is_admin(interaction.user.id):
-            await interaction.response.send_message("Admin only", ephemeral=True)
             return
 
-        days = max(1, min(7, days))
+        days = max(1, min(30, days))
 
-        await interaction.response.send_message(
-            embed=discord.Embed(
-                title="Validating Picks",
-                description=f"Checking last {days} day(s)...",
-                color=COLOR_BLUE,
+        try:
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: _run_db_validation(days)
             )
-        )
 
-        cmd = f"source .env && export DB_USER DB_PASSWORD && ./nba/nba-predictions.sh validate"
-        if days > 1:
-            cmd = f"source .env && export DB_USER DB_PASSWORD && python3 nba/betting_xl/validate_predictions.py --days {days}"
+            if not result or not result.get("total"):
+                try:
+                    await interaction.user.send(
+                        embed=discord.Embed(
+                            title="No Graded Picks",
+                            description=f"No graded picks found in the last {days} days.",
+                            color=COLOR_ORANGE,
+                        )
+                    )
+                except Exception:
+                    pass
+                return
 
-        success, output = await _run_command(cmd, timeout=120)
+            embed = _build_validation_embed(result, days)
+            await interaction.user.send(embed=embed)
 
-        if not success:
-            await interaction.edit_original_response(
-                embed=discord.Embed(
-                    title="Validation Failed", description=f"```{output[:1500]}```", color=COLOR_RED
+        except Exception as e:
+            logging.getLogger("axiom").error(f"nba-validate error: {e}", exc_info=True)
+            try:
+                await interaction.user.send(
+                    f"Validation failed: `{type(e).__name__}: {str(e)[:300]}`"
                 )
-            )
-            return
-
-        lines = output.split("\n")
-
-        embed = discord.Embed(title="Validation Results", color=COLOR_GREEN)
-
-        system_results = []
-        for line in lines:
-            if ("XL" in line or "PRO" in line) and "%" in line:
-                parts = line.split()
-                if len(parts) >= 4:
-                    system_results.append(line.strip())
-
-        if system_results:
-            results_text = "```\n"
-            for r in system_results[:10]:
-                results_text += r + "\n"
-            results_text += "```"
-            embed.add_field(name="Results by System", value=results_text, inline=False)
-
-        daily_lines = []
-        in_daily = False
-        for line in lines:
-            if "DAILY BREAKDOWN" in line:
-                in_daily = True
-                continue
-            if in_daily and line.strip() and "===" not in line:
-                if "W-" in line or (":" in line and ("XL" in line or "PRO" in line)):
-                    daily_lines.append(line.strip())
-
-        if daily_lines:
-            daily_text = "```\n" + "\n".join(daily_lines[:8]) + "\n```"
-            embed.add_field(name="Daily Breakdown", value=daily_text[:1024], inline=False)
-
-        embed.set_footer(text=f"Validated {days} day(s) | {_get_today_str()}")
-        await interaction.edit_original_response(embed=embed)
+            except Exception:
+                pass
 
     @bot.tree.command(name="nba-card", description="Send today's conviction card (manual trigger)")
     async def nba_card(interaction: discord.Interaction):
@@ -779,33 +942,38 @@ def register(bot):
 def start_scheduled_tasks(bot):
     @tasks.loop(time=time(hour=9, minute=15, tzinfo=ZoneInfo("America/New_York")))
     async def auto_post():
-        """Auto-post all picks to owner at 9:15 AM EST."""
+        """Auto-post conviction card to owner at 9:15 AM EST.
+
+        Uses the same conviction-based format as /nba and daily_card.
+        This is a backup — the daily_card DAG sends at T-120 before first tip.
+        """
         if not NBA_OWNER_ID:
             return
         owner = bot.get_user(NBA_OWNER_ID) or await bot.fetch_user(NBA_OWNER_ID)
         if not owner:
             return
         await asyncio.sleep(60)
-        data = _load_picks()
-        if not data or not data.get("picks"):
+
+        try:
+            from nba.core.daily_card import _load_conviction_picks
+            from nba.core.daily_card import build_embed as build_conviction_embed
+            from nba.core.daily_card import get_first_tip_time
+
+            date_str = _get_today_str()
+            picks, max_run = _load_conviction_picks(date_str)
+            tip_time = get_first_tip_time(date_str)
+            embed_dict = build_conviction_embed(date_str, tip_time, picks, max_run)
+            embed = discord.Embed.from_dict(embed_dict)
+            await owner.send(embed=embed)
+        except Exception as e:
+            logging.warning(f"Auto-post conviction card failed: {e}")
             await owner.send(
                 embed=discord.Embed(title="NBA", description="No picks today", color=COLOR_ORANGE)
             )
-            return
-
-        picks = data.get("picks", [])
-        summary = _format_summary_embed(data)
-
-        if len(picks) <= 5:
-            embeds = [summary] + [_format_pick_card(p) for p in picks]
-            await owner.send(embeds=embeds)
-        else:
-            view = PickPaginator(picks, summary, timeout=1800)
-            await owner.send(embeds=view.get_embeds(), view=view)
 
     @auto_post.before_loop
     async def before():
         await bot.wait_until_ready()
 
     auto_post.start()
-    print("[NBA] Auto-post started (9:15 AM EST - sends ALL picks)")
+    print("[NBA] Auto-post started (9:15 AM EST - conviction card)")

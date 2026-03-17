@@ -105,8 +105,8 @@ def alert_on_failure(context: dict[str, Any]) -> None:
 
 @dag(
     dag_id="nba_refresh_pipeline",
-    description="NBA refresh — line movements + predictions (runs 2-6: 5AM/8AM/11AM/2PM/5PM EST)",
-    schedule=CronTriggerTimetable("0 5,8,11,14,17 * * *", timezone="America/New_York"),
+    description="NBA refresh — manual trigger only (full pipeline now handles all runs)",
+    schedule=None,  # Manual only — full pipeline runs every 3hr
     start_date=datetime(2025, 11, 7),
     catchup=False,
     tags=["nba", "predictions", "refresh", "line-movements"],
@@ -272,6 +272,30 @@ def nba_refresh_pipeline():
             f"{SCRIPT_DIR}/betting_xl/fetchers/fetch_vegas_lines.py",
             ["--date", date_str, "--save-to-db"],
         )
+
+    @task(task_id="refresh_direct_sportsbooks")
+    def refresh_direct_sportsbooks() -> dict[str, Any]:
+        """Refresh direct sportsbook lines for line movement tracking."""
+        import glob
+
+        result = run_script(
+            f"{SCRIPT_DIR}/betting_xl/fetchers/fetch_all.py",
+            ["--direct-only"],
+            timeout=600,
+        )
+        if result["status"] == "error":
+            print(f"[WARN] Direct refresh failed (non-critical): {result.get('error', '')[-300:]}")
+            return {"status": "partial"}
+
+        pattern = f"{SCRIPT_DIR}/betting_xl/lines/all_sources_*.json"
+        files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
+        if files:
+            run_script(
+                f"{SCRIPT_DIR}/betting_xl/loaders/load_props_to_db.py",
+                ["--file", files[0], "--skip-mongodb"],
+            )
+
+        return {"status": "success"}
 
     @task(task_id="enrich_matchups")
     def enrich_matchups(props_result: dict[str, Any]) -> dict[str, Any]:
@@ -474,12 +498,13 @@ def nba_refresh_pipeline():
     pick_recs = refresh_pick_recs()
     injuries = refresh_injuries()
     vegas = refresh_vegas()
+    direct_books = refresh_direct_sportsbooks()
 
-    stop_loss >> [props, cheatsheet, hit_rates, pick_recs, injuries, vegas]
+    stop_loss >> [props, cheatsheet, hit_rates, pick_recs, injuries, vegas, direct_books]
 
     # Enrich after props loaded
     enriched = enrich_matchups(props)
-    [cheatsheet, hit_rates, pick_recs, injuries, vegas] >> enriched
+    [cheatsheet, hit_rates, pick_recs, injuries, vegas, direct_books] >> enriched
 
     # Predictions (parallel)
     xl = generate_xl_predictions(enriched)

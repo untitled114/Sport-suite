@@ -31,7 +31,11 @@ import psycopg2
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
+from zoneinfo import ZoneInfo
+
 from nba.betting_xl.fetchers.fetch_prizepicks_direct import PrizePicksDirectFetcher
+
+EST = ZoneInfo("America/New_York")
 
 # Database config
 DB_CONFIG = {
@@ -141,7 +145,7 @@ class PrizePicksLoader:
         # Parse timestamps
         board_time = self.parse_timestamp(prop.get("board_time"))
         pp_updated_at = self.parse_timestamp(prop.get("updated_at"))
-        fetch_timestamp = self.parse_timestamp(prop.get("fetch_timestamp")) or datetime.now()
+        fetch_timestamp = self.parse_timestamp(prop.get("fetch_timestamp")) or datetime.now(EST)
 
         # Extract PrizePicks-specific fields
         odds_type = prop.get("odds_type", "standard")

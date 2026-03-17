@@ -25,6 +25,7 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
+from zoneinfo import ZoneInfo
 
 import psycopg2
 from pymongo import MongoClient
@@ -32,6 +33,8 @@ from pymongo import MongoClient
 from nba.betting_xl.loaders.opponent_mapper import OpponentMapper
 from nba.betting_xl.utils.logging_config import add_logging_args, get_logger, setup_logging
 from nba.config.database import get_intelligence_db_config
+
+EST = ZoneInfo("America/New_York")
 
 # Logger will be configured in main()
 logger = get_logger(__name__)
@@ -233,8 +236,9 @@ class PropsLoader:
         is_home = prop.get("is_home")
         consensus_line = prop.get("consensus_line")
         actual_value = prop.get("actual_value")  # ⭐ CRITICAL for training
-        fetch_timestamp = prop.get("fetch_timestamp", datetime.now().isoformat())
+        fetch_timestamp = prop.get("fetch_timestamp", datetime.now(EST).isoformat())
         source = prop.get("source", "bettingpros")
+        fetch_source = prop.get("fetch_source", "bettingpros")  # 'direct' | 'bettingpros'
 
         # Validate required fields
         if not all([player_name, stat_type, book_name, game_date, over_line]):
@@ -252,7 +256,7 @@ class PropsLoader:
 
         # Check for duplicate from same day (prevent loading same props multiple times)
         # Only check if this is a current-day prop (not historical backfill)
-        if game_date >= datetime.now().date().isoformat():
+        if game_date >= datetime.now(EST).date().isoformat():
             check_query = """
                 SELECT id FROM nba_props_xl
                 WHERE player_id = %s AND game_date = %s
@@ -270,12 +274,14 @@ class PropsLoader:
                 player_id, player_name, stat_type, book_name, game_date, game_time,
                 over_line, over_odds, under_line, under_odds,
                 game_id, player_team, opponent_team, is_home,
-                consensus_line, actual_value, fetch_timestamp, source_url, is_active
+                consensus_line, actual_value, fetch_timestamp, source_url, is_active,
+                fetch_source
             ) VALUES (
                 %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s,
                 %s, %s, %s, %s,
-                %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s,
+                %s
             )
             ON CONFLICT (player_id, game_date, stat_type, book_name, fetch_timestamp)
             DO UPDATE SET
@@ -285,6 +291,7 @@ class PropsLoader:
                 under_odds = EXCLUDED.under_odds,
                 player_team = COALESCE(EXCLUDED.player_team, nba_props_xl.player_team),
                 actual_value = EXCLUDED.actual_value,
+                fetch_source = EXCLUDED.fetch_source,
                 updated_at = CURRENT_TIMESTAMP
             RETURNING id;
         """
@@ -309,6 +316,7 @@ class PropsLoader:
             fetch_timestamp,
             source,
             True,
+            fetch_source,
         )
 
         try:
@@ -316,6 +324,21 @@ class PropsLoader:
             result = self.cursor.fetchone()
 
             inserted = bool(result)
+
+            # Always append to line snapshots — tracks line MOVEMENT across runs
+            # (append-only, every fetch creates a new snapshot regardless of
+            # whether the prop was inserted or updated in nba_props_xl)
+            self._insert_snapshot(
+                player_name,
+                stat_type,
+                book_name,
+                game_date,
+                over_line,
+                over_odds,
+                under_line,
+                under_odds,
+                fetch_source,
+            )
 
             # Also insert into MongoDB if enabled
             if inserted and self.use_mongodb:
@@ -329,6 +352,49 @@ class PropsLoader:
             if self.verbose:
                 print(f"  ❌ Error inserting prop {player_name} - {stat_type} - {book_name}: {e}")
             return False
+
+    def _insert_snapshot(
+        self,
+        player_name: str,
+        stat_type: str,
+        book_name: str,
+        game_date: str,
+        over_line,
+        over_odds,
+        under_line,
+        under_odds,
+        fetch_source: str,
+    ):
+        """Append a line snapshot to nba_line_snapshots (append-only history).
+
+        Silently skips if the table doesn't exist yet (pre-migration).
+        """
+        try:
+            self.cursor.execute(
+                """
+                INSERT INTO nba_line_snapshots
+                    (player_name, stat_type, book_name, game_date,
+                     over_line, over_odds, under_line, under_odds, fetch_source)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    player_name,
+                    stat_type,
+                    book_name,
+                    game_date,
+                    float(over_line) if over_line else None,
+                    over_odds,
+                    float(under_line) if under_line else None,
+                    under_odds,
+                    fetch_source,
+                ),
+            )
+        except psycopg2.errors.UndefinedTable:
+            # Table doesn't exist yet — migration not applied
+            self.conn.rollback()
+        except psycopg2.Error:
+            # Non-critical — don't block main insert
+            self.conn.rollback()
 
     def _buffer_mongodb_prop(self, prop: Dict[str, Any]):
         """
@@ -381,7 +447,7 @@ class PropsLoader:
             "fetch_timestamp": (
                 datetime.fromisoformat(prop.get("fetch_timestamp"))
                 if isinstance(prop.get("fetch_timestamp"), str)
-                else datetime.now()
+                else datetime.now(EST)
             ),
         }
 
@@ -453,10 +519,10 @@ class PropsLoader:
                 }
 
                 # Add metadata
-                doc["xl_metadata"] = {"version": "1.0", "last_updated": datetime.now()}
+                doc["xl_metadata"] = {"version": "1.0", "last_updated": datetime.now(EST)}
 
-                doc["created_at"] = datetime.now()
-                doc["updated_at"] = datetime.now()
+                doc["created_at"] = datetime.now(EST)
+                doc["updated_at"] = datetime.now(EST)
 
                 # Upsert to MongoDB
                 filter_doc = {

@@ -19,7 +19,11 @@ from psycopg2.extras import execute_values
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+from zoneinfo import ZoneInfo
+
 from nba.config.database import get_intelligence_db_config
+
+EST = ZoneInfo("America/New_York")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -64,7 +68,7 @@ def transform_prop(prop: dict) -> dict:
         try:
             fetch_ts = datetime.fromisoformat(fetch_ts.replace("Z", "+00:00"))
         except (ValueError, AttributeError):
-            fetch_ts = datetime.now()
+            fetch_ts = datetime.now(EST)
 
     return {
         "player_name": prop.get("player_name"),

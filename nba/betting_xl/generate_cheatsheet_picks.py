@@ -29,10 +29,13 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 import psycopg2
 
 from nba.config.database import get_intelligence_db_config, get_players_db_config
+
+EST = ZoneInfo("America/New_York")
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -331,7 +334,7 @@ class CheatsheetPicksGenerator:
     """
 
     def __init__(self, game_date: str = None, platform: str = "underdog"):
-        self.game_date = game_date or datetime.now().strftime("%Y-%m-%d")
+        self.game_date = game_date or datetime.now(EST).strftime("%Y-%m-%d")
         self.platform = platform
         self.conn_intel = None
         self.conn_players = None
@@ -613,7 +616,7 @@ class CheatsheetPicksGenerator:
     def save_picks(self, output_file: str, dry_run: bool = False) -> None:
         """Save picks to JSON file."""
         output = {
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": datetime.now(EST).isoformat(),
             "date": self.game_date,
             "strategy": "Pro Tier Filters",
             "tier": "pro",
@@ -730,7 +733,7 @@ class CheatsheetPicksGenerator:
 def main():
     parser = argparse.ArgumentParser(description="Generate picks from BettingPros cheat sheet")
     parser.add_argument(
-        "--date", default=datetime.now().strftime("%Y-%m-%d"), help="Game date (YYYY-MM-DD)"
+        "--date", default=datetime.now(EST).strftime("%Y-%m-%d"), help="Game date (YYYY-MM-DD)"
     )
     parser.add_argument("--output", default=None, help="Output JSON file path")
     parser.add_argument(

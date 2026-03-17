@@ -36,6 +36,9 @@ from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, Optional
+from zoneinfo import ZoneInfo
+
+EST = ZoneInfo("America/New_York")
 
 
 class JSONFormatter(logging.Formatter):
@@ -228,7 +231,7 @@ def setup_logging(
     logs_path.mkdir(parents=True, exist_ok=True)
 
     # Log file with date
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = datetime.now(EST).strftime("%Y-%m-%d")
     log_file = logs_path / f"{log_name}_{today}.log"
 
     # Get root logger

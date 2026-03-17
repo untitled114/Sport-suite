@@ -174,6 +174,9 @@ def walk_forward_cv(
 
 # Null context manager for when MLflow is disabled
 from contextlib import contextmanager
+from zoneinfo import ZoneInfo
+
+EST = ZoneInfo("America/New_York")
 
 
 @contextmanager
@@ -870,7 +873,7 @@ class StackedMarketModel:
         # Save metadata
         metadata = {
             "market": self.market,
-            "trained_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "trained_date": datetime.now(EST).strftime("%Y-%m-%d %H:%M:%S"),
             "architecture": "stacked_two_head_calibrated_blended",
             "features": {"count": len(self.feature_names), "names": self.feature_names},
             "blend_config": self.blend_config,
@@ -1183,7 +1186,7 @@ def main():
             # Log to MLflow if enabled
             if tracker:
                 mlflow_context = tracker.start_run(
-                    run_name=f"{args.market}_walkforward_cv_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                    run_name=f"{args.market}_walkforward_cv_{datetime.now(EST).strftime('%Y%m%d_%H%M%S')}",
                     tags={
                         "market": args.market,
                         "architecture": "stacked_two_head",
@@ -1280,7 +1283,7 @@ def main():
         # Start MLflow run if tracking enabled
         mlflow_context = (
             tracker.start_run(
-                run_name=f"{args.market}_training_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                run_name=f"{args.market}_training_{datetime.now(EST).strftime('%Y%m%d_%H%M%S')}",
                 tags={"market": args.market, "architecture": "stacked_two_head"},
             )
             if tracker

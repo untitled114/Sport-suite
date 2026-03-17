@@ -26,6 +26,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import psycopg2
 from fastapi import FastAPI, Request
@@ -34,7 +35,9 @@ from fastapi.responses import JSONResponse
 
 from nba.api import __version__
 from nba.api.dependencies import get_model_manager
-from nba.api.routes import health_router, predictions_router
+from nba.api.routes import health_router, picks_router, predictions_router
+
+EST = ZoneInfo("America/New_York")
 
 # Configure logging
 logging.basicConfig(
@@ -198,7 +201,7 @@ async def global_exception_handler(request: Request, exc: Exception):
             "error": "InternalServerError",
             "message": "An unexpected error occurred",
             "detail": str(exc) if os.getenv("DEBUG", "false").lower() == "true" else None,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(EST).isoformat(),
         },
     )
 
@@ -208,6 +211,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 # ==============================================================================
 
 app.include_router(predictions_router)
+app.include_router(picks_router)
 app.include_router(health_router)
 
 
@@ -243,6 +247,10 @@ async def root():
                 "batch": "POST /predict/batch",
                 "markets": "GET /predict/markets",
             },
+            "picks": {
+                "today": "GET /picks/today",
+                "by_date": "GET /picks/{date}",
+            },
             "health": {
                 "basic": "GET /health",
                 "models": "GET /health/models",
@@ -251,7 +259,7 @@ async def root():
             },
         },
         "enabled_markets": ["POINTS", "REBOUNDS"],
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(EST).isoformat(),
     }
 
 

@@ -28,6 +28,7 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -46,6 +47,8 @@ from nba.core.drift_service import DriftService
 from nba.core.logging_config import add_logging_args, get_logger, setup_logging
 from nba.features.extract_live_features_xl import LiveFeatureExtractorXL
 from nba.utils.name_normalizer import NameNormalizer
+
+EST = ZoneInfo("America/New_York")
 
 # Logger will be configured in main() - use get_logger for module-level access
 logger = get_logger(__name__)
@@ -85,7 +88,7 @@ class XLPredictionsGenerator:
         underdog_only: bool = None,
         model_versions: list = None,
     ):
-        self.game_date = game_date or datetime.now().strftime("%Y-%m-%d")
+        self.game_date = game_date or datetime.now(EST).strftime("%Y-%m-%d")
         self.game_date_obj = datetime.strptime(self.game_date, "%Y-%m-%d").date()
 
         # Backtest support - as_of_date limits calibration data
@@ -690,6 +693,7 @@ class XLPredictionsGenerator:
                 opponent_team,
                 is_home,
                 fetch_timestamp,
+                game_time,
                 ROW_NUMBER() OVER (
                     PARTITION BY player_id, stat_type, book_name
                     ORDER BY
@@ -705,7 +709,7 @@ class XLPredictionsGenerator:
         filtered_props AS (
             SELECT
                 player_id, player_name, game_date, stat_type,
-                book_name, over_line, opponent_team, is_home
+                book_name, over_line, opponent_team, is_home, game_time
             FROM latest_props
             WHERE rn = 1
         ),
@@ -714,6 +718,7 @@ class XLPredictionsGenerator:
                 MIN(player_id) as player_id,  -- Pick any ID (they're all the same player)
                 player_name,
                 game_date,
+                MIN(game_time) as game_time,
                 stat_type,
                 opponent_team,  -- Group by opponent to match validation
                 is_home,  -- Group by is_home to match validation
@@ -941,6 +946,9 @@ class XLPredictionsGenerator:
                             "line_spread": optimized["line_spread"],
                             "num_books": optimized["num_books"],
                             "opponent_team": optimized["opponent_team"],
+                            "game_time": (
+                                str(row["game_time"]) if row.get("game_time") is not None else None
+                            ),
                             "opp_rank": self.get_opp_rank(optimized["opponent_team"], stat_type),
                             "is_home": optimized["is_home"],
                             "top_3_lines": optimized["top_3_lines"],
@@ -1362,7 +1370,7 @@ class XLPredictionsGenerator:
         ]
 
         output = {
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": datetime.now(EST).isoformat(),
             "date": self.game_date,
             "strategy": "XL + V3 Line Shopping (Softest Line, Consensus Merged)",
             "markets_enabled": list(self.predictors.keys()),
@@ -1586,7 +1594,7 @@ class XLPredictionsGenerator:
 def main():
     parser = argparse.ArgumentParser(description="NBA XL Daily Predictions with Line Shopping")
     parser.add_argument(
-        "--date", default=datetime.now().strftime("%Y-%m-%d"), help="Game date (YYYY-MM-DD)"
+        "--date", default=datetime.now(EST).strftime("%Y-%m-%d"), help="Game date (YYYY-MM-DD)"
     )
     parser.add_argument("--output", default=None, help="Output JSON file path")
     parser.add_argument(
@@ -1645,7 +1653,7 @@ def main():
 
     # Enable backtest_mode automatically if as_of_date is in the past
     backtest_mode = args.backtest_mode
-    if as_of_date and as_of_date.date() < datetime.now().date():
+    if as_of_date and as_of_date.date() < datetime.now(EST).date():
         backtest_mode = True
         logger.info("Backtest mode enabled (as_of_date is in the past)")
 

@@ -25,7 +25,11 @@ import psycopg2
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from zoneinfo import ZoneInfo
+
 from nba.config.database import get_intelligence_db_config, get_players_db_config
+
+EST = ZoneInfo("America/New_York")
 
 # Database configs
 INTELLIGENCE_DB = get_intelligence_db_config()
@@ -229,8 +233,8 @@ def main():
         start_date = args.start
         end_date = args.end
     else:
-        end_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        start_date = (datetime.now() - timedelta(days=args.days)).strftime("%Y-%m-%d")
+        end_date = (datetime.now(EST) - timedelta(days=1)).strftime("%Y-%m-%d")
+        start_date = (datetime.now(EST) - timedelta(days=args.days)).strftime("%Y-%m-%d")
 
     print("\n" + "=" * 60)
     print("BETTINGPROS CHEAT SHEET VALIDATION")
