@@ -576,7 +576,15 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
         )
         player_features.update(game_context_features)
 
-        # Total: ~191+ features (varies by availability)
+        # Add V4 features: Temporal milestones (~10 features)
+        temporal_features = self.extract_temporal_features(
+            player_name=player_name,
+            game_date=game_date,
+            stat_type=stat_type,
+        )
+        player_features.update(temporal_features)
+
+        # Total: ~201+ features (varies by availability)
         # Note: expected_diff (1 feature) will be added by classifier head during training
         return player_features
 
@@ -1176,6 +1184,32 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
             from nba.features.extractors.game_context_features import GameContextFeatureExtractor
 
             return GameContextFeatureExtractor.get_defaults()
+
+    def extract_temporal_features(
+        self,
+        player_name: str,
+        game_date,
+        stat_type: str,
+    ) -> Dict[str, float]:
+        """Extract ~10 V4 features from NBA calendar milestones + team continuity.
+
+        Detects trade deadline, All-Star break, playoff push, and whether
+        the player recently changed teams.
+        """
+        try:
+            from nba.features.extractors.temporal_features import TemporalFeatureExtractor
+
+            extractor = TemporalFeatureExtractor(self.players_conn)
+            return extractor.extract(
+                player_name=player_name,
+                game_date=game_date,
+                stat_type=stat_type,
+            )
+        except Exception as e:
+            logger.debug(f"Temporal features failed for {player_name}: {e}")
+            from nba.features.extractors.temporal_features import TemporalFeatureExtractor
+
+            return TemporalFeatureExtractor.get_defaults()
 
     def extract_v3_features(
         self,
