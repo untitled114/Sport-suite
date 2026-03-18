@@ -221,9 +221,8 @@ exclude_lines = [
     "logger\\.(debug|info|warning|error)",
     "def main\\(",
 ]
-# Core library code target: 70%
-# Overall (with omissions): tracked with fail_under
-fail_under = 70
+# Coverage threshold — enforced by CI
+fail_under = 93
 show_missing = true
 skip_covered = false
 
