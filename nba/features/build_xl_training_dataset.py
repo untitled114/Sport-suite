@@ -1319,7 +1319,9 @@ class XLDatasetBuilder:
                 if dataset is not None and len(dataset) > 0:
                     # CRITICAL: Validate dataset quality (Anthropic standards)
                     try:
-                        self.validate_dataset_quality(dataset, stat_type, expected_features=163)
+                        # V4: 229 features (was 163 for V3)
+                        # 136 V3 + 15 BP analytics + 8 game context + 10 temporal + 19 direct + metadata
+                        self.validate_dataset_quality(dataset, stat_type, expected_features=229)
                     except ValueError as e:
                         print(f"\n❌ VALIDATION FAILED for {stat_type}: {e}")
                         print("   Skipping this dataset - FIX DATA QUALITY ISSUES FIRST")
