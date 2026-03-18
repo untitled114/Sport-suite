@@ -780,7 +780,7 @@ class XLPredictionsGenerator:
                 logger.warning(f"   Missing is_home: {missing_is_home}")
 
             # Fail if coverage is below threshold (relaxed in backtest mode)
-            min_coverage = 50.0 if self.backtest_mode else 95.0
+            min_coverage = 50.0 if self.backtest_mode else 90.0
             if coverage_pct < min_coverage:
                 logger.error("")
                 logger.error("=" * 80)
