@@ -6,7 +6,22 @@ on:
   workflow_dispatch:
     inputs:
       restart_airflow:
-        description: 'Restart Airflow services after deploy'
+        description: 'Restart Airflow scheduler + webserver'
+        required: false
+        default: 'false'
+        type: boolean
+      restart_axiom:
+        description: 'Restart Cephalon Axiom bot'
+        required: false
+        default: 'false'
+        type: boolean
+      deploy_fleet:
+        description: 'Deploy Cephalon shared module (/home/cephalons/cephalon/)'
+        required: false
+        default: 'false'
+        type: boolean
+      restart_all:
+        description: 'Restart everything (Airflow + Axiom + fleet)'
         required: false
         default: 'false'
         type: boolean
@@ -24,7 +39,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Full history for secret scanning
+          fetch-depth: 0
 
       - name: Run Gitleaks (secret detection)
         uses: gitleaks/gitleaks-action@v2
@@ -86,7 +101,8 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Deploy via rsync
+      # ── Sport-Suite code deploy ──
+      - name: Deploy Sport-Suite via rsync
         run: |
           rsync -avz --delete --omit-dir-times \
             --exclude='.git' \
@@ -108,20 +124,61 @@ jobs:
             --exclude='catboost_info/' \
             ./ ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ secrets.SERVER_PATH }}/
 
-      - name: Restart Airflow (if requested)
-        if: ${{ github.event.inputs.restart_airflow == 'true' }}
+      # ── Cephalon fleet deploy (shared AI module) ──
+      - name: Deploy Cephalon fleet module
+        if: >-
+          ${{ github.event.inputs.deploy_fleet == 'true' ||
+              github.event.inputs.restart_all == 'true' }}
         run: |
           ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            'sudo systemctl restart airflow-scheduler airflow-webserver'
+            'if [ -d "${{ secrets.SERVER_PATH }}/cephalon" ]; then
+              rsync -avz ${{ secrets.SERVER_PATH }}/cephalon/ /home/cephalons/cephalon/ \
+                --exclude="__pycache__" --exclude="*.pyc"
+              echo "Fleet synced from sport-suite/cephalon/"
+            elif [ -d "/home/cephalons/cephalon" ]; then
+              echo "Fleet module already at /home/cephalons/cephalon/ — no sync needed"
+            else
+              echo "WARNING: No cephalon module found to deploy"
+            fi'
 
+      # ── Verify deployment ──
       - name: Verify deployment
         run: |
           ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
             'cd ${{ secrets.SERVER_PATH }} && source venv/bin/activate && python -c "import nba; print(\"Import OK\")"'
 
-      - name: Post deployment status
+      # ── Service restarts ──
+      - name: Restart Airflow
+        if: >-
+          ${{ github.event.inputs.restart_airflow == 'true' ||
+              github.event.inputs.restart_all == 'true' }}
+        run: |
+          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            'sudo systemctl restart airflow-scheduler airflow-webserver && echo "Airflow restarted"'
+
+      - name: Restart Cephalon Axiom
+        if: >-
+          ${{ github.event.inputs.restart_axiom == 'true' ||
+              github.event.inputs.restart_all == 'true' }}
+        run: |
+          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            'sudo systemctl restart cephalon-axiom && sleep 2 && sudo systemctl is-active cephalon-axiom && echo "Axiom restarted"'
+
+      # ── Summary ──
+      - name: Deployment summary
         if: always()
         run: |
-          echo "Deployment completed at $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
-          echo "Commit: ${{ github.sha }}"
-          echo "Branch: ${{ github.ref_name }}"
+          echo "============================================"
+          echo "Deployment Summary"
+          echo "============================================"
+          echo "Time:    $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+          echo "Commit:  ${{ github.sha }}"
+          echo "Branch:  ${{ github.ref_name }}"
+          echo "Trigger: ${{ github.event_name }}"
+          echo ""
+          echo "Actions taken:"
+          echo "  Code deploy:     YES (always)"
+          echo "  Fleet deploy:    ${{ github.event.inputs.deploy_fleet || github.event.inputs.restart_all || 'false' }}"
+          echo "  Restart Airflow: ${{ github.event.inputs.restart_airflow || github.event.inputs.restart_all || 'false' }}"
+          echo "  Restart Axiom:   ${{ github.event.inputs.restart_axiom || github.event.inputs.restart_all || 'false' }}"
+          echo "============================================"
