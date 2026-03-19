@@ -830,23 +830,23 @@ class StackedMarketModel:
             },
         }
 
-    def save(self, output_dir: str, metrics: dict):
+    def save(self, output_dir: str, metrics: dict, model_version: str = "v3"):
         """
         Save both models and metadata
 
         Files saved:
-        - {market}_v3_regressor.pkl
-        - {market}_v3_classifier.pkl
-        - {market}_v3_calibrator.pkl
-        - {market}_v3_imputer.pkl
-        - {market}_v3_scaler.pkl
-        - {market}_v3_features.pkl
-        - {market}_v3_metadata.json
+        - {market}_{version}_regressor.pkl
+        - {market}_{version}_classifier.pkl
+        - {market}_{version}_calibrator.pkl
+        - {market}_{version}_imputer.pkl
+        - {market}_{version}_scaler.pkl
+        - {market}_{version}_features.pkl
+        - {market}_{version}_metadata.json
         """
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        prefix = f"{self.market.lower()}_v3"
+        prefix = f"{self.market.lower()}_{model_version}"
 
         # Save models
         with open(output_path / f"{prefix}_regressor.pkl", "wb") as f:
@@ -972,6 +972,12 @@ def main():
         type=int,
         default=10000,
         help="Minimum training samples per fold for walk-forward CV (default: 10000)",
+    )
+
+    parser.add_argument(
+        "--model-version",
+        default="v3",
+        help="Model version prefix for saved files (default: v3). Use v4 for new features.",
     )
 
     args = parser.parse_args()
@@ -1354,7 +1360,7 @@ def main():
                     )
 
         # Save
-        model.save(str(output_dir), metrics)
+        model.save(str(output_dir), metrics, model_version=args.model_version)
 
         logger.info(
             "Training completed successfully",
