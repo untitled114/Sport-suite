@@ -686,6 +686,7 @@ class XLPredictionsGenerator:
             SELECT
                 player_id,
                 player_name,
+                player_team,
                 game_date,
                 stat_type,
                 book_name,
@@ -708,7 +709,7 @@ class XLPredictionsGenerator:
         ),
         filtered_props AS (
             SELECT
-                player_id, player_name, game_date, stat_type,
+                player_id, player_name, player_team, game_date, stat_type,
                 book_name, over_line, opponent_team, is_home, game_time
             FROM latest_props
             WHERE rn = 1
@@ -717,6 +718,7 @@ class XLPredictionsGenerator:
             SELECT
                 MIN(player_id) as player_id,  -- Pick any ID (they're all the same player)
                 player_name,
+                MAX(player_team) as player_team,  -- Player's team
                 game_date,
                 MIN(game_time) as game_time,
                 stat_type,
@@ -945,6 +947,11 @@ class XLPredictionsGenerator:
                             "consensus_offset": optimized["consensus_offset"],
                             "line_spread": optimized["line_spread"],
                             "num_books": optimized["num_books"],
+                            "player_team": (
+                                str(row["player_team"])
+                                if row.get("player_team") and pd.notna(row.get("player_team"))
+                                else None
+                            ),
                             "opponent_team": optimized["opponent_team"],
                             "game_time": (
                                 str(row["game_time"]) if row.get("game_time") is not None else None
