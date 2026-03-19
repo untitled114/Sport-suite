@@ -1322,7 +1322,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
                    pgl.minutes_played, pgl.fg_attempted
             FROM player_game_logs pgl
             JOIN player_profile pp ON pgl.player_id = pp.player_id
-            WHERE LOWER(pp.full_name) = LOWER(%s)
+            WHERE LOWER(unaccent(pp.full_name)) = LOWER(%s)
               AND pgl.game_date < %s
               AND pgl.minutes_played > 0
             ORDER BY pgl.game_date DESC

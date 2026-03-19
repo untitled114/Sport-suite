@@ -1231,7 +1231,7 @@ class LiveFeatureExtractor:
             assist_rate,
             true_shooting_pct
         FROM player_season_stats
-        WHERE player_id = (SELECT player_id FROM player_profile WHERE full_name = %s LIMIT 1)
+        WHERE player_id = (SELECT player_id FROM player_profile WHERE unaccent(full_name) = unaccent(%s) LIMIT 1)
           AND season = %s
         LIMIT 1
         """
@@ -1456,7 +1456,7 @@ class LiveFeatureExtractor:
             query = """
             SELECT position
             FROM player_profile
-            WHERE LOWER(full_name) = LOWER(%s)
+            WHERE LOWER(unaccent(full_name)) = LOWER(%s)
             LIMIT 1
             """
             with self.conn.cursor() as cur:
@@ -1474,7 +1474,7 @@ class LiveFeatureExtractor:
             SELECT AVG(pgl.assists) as avg_ast, AVG(pgl.rebounds) as avg_reb
             FROM player_game_logs pgl
             JOIN player_profile pp ON pgl.player_id = pp.player_id
-            WHERE LOWER(pp.full_name) = LOWER(%s)
+            WHERE LOWER(unaccent(pp.full_name)) = LOWER(%s)
             """
             with self.conn.cursor() as cur:
                 cur.execute(stats_query, (normalized_name,))
