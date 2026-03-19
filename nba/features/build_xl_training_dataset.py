@@ -90,10 +90,10 @@ from zoneinfo import ZoneInfo
 
 EST = ZoneInfo("America/New_York")
 
-TRAIN_START = date(2023, 10, 24)  # Start of 2023-24 season - matches The Odds API prop coverage
-TRAIN_END = date(2025, 12, 1)  # Training cutoff - includes Nov 2025 season data
-VAL_START = date(2025, 12, 2)  # Test period start (unseen data)
-VAL_END = date(2026, 1, 6)  # Test period end (latest validated data)
+TRAIN_START = date(2023, 10, 24)  # Start of 2023-24 season
+TRAIN_END = date(2026, 3, 5)  # Training cutoff - includes current season through early March
+VAL_START = date(2026, 3, 6)  # Test period start (last 2 weeks unseen)
+VAL_END = date(2026, 3, 19)  # Test period end (today)
 
 # Stat types to build datasets for (ASSISTS/THREES use BettingPros cheatsheet)
 STAT_TYPES = ["POINTS", "REBOUNDS"]
