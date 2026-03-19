@@ -364,6 +364,25 @@ class StackedMarketModel:
         )
 
         X = df[feature_cols].copy()
+
+        # Convert boolean columns to int (is_home stored as True/False)
+        for col in X.columns:
+            if X[col].dtype == "bool":
+                X[col] = X[col].astype(int)
+
+        # Drop zero-variance features (constants add noise, hurt classifier)
+        zero_var = [col for col in X.columns if X[col].std() == 0]
+        if zero_var:
+            logger.info(f"Dropping {len(zero_var)} zero-variance features: {zero_var[:5]}...")
+            X = X.drop(columns=zero_var)
+
+        # Drop non-numeric columns that slipped through
+        non_numeric = X.select_dtypes(exclude="number").columns.tolist()
+        if non_numeric:
+            logger.info(f"Dropping {len(non_numeric)} non-numeric columns: {non_numeric}")
+            X = X.drop(columns=non_numeric)
+
+        feature_cols = X.columns.tolist()
         self.feature_names = feature_cols
 
         # Target value (for regressor)
