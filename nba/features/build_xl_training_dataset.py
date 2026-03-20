@@ -484,7 +484,9 @@ class XLDatasetBuilder:
                             f"   ⚠️  {still_null_is_home:,} props missing is_home ({fallback_pct:.2f}%) - using home=True fallback"
                         )
                     # CRITICAL: fillna returns object dtype, must explicitly convert to bool
-                    df["is_home"] = df["is_home"].fillna(True).astype(bool)
+                    df["is_home"] = (
+                        df["is_home"].fillna(True).astype(int)
+                    )  # 0/1 not bool — trainer needs numeric
 
             # Verify home/away distribution
             home_count = df["is_home"].sum()
@@ -1086,7 +1088,7 @@ class XLDatasetBuilder:
 
         # 7. Data types
         print("\n7. Checking data types...")
-        assert df["is_home"].dtype == bool, "is_home must be boolean"
+        assert pd.api.types.is_numeric_dtype(df["is_home"]), "is_home must be numeric (0/1)"
         assert pd.api.types.is_numeric_dtype(df["label"]), "label must be numeric"
         print(f"   ✅ Data types correct")
 

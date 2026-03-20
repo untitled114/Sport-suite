@@ -594,103 +594,140 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
         self, player_name, opponent_team, stat_type, game_date
     ) -> Dict[str, float]:
         """
-        Extract 32 head-to-head matchup features from matchup_history table.
+        Extract 32 head-to-head matchup features.
+
+        For LIVE predictions: queries pre-computed matchup_history table (fast).
+        For TRAINING: computes inline from player_game_logs with point-in-time
+        filtering (game_date < prop_date) to prevent data leakage.
 
         Features:
         - 4 quality metrics (games, days_since_last, sample_quality, recency_weight)
-        - 20 per-stat averages (avg, std, L5/L10/L20 for 4 stats)
-        - 8 home/away splits (4 stats × home/away)
-
-        Args:
-            player_name: Player's full name
-            opponent_team: Opponent team code (e.g., 'BOS')
-            stat_type: 'POINTS', 'REBOUNDS', 'ASSISTS', or 'THREES'
-            game_date: Game date (for temporal safety)
-
-        Returns:
-            dict with 32 H2H features
+        - 20 per-stat averages (avg, std, L3/L5/L10/L20 for 4 stats)
+        - 8 home/away splits (4 stats x home/away)
         """
         if not opponent_team or opponent_team == "":
             return self._get_default_h2h_features()
 
-        try:
-            # Query for the specific stat_type row - data is now stat-type-specific
-            # Each stat_type row has its own columns (e.g., POINTS row has avg_points, l3_points, etc.)
-            stat_col_map = {
-                "POINTS": "points",
-                "REBOUNDS": "rebounds",
-                "ASSISTS": "assists",
-                "THREES": "threes",
-            }
-            stat_suffix = stat_col_map.get(stat_type)
-            if stat_suffix is None:
-                logger.warning(
-                    f"Unknown stat_type '{stat_type}' for H2H features, returning defaults"
-                )
-                return self._get_default_h2h_features()
+        stat_col_map = {
+            "POINTS": "points",
+            "REBOUNDS": "rebounds",
+            "ASSISTS": "assists",
+            "THREES": "threes",
+        }
+        stat_suffix = stat_col_map.get(stat_type)
+        if stat_suffix is None:
+            return self._get_default_h2h_features()
 
-            # Build query for the specific stat_type
-            query = f"""
-            SELECT
-                games_played, days_since_last, sample_quality, recency_weight,
-                avg_{stat_suffix}, std_{stat_suffix},
-                l3_{stat_suffix}, l5_{stat_suffix}, l10_{stat_suffix}, l20_{stat_suffix},
-                home_avg_{stat_suffix}, away_avg_{stat_suffix}, home_away_split_{stat_suffix}
-            FROM matchup_history
-            WHERE player_name = %s
-              AND opponent_team = %s
-              AND stat_type = %s
-              AND (computed_as_of_date IS NULL OR computed_as_of_date <= %s)
-            ORDER BY computed_as_of_date DESC NULLS LAST
-            LIMIT 1
+        # Always use point-in-time inline computation from game logs.
+        # This prevents leakage in training AND is accurate for live predictions.
+        return self._compute_h2h_inline(
+            player_name, opponent_team, stat_type, stat_suffix, game_date
+        )
+
+    def _compute_h2h_inline(
+        self, player_name, opponent_team, stat_type, stat_suffix, game_date
+    ) -> Dict[str, float]:
+        """Compute H2H features inline from player_game_logs.
+
+        Point-in-time: only uses games BEFORE game_date to prevent leakage.
+        """
+        try:
+            query = """
+            SELECT pgl.game_date, pgl.is_home,
+                   pgl.points, pgl.rebounds, pgl.assists, pgl.three_pointers_made,
+                   pgl.minutes_played
+            FROM player_game_logs pgl
+            JOIN player_profile pp ON pgl.player_id = pp.player_id
+            WHERE unaccent(pp.full_name) = %s
+              AND pgl.opponent_abbrev = %s
+              AND pgl.game_date < %s
+              AND pgl.minutes_played > 0
+            ORDER BY pgl.game_date DESC
             """
 
-            with self.intelligence_conn.cursor() as cur:
-                cur.execute(query, (player_name, opponent_team, stat_type, game_date))
-                result = cur.fetchone()
+            with self.conn.cursor() as cur:
+                cur.execute(query, (player_name, opponent_team, game_date))
+                rows = cur.fetchall()
 
-                if result and len(result) >= 12:
-                    # For backward compatibility, we still return all stat names
-                    # but only the queried stat_type will have actual values
-                    # Use 'is not None' checks to preserve legitimate zero values
-                    features = {
-                        "h2h_games": result[0] if result[0] is not None else 0,
-                        "h2h_days_since_last": result[1] if result[1] is not None else 999,
-                        "h2h_sample_quality": result[2] if result[2] is not None else 0.2,
-                        "h2h_recency_weight": result[3] if result[3] is not None else 0.5,
-                    }
-
-                    # Initialize all stats to 0.0
-                    for stat in ["points", "rebounds", "assists", "threes"]:
-                        features[f"h2h_avg_{stat}"] = 0.0
-                        features[f"h2h_std_{stat}"] = 0.0
-                        for window in ["L3", "L5", "L10", "L20"]:
-                            features[f"h2h_{window}_{stat}"] = 0.0
-                        features[f"h2h_home_avg_{stat}"] = 0.0
-                        features[f"h2h_away_avg_{stat}"] = 0.0
-
-                    # Populate the specific stat_type values from the query
-                    features[f"h2h_avg_{stat_suffix}"] = result[4] if result[4] is not None else 0.0
-                    features[f"h2h_std_{stat_suffix}"] = result[5] if result[5] is not None else 0.0
-                    features[f"h2h_L3_{stat_suffix}"] = result[6] if result[6] is not None else 0.0
-                    features[f"h2h_L5_{stat_suffix}"] = result[7] if result[7] is not None else 0.0
-                    features[f"h2h_L10_{stat_suffix}"] = result[8] if result[8] is not None else 0.0
-                    features[f"h2h_L20_{stat_suffix}"] = result[9] if result[9] is not None else 0.0
-                    features[f"h2h_home_avg_{stat_suffix}"] = (
-                        result[10] if result[10] is not None else 0.0
-                    )
-                    features[f"h2h_away_avg_{stat_suffix}"] = (
-                        result[11] if result[11] is not None else 0.0
-                    )
-
-                    return features
-                else:
+                if not rows:
                     return self._get_default_h2h_features()
 
+                # Build game dicts
+                games = []
+                for r in rows:
+                    games.append(
+                        {
+                            "game_date": r[0],
+                            "is_home": r[1],
+                            "points": float(r[2] or 0),
+                            "rebounds": float(r[3] or 0),
+                            "assists": float(r[4] or 0),
+                            "threes": float(r[5] or 0),
+                            "minutes": float(r[6] or 0),
+                        }
+                    )
+
+                n = len(games)
+                stat_vals = [g[stat_suffix if stat_suffix != "threes" else "threes"] for g in games]
+
+                # Initialize features
+                features = self._get_default_h2h_features()
+                features["h2h_games"] = n
+
+                # Days since last matchup
+                if games:
+                    import math
+                    from datetime import datetime as dt
+
+                    game_date_obj = dt.strptime(str(game_date)[:10], "%Y-%m-%d")
+                    last_game = dt.strptime(str(games[0]["game_date"])[:10], "%Y-%m-%d")
+                    days_since = (game_date_obj - last_game).days
+                    features["h2h_days_since_last"] = max(0, days_since)
+                    features["h2h_sample_quality"] = round(min(1.0, n / 20.0), 2)
+                    features["h2h_recency_weight"] = round(math.exp(-days_since / 90.0), 2)
+
+                # Compute stats for the primary stat type
+                if stat_vals:
+                    import numpy as np
+
+                    arr = np.array(stat_vals)
+                    features[f"h2h_avg_{stat_suffix}"] = float(np.mean(arr))
+                    features[f"h2h_std_{stat_suffix}"] = float(np.std(arr)) if n >= 2 else 0.0
+                    features[f"h2h_L3_{stat_suffix}"] = (
+                        float(np.mean(arr[:3])) if n >= 3 else float(np.mean(arr))
+                    )
+                    features[f"h2h_L5_{stat_suffix}"] = (
+                        float(np.mean(arr[:5])) if n >= 5 else float(np.mean(arr))
+                    )
+                    features[f"h2h_L10_{stat_suffix}"] = (
+                        float(np.mean(arr[:10])) if n >= 10 else float(np.mean(arr))
+                    )
+                    features[f"h2h_L20_{stat_suffix}"] = (
+                        float(np.mean(arr[:20])) if n >= 20 else 0.0
+                    )
+
+                    # Home/away splits
+                    home_vals = [
+                        g[stat_suffix if stat_suffix != "threes" else "threes"]
+                        for g in games
+                        if g["is_home"]
+                    ]
+                    away_vals = [
+                        g[stat_suffix if stat_suffix != "threes" else "threes"]
+                        for g in games
+                        if not g["is_home"]
+                    ]
+                    features[f"h2h_home_avg_{stat_suffix}"] = (
+                        float(np.mean(home_vals)) if home_vals else 0.0
+                    )
+                    features[f"h2h_away_avg_{stat_suffix}"] = (
+                        float(np.mean(away_vals)) if away_vals else 0.0
+                    )
+
+                return features
+
         except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
-            logger.warning(
-                f"Error extracting H2H features for {player_name} vs {opponent_team}: {e}"
-            )
+            logger.warning(f"Error computing inline H2H for {player_name} vs {opponent_team}: {e}")
             return self._get_default_h2h_features()
 
     def _get_default_h2h_features(self) -> Dict[str, float]:
