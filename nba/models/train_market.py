@@ -644,13 +644,22 @@ class StackedMarketModel:
         # ==========================
         logger.info("HEAD 2: Training Classifier (P(actual > line) prediction)")
 
-        # Train classifier using sklearn API (hyperparameters from centralized config)
+        # Train classifier using SEPARATE hyperparams (simpler trees, faster learning)
+        # The classifier needs fewer leaves + higher LR to avoid early-stopping at 13 trees
+        # when feature count is high. XL (0.767 AUC) used num_leaves=31, lr=0.05 → 369 trees.
+        cls_leaves = getattr(hp, "classifier_num_leaves", hp.num_leaves)
+        cls_lr = getattr(hp, "classifier_learning_rate", hp.learning_rate)
+        cls_n = getattr(hp, "classifier_n_estimators", hp.n_estimators)
+        logger.info(
+            "Classifier hyperparams",
+            extra={"num_leaves": cls_leaves, "learning_rate": cls_lr, "n_estimators": cls_n},
+        )
         self.classifier = LGBMClassifier(
             objective="binary",
             boosting_type="gbdt",
-            num_leaves=hp.num_leaves,
-            learning_rate=hp.learning_rate,
-            n_estimators=hp.n_estimators,
+            num_leaves=cls_leaves,
+            learning_rate=cls_lr,
+            n_estimators=cls_n,
             feature_fraction=hp.feature_fraction,
             bagging_fraction=hp.bagging_fraction,
             bagging_freq=hp.bagging_freq,

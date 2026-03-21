@@ -630,6 +630,7 @@ class TrainingHyperparameters:
         test_size: Fraction of data for testing
     """
 
+    # Regressor params (predicts stat value — can be more complex)
     n_estimators: int = 2000
     learning_rate: float = 0.02
     num_leaves: int = 63
@@ -639,6 +640,12 @@ class TrainingHyperparameters:
     early_stopping_rounds: int = 50
     random_state: int = 42
     test_size: float = 0.3
+
+    # Classifier-specific overrides (needs simpler trees + faster learning
+    # to avoid early-stopping at 13 trees with 185 features)
+    classifier_num_leaves: int = 31  # XL used 31 → built 369 trees
+    classifier_learning_rate: float = 0.05  # XL used 0.05
+    classifier_n_estimators: int = 500  # XL used 500
 
 
 @dataclass(frozen=True)
