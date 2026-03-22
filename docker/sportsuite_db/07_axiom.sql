@@ -2,7 +2,29 @@
 SET search_path TO axiom, public;
 
 -- ==========================================================================
--- PIPELINE AUDIT — one row per pipeline run
+-- PIPELINE RUNS — structured telemetry per run (Operational Excellence)
+-- ==========================================================================
+CREATE TABLE pipeline_runs (
+    run_id TEXT PRIMARY KEY,
+    run_date DATE NOT NULL,
+    run_number INTEGER NOT NULL,
+    run_type TEXT NOT NULL,
+    started_at TIMESTAMPTZ NOT NULL,
+    ended_at TIMESTAMPTZ,
+    status TEXT NOT NULL DEFAULT 'running',
+    duration_ms INTEGER,
+    tasks JSONB,                              -- per-task breakdown [{name, status, duration_ms, metrics}]
+    anomalies JSONB,                          -- [{type, severity, message}]
+    summary JSONB,                            -- {picks_generated, feature_count, props_fetched, ...}
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_pr_date ON pipeline_runs(run_date, run_number);
+CREATE INDEX idx_pr_status ON pipeline_runs(status) WHERE status != 'success';
+CREATE INDEX idx_pr_anomalies ON pipeline_runs(run_date) WHERE anomalies IS NOT NULL;
+
+-- ==========================================================================
+-- PIPELINE AUDIT — one row per pipeline run (legacy, kept for backward compat)
 -- ==========================================================================
 CREATE TABLE axiom_pipeline_audit (
     id SERIAL PRIMARY KEY,

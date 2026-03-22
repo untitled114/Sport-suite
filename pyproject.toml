@@ -192,9 +192,10 @@ omit = [
     "nba/features/extractors/vegas_features.py",
     "nba/features/extractors/team_betting_features.py",
     "nba/features/extractors/cheatsheet_features.py",
-    # Models (integration modules requiring model files / DB)
+    # Models (training, SHAP generation - require model files)
+    "nba/models/train_market.py",            # Full training pipeline, requires LightGBM + data
     "nba/models/generate_feature_importance.py",  # SHAP, requires model pickles
-    "nba/models/json_calibrator.py",              # Reads prediction JSONs + queries DB
+    "nba/models/json_calibrator.py",         # Reads prediction JSONs + queries DB
     # Core modules with heavy external dependencies
     "nba/core/experiment_tracking.py",       # MLflow integration
     "nba/core/logging_config.py",            # Logging setup
@@ -202,7 +203,6 @@ omit = [
     "nba/core/drift_detection.py",           # Requires model files and training data
     "nba/core/drift_service.py",             # Requires reference distributions
     "nba/core/reference_distributions.py",   # Requires training datasets
-    # Config database module — now tested via test_database_config.py
     # Scripts
     "nba/scripts/*",
     # Utilities (lower priority, mostly string manipulation)
