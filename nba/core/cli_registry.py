@@ -30,18 +30,13 @@ _EST = ZoneInfo("America/New_York")
 
 
 def _connect():
-    import os
-
     import psycopg2
 
-    return psycopg2.connect(
-        host=os.environ.get("DB_HOST", "localhost"),
-        port=5541,
-        dbname="cephalon_axiom",
-        user=os.environ.get("DB_USER", "mlb_user"),
-        password=os.environ.get("DB_PASSWORD", ""),
-        connect_timeout=5,
-    )
+    from nba.config.database import get_axiom_db_config
+
+    config = get_axiom_db_config()
+    config["connect_timeout"] = 5
+    return psycopg2.connect(**config)
 
 
 def cmd_health(args):

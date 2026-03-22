@@ -84,40 +84,54 @@ def _sample_pick(**overrides):
 class TestConnect:
     def test_returns_connection(self):
         mock_conn = MagicMock()
-        with patch("psycopg2.connect", return_value=mock_conn):
+        mock_config = {
+            "host": "localhost",
+            "port": 5500,
+            "dbname": "sportsuite",
+            "user": "mlb_user",
+            "password": "",
+        }
+        with (
+            patch("psycopg2.connect", return_value=mock_conn),
+            patch("nba.core.axiom_writer.get_axiom_db_config", return_value=mock_config.copy()),
+        ):
             result = _connect()
         assert result is mock_conn
 
-    def test_uses_env_vars(self):
+    def test_uses_centralized_config(self):
         mock_conn = MagicMock()
+        mock_config = {
+            "host": "my-host",
+            "port": 5500,
+            "dbname": "sportsuite",
+            "user": "my-user",
+            "password": "secret",
+        }
         with (
             patch("psycopg2.connect", return_value=mock_conn) as mock_pg,
-            patch.dict(
-                "os.environ",
-                {"DB_HOST": "my-host", "DB_USER": "my-user", "DB_PASSWORD": "secret"},
-            ),
+            patch("nba.core.axiom_writer.get_axiom_db_config", return_value=mock_config.copy()),
         ):
             _connect()
-        mock_pg.assert_called_once_with(
-            host="my-host",
-            port=5541,
-            dbname="cephalon_axiom",
-            user="my-user",
-            password="secret",
-            connect_timeout=5,
-        )
+        call_kwargs = mock_pg.call_args[1]
+        assert call_kwargs["host"] == "my-host"
+        assert call_kwargs["connect_timeout"] == 5
 
-    def test_defaults_when_env_missing(self):
+    def test_connect_timeout_added(self):
         mock_conn = MagicMock()
+        mock_config = {
+            "host": "localhost",
+            "port": 5500,
+            "dbname": "sportsuite",
+            "user": "mlb_user",
+            "password": "",
+        }
         with (
             patch("psycopg2.connect", return_value=mock_conn) as mock_pg,
-            patch.dict("os.environ", {}, clear=True),
+            patch("nba.core.axiom_writer.get_axiom_db_config", return_value=mock_config.copy()),
         ):
             _connect()
-        kwargs = mock_pg.call_args[1]
-        assert kwargs["host"] == "localhost"
-        assert kwargs["user"] == "mlb_user"
-        assert kwargs["password"] == ""
+        call_kwargs = mock_pg.call_args[1]
+        assert "connect_timeout" in call_kwargs
 
 
 # ─────────────────────────────────────────────────────────────────

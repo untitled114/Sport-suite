@@ -1316,18 +1316,18 @@ class TestSendDailyCard:
 class TestConnect:
     def test_connect_calls_psycopg2(self):
         mock_psycopg2 = MagicMock()
+        mock_config = {
+            "host": "testhost",
+            "port": 5500,
+            "dbname": "sportsuite",
+            "user": "testuser",
+            "password": "testpw",
+        }
         with patch.dict("sys.modules", {"psycopg2": mock_psycopg2}):
-            with patch.dict(
-                os.environ, {"DB_HOST": "testhost", "DB_USER": "testuser", "DB_PASSWORD": "testpw"}
-            ):
+            with patch("nba.core.daily_card.get_axiom_db_config", return_value=mock_config.copy()):
                 from nba.core.daily_card import _connect
 
                 _connect()
-                mock_psycopg2.connect.assert_called_once_with(
-                    host="testhost",
-                    port=5541,
-                    dbname="cephalon_axiom",
-                    user="testuser",
-                    password="testpw",
-                    connect_timeout=5,
-                )
+                call_kwargs = mock_psycopg2.connect.call_args[1]
+                assert call_kwargs["host"] == "testhost"
+                assert call_kwargs["connect_timeout"] == 5

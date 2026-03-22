@@ -1,5 +1,5 @@
 """
-Axiom Writer — pipeline write interface for cephalon_axiom DB (port 5541).
+Axiom Writer — pipeline write interface for cephalon_axiom DB.
 
 Used by the Airflow pipeline to record prediction history and audit runs.
 Separate from axiom_db.py, which is read-only and used by the bot/Atlas.
@@ -15,10 +15,10 @@ from datetime import datetime
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
+from nba.config.database import get_axiom_db_config
+
 log = logging.getLogger("nba.axiom_writer")
 
-_AXIOM_PORT = 5541
-_AXIOM_DB = "cephalon_axiom"
 _CONNECT_TIMEOUT = 5
 _EST = ZoneInfo("America/New_York")
 
@@ -63,14 +63,9 @@ def _connect():
     """Open a write connection to cephalon_axiom. Caller must close."""
     import psycopg2
 
-    return psycopg2.connect(
-        host=os.environ.get("DB_HOST", "localhost"),
-        port=_AXIOM_PORT,
-        dbname=_AXIOM_DB,
-        user=os.environ.get("DB_USER", "mlb_user"),
-        password=os.environ.get("DB_PASSWORD", ""),
-        connect_timeout=_CONNECT_TIMEOUT,
-    )
+    config = get_axiom_db_config()
+    config["connect_timeout"] = _CONNECT_TIMEOUT
+    return psycopg2.connect(**config)
 
 
 # ─────────────────────────────────────────────────────────────────

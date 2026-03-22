@@ -18,11 +18,11 @@ from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
 
+from nba.config.database import get_axiom_db_config
+
 log = logging.getLogger("nba.daily_card")
 
 _EST = ZoneInfo("America/New_York")
-_AXIOM_PORT = 5541
-_AXIOM_DB = "cephalon_axiom"
 _CONNECT_TIMEOUT = 5
 _DISCORD_API = "https://discord.com/api/v10"
 
@@ -58,14 +58,9 @@ _BOOK_DISPLAY = {
 def _connect():
     import psycopg2
 
-    return psycopg2.connect(
-        host=os.environ.get("DB_HOST", "localhost"),
-        port=_AXIOM_PORT,
-        dbname=_AXIOM_DB,
-        user=os.environ.get("DB_USER", "mlb_user"),
-        password=os.environ.get("DB_PASSWORD", ""),
-        connect_timeout=_CONNECT_TIMEOUT,
-    )
+    config = get_axiom_db_config()
+    config["connect_timeout"] = _CONNECT_TIMEOUT
+    return psycopg2.connect(**config)
 
 
 # ---------------------------------------------------------------------------
