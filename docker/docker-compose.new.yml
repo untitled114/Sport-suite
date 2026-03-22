@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  # ==========================================================================
+  # CONSOLIDATED NBA DATABASE
+  # Single TimescaleDB instance with schema-based isolation.
+  # Replaces 6 separate containers (ports 5536-5541) with 1 on port 5432.
+  #
+  # Schemas: players, games, teams, intelligence, axiom, features
+  # ==========================================================================
+  sportsuite_db:
+    image: timescale/timescaledb:latest-pg16
+    container_name: sportsuite_db
+    restart: unless-stopped
+    shm_size: '1g'
+    environment:
+      POSTGRES_DB: sportsuite
+      POSTGRES_USER: ${DB_USER:-mlb_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - sportsuite_data:/var/lib/postgresql/data
+      - ./sportsuite_db/01_init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      - ./sportsuite_db/02_schemas.sql:/docker-entrypoint-initdb.d/02_schemas.sql:ro
+      - ./sportsuite_db/03_players.sql:/docker-entrypoint-initdb.d/03_players.sql:ro
+      - ./sportsuite_db/04_games.sql:/docker-entrypoint-initdb.d/04_games.sql:ro
+      - ./sportsuite_db/05_teams.sql:/docker-entrypoint-initdb.d/05_teams.sql:ro
+      - ./sportsuite_db/06_intelligence.sql:/docker-entrypoint-initdb.d/06_intelligence.sql:ro
+      - ./sportsuite_db/07_axiom.sql:/docker-entrypoint-initdb.d/07_axiom.sql:ro
+      - ./sportsuite_db/08_features.sql:/docker-entrypoint-initdb.d/08_features.sql:ro
+    ports:
+      - "${SPORTSUITE_DB_PORT:-5500}:5432"
+    networks:
+      - nba_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-mlb_user} -d sportsuite"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  nba_network:
+    name: nba_network
+    driver: bridge
+
+volumes:
+  sportsuite_data:
+    name: sportsuite_data
+    driver: local
