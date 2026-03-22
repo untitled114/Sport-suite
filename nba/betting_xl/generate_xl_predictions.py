@@ -38,11 +38,7 @@ from nba.betting_xl.line_optimizer import PRODUCTION_CONFIG, LineOptimizer
 from nba.betting_xl.risk_filters import RiskFilter
 from nba.betting_xl.utils.hit_rate_loader import HitRateCache
 from nba.betting_xl.xl_predictor import XLPredictor
-from nba.config.database import (
-    get_games_db_config,
-    get_intelligence_db_config,
-    get_players_db_config,
-)
+from nba.config.database import get_connection
 from nba.core.drift_service import DriftService
 from nba.core.logging_config import add_logging_args, get_logger, setup_logging
 from nba.features.extract_live_features_xl import LiveFeatureExtractorXL
@@ -52,11 +48,6 @@ EST = ZoneInfo("America/New_York")
 
 # Logger will be configured in main() - use get_logger for module-level access
 logger = get_logger(__name__)
-
-# Database configs (centralized in nba.config.database)
-DB_INTELLIGENCE = get_intelligence_db_config()
-DB_PLAYERS = get_players_db_config()
-DB_GAMES = get_games_db_config()
 
 # Drift detection configuration
 DRIFT_DETECTION_ENABLED = os.getenv("NBA_DRIFT_DETECTION_ENABLED", "true").lower() == "true"
@@ -162,9 +153,9 @@ class XLPredictionsGenerator:
 
     def connect_databases(self):
         """Connect to NBA databases"""
-        self.conn_intelligence = psycopg2.connect(**DB_INTELLIGENCE)
-        self.conn_players = psycopg2.connect(**DB_PLAYERS)
-        self.conn_games = psycopg2.connect(**DB_GAMES)
+        self.conn_intelligence = get_connection("intelligence")
+        self.conn_players = get_connection("players")
+        self.conn_games = get_connection("games")
         logger.info("[OK] Connected to databases")
 
     def load_models(self):

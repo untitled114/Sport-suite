@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import psycopg2
 
+from nba.config.database import get_connection
 from nba.features.extract_live_features import LiveFeatureExtractor
 
 # Suppress all pandas warnings about SQLAlchemy
@@ -39,30 +40,8 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
         # Initialize parent class (connects to players, games, team databases)
         super().__init__()
 
-        default_user = self.DB_DEFAULT_USER
-        default_password = self.DB_DEFAULT_PASSWORD
-        self.INTELLIGENCE_DB_CONFIG = {
-            "host": os.getenv("NBA_INTEL_DB_HOST", "localhost"),
-            "port": int(os.getenv("NBA_INTEL_DB_PORT", 5539)),
-            "user": os.getenv("NBA_INTEL_DB_USER", default_user),
-            "password": os.getenv("NBA_INTEL_DB_PASSWORD", default_password),
-            "database": os.getenv("NBA_INTEL_DB_NAME", "nba_intelligence"),
-        }
-
-        # Add connection to nba_intelligence database (port 5539)
-        self.intelligence_conn = psycopg2.connect(**self.INTELLIGENCE_DB_CONFIG)
-        self.intelligence_conn.autocommit = True  # Prevent transaction error cascading
-
-        # Add connection to nba_team database (port 5538) for team betting performance
-        self.TEAM_DB_CONFIG = {
-            "host": os.getenv("NBA_TEAM_DB_HOST", "localhost"),
-            "port": int(os.getenv("NBA_TEAM_DB_PORT", 5538)),
-            "user": os.getenv("NBA_TEAM_DB_USER", default_user),
-            "password": os.getenv("NBA_TEAM_DB_PASSWORD", default_password),
-            "database": os.getenv("NBA_TEAM_DB_NAME", "nba_team"),
-        }
-        self.team_conn = psycopg2.connect(**self.TEAM_DB_CONFIG)
-        self.team_conn.autocommit = True  # Prevent transaction error cascading
+        self.intelligence_conn = get_connection("intelligence")
+        self.team_conn = get_connection("teams")
 
         # Cache for team betting performance (season -> team -> metrics)
         self._team_betting_cache = {}

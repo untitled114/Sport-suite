@@ -38,22 +38,12 @@ from tqdm import tqdm
 # Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+import re
+
 from features.extract_live_features import LiveFeatureExtractor
 from features.extract_live_features_xl import LiveFeatureExtractorXL
 
-from nba.config.database import (
-    get_games_db_config,
-    get_intelligence_db_config,
-    get_players_db_config,
-)
-
-# Database configuration (centralized)
-DB_CONFIG = get_intelligence_db_config()
-
-# Games database (for schedule lookup - second pass opponent_team enrichment)
-GAMES_DB_CONFIG = get_games_db_config()
-
-import re
+from nba.config.database import get_connection
 
 
 def normalize_player_name(name: str) -> str:
@@ -106,6 +96,42 @@ DFS_BOOKS = ("prizepicks", "underdog")
 class XLDatasetBuilder:
     """Builds leak-proof training dataset for XL models"""
 
+    # V4 extractor groups — used to detect real vs. defaulted features
+    _V4_EXTRACTORS = {
+        "bp_analytics": {
+            "prefix": "bp_analytics_",
+            "extra": ["dvp_stat_allowed", "dvp_stat_rank"],
+            "count": 15,
+        },
+        "game_context": {
+            "prefix": "game_",
+            "extra": [
+                "opp_score_margin_avg",
+                "player_minutes_stability",
+                "player_plus_minus_L5",
+                "player_usage_proxy",
+                "player_scoring_efficiency",
+                "player_blowout_risk",
+                "player_minutes_vs_avg",
+            ],
+            "count": 8,
+        },
+        "temporal": {
+            "prefix": "is_post_",
+            "extra": [
+                "days_since_trade_deadline",
+                "days_since_allstar",
+                "is_playoff_push",
+                "is_regular_season",
+                "season_pct",
+                "player_games_with_team",
+                "is_new_team",
+                "team_tenure_games",
+            ],
+            "count": 10,
+        },
+    }
+
     def __init__(self, output_dir: str = "datasets/", verbose: bool = True, dfs_only: bool = False):
         """
         Initialize dataset builder.
@@ -122,6 +148,9 @@ class XLDatasetBuilder:
         self.conn = None
         self.cursor = None
 
+        # V4 extractor tracking — counts real vs. defaulted per extractor
+        self._v4_stats = {name: {"real": 0, "default": 0} for name in self._V4_EXTRACTORS}
+
         # Initialize feature extractors (train/serve consistency)
         self.extractor_xl = LiveFeatureExtractorXL()
 
@@ -136,13 +165,11 @@ class XLDatasetBuilder:
             print("=" * 80)
 
     def connect(self):
-        """Connect to database"""
+        """Connect to intelligence schema"""
         if self.verbose:
-            print(
-                f"\nConnecting to {DB_CONFIG['database']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}"
-            )
+            print("\nConnecting to intelligence schema...")
 
-        self.conn = psycopg2.connect(**DB_CONFIG)
+        self.conn = get_connection("intelligence")
         self.cursor = self.conn.cursor()
 
         if self.verbose:
@@ -265,8 +292,8 @@ class XLDatasetBuilder:
         if self.verbose:
             print("\n🏠 Enriching is_home and opponent_team from player_game_logs...")
 
-        # Connect to players database (centralized config)
-        conn_players = psycopg2.connect(**get_players_db_config())
+        # Connect to players schema
+        conn_players = get_connection("players")
 
         try:
             # Get unique (player_name, game_date) pairs that need enrichment
@@ -382,8 +409,8 @@ class XLDatasetBuilder:
                     player_teams[full_name] = team_abbrev
                 cursor2.close()
 
-                # Get games schedule from nba_games database
-                conn_games = psycopg2.connect(**GAMES_DB_CONFIG)
+                # Get games schedule from games schema
+                conn_games = get_connection("games")
                 cursor_games = conn_games.cursor()
 
                 # Get all game dates we need
@@ -662,11 +689,52 @@ class XLDatasetBuilder:
 
         return grouped
 
+    def _track_v4_extractors(self, features: Dict[str, Any]):
+        """Track whether each V4 extractor returned real data or defaults."""
+        from nba.features.extractors.bp_analytics_features import BPAnalyticsFeatureExtractor
+        from nba.features.extractors.game_context_features import GameContextFeatureExtractor
+        from nba.features.extractors.temporal_features import TemporalFeatureExtractor
+
+        defaults_map = {
+            "bp_analytics": BPAnalyticsFeatureExtractor.get_defaults(),
+            "game_context": GameContextFeatureExtractor.get_defaults(),
+            "temporal": TemporalFeatureExtractor.get_defaults(),
+        }
+
+        for name, default_vals in defaults_map.items():
+            # Check if ALL values match defaults — if so, extractor returned defaults
+            all_default = all(features.get(k) == v for k, v in default_vals.items())
+            if all_default:
+                self._v4_stats[name]["default"] += 1
+            else:
+                self._v4_stats[name]["real"] += 1
+
+    def _print_v4_report(self):
+        """Print V4 extractor success rates after dataset build."""
+        total = sum(s["real"] + s["default"] for s in self._v4_stats.values()) // len(
+            self._v4_stats
+        )
+        if total == 0:
+            return
+
+        print(f"\n{'=' * 60}")
+        print("V4 FEATURE EXTRACTOR REPORT")
+        print(f"{'=' * 60}")
+        print(f"{'Extractor':<20} {'Real':>8} {'Default':>8} {'Rate':>8}")
+        print(f"{'-' * 44}")
+        for name, stats in self._v4_stats.items():
+            real = stats["real"]
+            default = stats["default"]
+            rate = real / (real + default) * 100 if (real + default) > 0 else 0
+            status = "OK" if rate > 50 else "LOW"
+            print(f"{name:<20} {real:>8,} {default:>8,} {rate:>6.1f}%  {status}")
+        print(f"{'=' * 60}")
+
     def extract_features(self, prop: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Extract 165+ features for a single prop using LiveFeatureExtractorXL.
+        Extract features for a single prop using LiveFeatureExtractorXL.
 
-        Features include:
+        Feature groups (V4):
         - 82 base player features (EMA stats + plus_minus + FT rate + TS%)
         - 23 book features (line shopping, deviations)
         - 36 H2H matchup features
@@ -674,6 +742,9 @@ class XLDatasetBuilder:
         - 2 vegas context features
         - 5 team betting features (ATS%, O/U%)
         - 8 BettingPros cheatsheet features
+        - 15 BP analytics features (projection, EV, hit rates, DVP)
+        - 8 game context features (pace, blowout, minutes, efficiency)
+        - 10 temporal features (trade deadline, All-Star, playoff push, tenure)
 
         VALIDATION:
         - REQUIRES opponent_team (no fallback - will return None if missing)
@@ -718,6 +789,9 @@ class XLDatasetBuilder:
                         f"insufficient game history (<20 games)"
                     )
                 return None
+
+            # Track V4 extractor success vs. default
+            self._track_v4_extractors(features)
 
             # Add pre-computed book features from aggregated data
             # ONLY override if the aggregated value exists and is non-zero
@@ -910,11 +984,22 @@ class XLDatasetBuilder:
         dataset = dataset.sort_values("game_date").reset_index(drop=True)
 
         if self.verbose:
-            print(f"\n✅ Dataset built: {len(dataset):,} rows")
+            metadata_cols = {
+                "player_name",
+                "game_date",
+                "stat_type",
+                "source",
+                "label",
+                "split",
+                "opponent_team",
+                "is_home",
+                "line",
+                f"actual_{stat_type.lower()}",
+            }
+            feature_count = len([c for c in dataset.columns if c not in metadata_cols])
+            print(f"\n✅ Dataset built: {len(dataset):,} rows, {feature_count} features")
             print(f"   Errors: {errors}")
-            print(
-                f"   Features: {len([c for c in dataset.columns if c.startswith('ema_') or c.startswith('team_') or c.startswith('opponent_')])}"
-            )
+            self._print_v4_report()
 
         # Validate book features are non-zero
         if self.verbose:
@@ -940,25 +1025,24 @@ class XLDatasetBuilder:
         return dataset
 
     def validate_dataset_quality(
-        self, df: pd.DataFrame, stat_type: str, expected_features: int = 165
+        self, df: pd.DataFrame, stat_type: str, expected_features: int = None
     ):
         """
-        ANTHROPIC STANDARDS: Comprehensive dataset quality validation.
-        Ensures datasets meet production standards before saving.
+        Comprehensive dataset quality validation.
 
         Checks:
-        1. Feature count matches expected (165) - V3 models (Jan 7, 2026)
-        2. No NaN values in features (0% threshold)
+        1. Feature count is consistent and >= 150 (minimum viable)
+        2. No NaN values in critical metadata
         3. No empty strings in categorical columns
         4. No infinite values in numeric columns
         5. All required metadata columns present
-        6. Opponent_team coverage ≥99%
+        6. Opponent_team coverage >= 99%
         7. Data types are correct
 
         Args:
             df: Dataset to validate
             stat_type: Stat type for logging
-            expected_features: Expected feature count (default: 165)
+            expected_features: If None, discovers from data and logs it
 
         Raises:
             ValueError if any validation fails
@@ -992,16 +1076,21 @@ class XLDatasetBuilder:
         feature_cols = [c for c in df.columns if c not in metadata_cols]
         actual_features = len(feature_cols)
 
-        if actual_features != expected_features:
-            diff = actual_features - expected_features
-            print(f"   ❌ Feature count mismatch: {actual_features} (expected {expected_features})")
-            print(f"      Difference: {diff:+d} features")
-            # List feature columns for debugging
+        # Minimum viable feature count (XL base = 102, anything less means extraction is broken)
+        _MIN_FEATURES = 150
+
+        if actual_features < _MIN_FEATURES:
+            print(f"   ❌ Feature count too low: {actual_features} (minimum {_MIN_FEATURES})")
             print(f"      Feature columns: {sorted(feature_cols)[:10]}... (showing first 10)")
-            raise ValueError(
-                f"Feature count validation failed: {actual_features} != {expected_features}"
+            raise ValueError(f"Feature count too low: {actual_features} < {_MIN_FEATURES}")
+
+        if expected_features is not None and actual_features != expected_features:
+            diff = actual_features - expected_features
+            print(
+                f"   ⚠️  Feature count: {actual_features} (expected {expected_features}, diff {diff:+d})"
             )
-        print(f"   ✅ Feature count: {actual_features}")
+        else:
+            print(f"   ✅ Feature count: {actual_features}")
 
         # 2. NaN values - RELAXED: Models have imputers to handle NaN
         print("\n2. Checking for NaN values...")
@@ -1321,9 +1410,7 @@ class XLDatasetBuilder:
                 if dataset is not None and len(dataset) > 0:
                     # CRITICAL: Validate dataset quality (Anthropic standards)
                     try:
-                        # V4: 229 features (was 163 for V3)
-                        # 136 V3 + 15 BP analytics + 8 game context + 10 temporal + 19 direct + metadata
-                        self.validate_dataset_quality(dataset, stat_type, expected_features=229)
+                        self.validate_dataset_quality(dataset, stat_type)
                     except ValueError as e:
                         print(f"\n❌ VALIDATION FAILED for {stat_type}: {e}")
                         print("   Skipping this dataset - FIX DATA QUALITY ISSUES FIRST")

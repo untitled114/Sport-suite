@@ -23,14 +23,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)  # Only show warnings and errors
 
 # Import centralized database config
-from nba.config.database import (
-    DB_DEFAULT_PASSWORD,
-    DB_DEFAULT_USER,
-    get_games_db_config,
-    get_intelligence_db_config,
-    get_players_db_config,
-    get_team_db_config,
-)
+from nba.config.database import DB_DEFAULT_PASSWORD, DB_DEFAULT_USER, get_connection
 
 
 class LiveFeatureExtractor:
@@ -39,12 +32,6 @@ class LiveFeatureExtractor:
     # Expose defaults for subclasses
     DB_DEFAULT_USER = DB_DEFAULT_USER
     DB_DEFAULT_PASSWORD = DB_DEFAULT_PASSWORD
-
-    # Database configs (centralized)
-    PLAYER_DB_CONFIG = get_players_db_config()
-    GAMES_DB_CONFIG = get_games_db_config()
-    TEAM_DB_CONFIG = get_team_db_config()
-    INTELLIGENCE_DB_CONFIG = get_intelligence_db_config()
 
     # Team abbreviation mapping (props -> database)
     TEAM_ABBREV_MAP = {
@@ -151,20 +138,11 @@ class LiveFeatureExtractor:
         """
         Initialize feature extractor with database connections.
 
-        Connects to three PostgreSQL databases:
-        - nba_players (port 5536): Player profiles and game logs
-        - nba_games (port 5537): Game data and box scores
-        - nba_team (port 5538): Team statistics
-
-        Raises:
-            psycopg2.OperationalError: If database connection fails
+        Connects to players, games, and teams schemas.
         """
-        self.conn = psycopg2.connect(**self.PLAYER_DB_CONFIG)
-        self.conn.autocommit = True  # Avoid stuck transactions on query errors
-        self.games_conn = psycopg2.connect(**self.GAMES_DB_CONFIG)
-        self.games_conn.autocommit = True
-        self.team_conn = psycopg2.connect(**self.TEAM_DB_CONFIG)
-        self.team_conn.autocommit = True
+        self.conn = get_connection("players")
+        self.games_conn = get_connection("games")
+        self.team_conn = get_connection("teams")
 
     def normalize_team_abbrev(self, team_abbrev):
         """
@@ -1519,7 +1497,7 @@ class LiveFeatureExtractor:
 
         try:
             # Connect to intelligence DB for injury_report
-            int_conn = psycopg2.connect(**self.INTELLIGENCE_DB_CONFIG)
+            int_conn = get_connection("intelligence")
 
             # Query: Get count of teammates (same team, not this player) with OUT status
             # Need to join injury_report -> player_profile to get team info
@@ -1646,7 +1624,7 @@ class LiveFeatureExtractor:
             significant_teammate_ids = list(significant_teammates.keys())
 
             # Step 3: Connect to intelligence DB and count OUT statuses for significant teammates
-            int_conn = psycopg2.connect(**self.INTELLIGENCE_DB_CONFIG)
+            int_conn = get_connection("intelligence")
             total_absences = 0
 
             with int_conn.cursor() as cur:
