@@ -690,3 +690,371 @@ class TestComputeBpCoverage:
         features = DirectLineFeatureExtractor.get_defaults()
         self.extractor._compute_bp_coverage(direct_df, bp_df, features)
         assert features["bp_coverage_ratio"] == 0.0
+
+
+# ─────────────────────────────────────────────────────────────────
+# Coverage: _compute_line_movement_features with actual snapshot data
+# Lines 217, 234-245, 251-260, 266-275, 326, 444, 559-561
+# ─────────────────────────────────────────────────────────────────
+
+
+class TestLineMovementFeaturesAdvanced:
+    def setup_method(self):
+        self.extractor = DirectLineFeatureExtractor(conn=MagicMock())
+
+    def test_zero_time_delta_zero_velocity(self):
+        """Line 444: time_delta_hours == 0 → velocity = 0.0."""
+        ts = datetime(2026, 3, 16, 10, 0)
+        df = pd.DataFrame(
+            {
+                "snapshot_at": [ts, ts],
+                "over_line": [25.0, 26.0],
+                "book_name": ["dk", "fd"],
+            }
+        )
+        features = DirectLineFeatureExtractor.get_defaults()
+        self.extractor._compute_line_movement_features(df, features)
+        assert features["line_movement_velocity"] == 0.0
+
+    def test_single_consensus_no_velocity(self):
+        """When only one consensus time point, skip velocity."""
+        ts = datetime(2026, 3, 16, 10, 0)
+        df = pd.DataFrame(
+            {
+                "snapshot_at": [ts],
+                "over_line": [25.0],
+                "book_name": ["dk"],
+            }
+        )
+        features = DirectLineFeatureExtractor.get_defaults()
+        self.extractor._compute_line_movement_features(df, features)
+        assert features["line_movement_velocity"] == 0.0
+
+    def test_no_over_line_column(self):
+        """Branch: missing over_line column returns early."""
+        ts = datetime(2026, 3, 16, 10, 0)
+        df = pd.DataFrame({"snapshot_at": [ts], "book_name": ["dk"]})
+        features = DirectLineFeatureExtractor.get_defaults()
+        self.extractor._compute_line_movement_features(df, features)
+        assert features["line_movement_velocity"] == 0.0
+
+    def test_convergence_not_computed_with_too_few_snapshots(self):
+        """Convergence needs midpoint > 1, so 2 snapshots won't compute it."""
+        ts1 = datetime(2026, 3, 16, 10, 0)
+        ts2 = datetime(2026, 3, 16, 12, 0)
+        df = pd.DataFrame(
+            {
+                "snapshot_at": [ts1, ts2],
+                "over_line": [25.0, 26.0],
+                "book_name": ["dk", "dk"],
+            }
+        )
+        features = DirectLineFeatureExtractor.get_defaults()
+        self.extractor._compute_line_movement_features(df, features)
+        assert features["line_convergence"] == 0.0  # Default, not computed
+
+    def test_divergence_negative_convergence(self):
+        """Lines converging = positive, diverging = negative."""
+        ts_base = datetime(2026, 3, 16, 8, 0)
+        # First half: tight (25.0, 25.0)
+        # Second half: wide (23.0, 27.0)
+        df = pd.DataFrame(
+            {
+                "snapshot_at": [
+                    ts_base,
+                    ts_base + timedelta(hours=1),
+                    ts_base + timedelta(hours=2),
+                    ts_base + timedelta(hours=3),
+                ],
+                "over_line": [25.0, 25.0, 23.0, 27.0],
+                "book_name": ["dk", "fd", "dk", "fd"],
+            }
+        )
+        features = DirectLineFeatureExtractor.get_defaults()
+        self.extractor._compute_line_movement_features(df, features)
+        # first_half_std < second_half_std → negative convergence (diverging)
+        assert features["line_convergence"] < 0
+
+
+class TestCrossPlatformFeaturesAdvanced:
+    def setup_method(self):
+        self.extractor = DirectLineFeatureExtractor(conn=MagicMock())
+
+    def test_with_underdog_capital_name(self):
+        """Cross-platform uses 'Underdog' in DFS set."""
+        df = pd.DataFrame(
+            {
+                "book_name": ["draftkings_direct", "Underdog"],
+                "over_line": [25.0, 25.5],
+            }
+        )
+        features = DirectLineFeatureExtractor.get_defaults()
+        self.extractor._compute_cross_platform_features(df, features)
+        # Gap = 0.5 → agreement = 1 - 0.5/2 = 0.75
+        assert features["cross_platform_agreement"] == pytest.approx(0.75, abs=0.01)
+
+    def test_with_prizepicks_capital_name(self):
+        """Cross-platform uses 'PrizePicks' in DFS set."""
+        df = pd.DataFrame(
+            {
+                "book_name": ["fanduel_direct", "PrizePicks"],
+                "over_line": [25.0, 25.0],
+            }
+        )
+        features = DirectLineFeatureExtractor.get_defaults()
+        self.extractor._compute_cross_platform_features(df, features)
+        assert features["cross_platform_agreement"] == pytest.approx(1.0, abs=0.01)
+
+
+class TestExtractWithMultipleDataSources:
+    """Test extract() method with both direct and snapshot data present."""
+
+    def test_full_data_pipeline(self):
+        """Cover the full extract path with direct + snapshot + bp data."""
+        extractor = DirectLineFeatureExtractor(conn=MagicMock())
+
+        direct_df = pd.DataFrame(
+            {
+                "book_name": ["draftkings_direct", "fanduel_direct", "underdog_direct"],
+                "over_line": [25.0, 25.5, 26.0],
+                "over_odds": [-110.0, -115.0, -108.0],
+                "under_line": [25.0, 25.5, 26.0],
+                "under_odds": [-110.0, -105.0, -112.0],
+                "bp_reported_line": [25.0, 25.5, None],
+                "bp_discrepancy": [0.0, 0.5, None],
+                "fetch_timestamp": [datetime(2026, 3, 16, 12)] * 3,
+            }
+        )
+
+        from zoneinfo import ZoneInfo
+
+        EST = ZoneInfo("America/New_York")
+        ts1 = datetime(2026, 3, 16, 10, 0, tzinfo=EST)
+        ts2 = datetime(2026, 3, 16, 11, 0, tzinfo=EST)
+        ts3 = datetime(2026, 3, 16, 12, 0, tzinfo=EST)
+        ts4 = datetime(2026, 3, 16, 13, 0, tzinfo=EST)
+        snapshot_df = pd.DataFrame(
+            {
+                "book_name": ["dk_direct", "dk_direct", "fd_direct", "fd_direct"],
+                "over_line": [25.0, 25.5, 25.5, 25.5],
+                "over_odds": [-110, -110, -115, -115],
+                "under_odds": [-110, -110, -105, -105],
+                "fetch_source": ["direct"] * 4,
+                "snapshot_at": [ts1, ts2, ts3, ts4],
+            }
+        )
+
+        bp_df = pd.DataFrame({"book_name": ["DraftKings", "FanDuel"]})
+
+        with (
+            patch.object(extractor, "_fetch_direct_props", return_value=direct_df),
+            patch.object(extractor, "_fetch_snapshots", return_value=snapshot_df),
+            patch.object(extractor, "_fetch_bp_props", return_value=bp_df),
+        ):
+            result = extractor.extract("LeBron James", "2026-03-16", "POINTS")
+
+        assert result["num_direct_sources"] == 3.0
+        assert result["direct_consensus"] > 0
+        assert result["snapshot_count"] == 4.0
+        assert result["hours_tracked"] > 0
+        assert result["bp_coverage_ratio"] > 0
+        assert result["cross_platform_agreement"] > 0  # Has underdog_direct
+        assert result["freshness_score"] >= 0
+
+
+class TestExtractFromDataframesWithSnapshots:
+    """Cover lines 559-561: extract_from_dataframes with snapshot data."""
+
+    def setup_method(self):
+        self.extractor = DirectLineFeatureExtractor(conn=MagicMock())
+
+    def test_snapshot_only(self):
+        """Lines 559-561: snapshot_df provided without direct_df."""
+        from zoneinfo import ZoneInfo
+
+        EST = ZoneInfo("America/New_York")
+        ts1 = datetime(2026, 3, 16, 10, 0, tzinfo=EST)
+        ts2 = datetime(2026, 3, 16, 12, 0, tzinfo=EST)
+        snapshot_df = pd.DataFrame(
+            {
+                "book_name": ["dk_direct", "dk_direct"],
+                "over_line": [25.0, 26.0],
+                "over_odds": [-110, -110],
+                "under_odds": [-110, -110],
+                "fetch_source": ["direct", "direct"],
+                "snapshot_at": [ts1, ts2],
+            }
+        )
+        result = self.extractor.extract_from_dataframes(None, snapshot_df, None)
+        assert result["snapshot_count"] == 2.0
+        assert result["hours_tracked"] == pytest.approx(2.0, abs=0.01)
+        assert result["freshness_score"] >= 0
+
+    def test_direct_and_snapshot_together(self):
+        """Full path: direct_df + snapshot_df + bp_df all provided."""
+        from zoneinfo import ZoneInfo
+
+        EST = ZoneInfo("America/New_York")
+        direct_df = pd.DataFrame(
+            {
+                "book_name": ["draftkings_direct", "fanduel_direct"],
+                "over_line": [25.0, 25.5],
+                "over_odds": [-110.0, -115.0],
+                "under_line": [25.0, 25.5],
+                "under_odds": [-110.0, -105.0],
+                "bp_reported_line": [25.0, None],
+                "bp_discrepancy": [0.5, None],
+                "fetch_timestamp": [datetime(2026, 3, 16)] * 2,
+            }
+        )
+        ts1 = datetime(2026, 3, 16, 10, 0, tzinfo=EST)
+        ts2 = datetime(2026, 3, 16, 14, 0, tzinfo=EST)
+        snapshot_df = pd.DataFrame(
+            {
+                "book_name": ["dk_direct", "dk_direct"],
+                "over_line": [24.5, 25.5],
+                "over_odds": [-110, -110],
+                "under_odds": [-110, -110],
+                "fetch_source": ["direct", "direct"],
+                "snapshot_at": [ts1, ts2],
+            }
+        )
+        bp_df = pd.DataFrame({"book_name": ["DraftKings"]})
+
+        result = self.extractor.extract_from_dataframes(direct_df, snapshot_df, bp_df)
+        assert result["num_direct_sources"] == 2.0
+        assert result["snapshot_count"] == 2.0
+        assert result["hours_tracked"] > 0
+        assert result["bp_coverage_ratio"] > 0
+
+
+class TestFetchMethodsViaExtract:
+    """Cover lines 234-245, 251-260, 266-275 by letting fetch methods execute."""
+
+    def test_fetch_direct_props_builds_correct_query(self):
+        """Lines 234-245: _fetch_direct_props builds and executes query."""
+        mock_conn = MagicMock()
+        extractor = DirectLineFeatureExtractor(conn=mock_conn)
+
+        with patch.object(extractor, "_safe_query", return_value=None) as mock_sq:
+            result = extractor._fetch_direct_props("LeBron", "2026-03-16", "points")
+        assert result is None
+        call_args = mock_sq.call_args
+        assert "fetch_source = 'direct'" in call_args[0][0]
+        assert call_args[0][1] == ("LeBron", "2026-03-16", "POINTS")
+
+    def test_fetch_bp_props_builds_correct_query(self):
+        """Lines 251-260: _fetch_bp_props builds and executes query."""
+        mock_conn = MagicMock()
+        extractor = DirectLineFeatureExtractor(conn=mock_conn)
+
+        with patch.object(extractor, "_safe_query", return_value=None) as mock_sq:
+            result = extractor._fetch_bp_props("LeBron", "2026-03-16", "rebounds")
+        assert result is None
+        call_args = mock_sq.call_args
+        assert "fetch_source = 'bettingpros'" in call_args[0][0]
+        assert call_args[0][1] == ("LeBron", "2026-03-16", "REBOUNDS")
+
+    def test_fetch_snapshots_builds_correct_query(self):
+        """Lines 266-275: _fetch_snapshots builds and executes query."""
+        mock_conn = MagicMock()
+        extractor = DirectLineFeatureExtractor(conn=mock_conn)
+
+        with patch.object(extractor, "_safe_query", return_value=None) as mock_sq:
+            result = extractor._fetch_snapshots("LeBron", "2026-03-16", "points")
+        assert result is None
+        call_args = mock_sq.call_args
+        assert "nba_line_snapshots" in call_args[0][0]
+        assert call_args[0][1] == ("LeBron", "2026-03-16", "POINTS")
+
+
+class TestBpDiscrepancyLatencyNoReportedLine:
+    """Test bp_discrepancy with bp_reported_line all None (line 326)."""
+
+    def setup_method(self):
+        self.extractor = DirectLineFeatureExtractor(conn=MagicMock())
+
+    def test_no_bp_reported_line_latency_zero(self):
+        """Line 326: bp_reported_line all None → latency = 0."""
+        df = pd.DataFrame(
+            {
+                "book_name": ["dk", "fd"],
+                "over_line": [25.0, 25.5],
+                "bp_discrepancy": [0.5, -1.0],
+                "fetch_timestamp": [datetime(2026, 3, 16), datetime(2026, 3, 16)],
+                "bp_reported_line": [None, None],
+            }
+        )
+        features = DirectLineFeatureExtractor.get_defaults()
+        self.extractor._compute_bp_discrepancy_features(df, features)
+        assert features["bp_line_latency_avg"] == 0.0
+        assert features["bp_discrepancy_avg"] != 0.0  # Discrepancy still computed
+
+    def test_discrepancy_no_fetch_timestamp_column(self):
+        """Branch 317->exit: bp_discrepancy exists but no fetch_timestamp column."""
+        df = pd.DataFrame(
+            {
+                "book_name": ["dk"],
+                "over_line": [25.0],
+                "bp_discrepancy": [0.5],
+            }
+        )
+        features = DirectLineFeatureExtractor.get_defaults()
+        self.extractor._compute_bp_discrepancy_features(df, features)
+        assert features["bp_discrepancy_avg"] == 0.5
+        # Latency should stay at default since no fetch_timestamp column
+        assert features["bp_line_latency_avg"] == 0.0
+
+
+class TestOddsEdgeCases:
+    """Cover remaining odds computation branch misses."""
+
+    def setup_method(self):
+        self.extractor = DirectLineFeatureExtractor(conn=MagicMock())
+
+    def test_zero_odds_skips_vig(self):
+        """Branch 344->338: odds of 0 → implied = 0 → skip vig append."""
+        df = pd.DataFrame(
+            {
+                "book_name": ["dk", "fd"],
+                "over_line": [25.0, 25.0],
+                "over_odds": [0.0, -110.0],
+                "under_odds": [0.0, -110.0],
+            }
+        )
+        features = DirectLineFeatureExtractor.get_defaults()
+        self.extractor._compute_odds_features(df, features)
+        # Only the second row should contribute to vig (dk has odds=0)
+        assert features["odds_vig_avg"] > 0
+
+    def test_mixed_nan_odds_in_rows(self):
+        """Branch 341->338: individual row has NaN odds while column has non-null values."""
+        df = pd.DataFrame(
+            {
+                "book_name": ["dk", "fd", "bg"],
+                "over_line": [25.0, 25.0, 25.0],
+                "over_odds": [-110.0, None, -108.0],
+                "under_odds": [-110.0, -105.0, None],
+            }
+        )
+        features = DirectLineFeatureExtractor.get_defaults()
+        self.extractor._compute_odds_features(df, features)
+        # Only dk has both non-null → 1 vig entry
+        assert features["odds_vig_avg"] > 0
+
+    def test_vigs_empty_when_no_row_has_both_odds(self):
+        """Branch 347->351: vigs list empty → odds_vig_avg stays default."""
+        df = pd.DataFrame(
+            {
+                "book_name": ["dk", "fd"],
+                "over_line": [25.0, 25.0],
+                "over_odds": [-110.0, None],
+                "under_odds": [None, -110.0],
+            }
+        )
+        features = DirectLineFeatureExtractor.get_defaults()
+        self.extractor._compute_odds_features(df, features)
+        # No row has both over_odds AND under_odds non-null, so vigs is empty
+        assert features["odds_vig_avg"] == 0.0
+        # But odds_spread should still be computed from the non-null over_odds
+        assert features["direct_odds_spread"] == 0.0  # Only 1 non-null over_odds

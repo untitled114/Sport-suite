@@ -771,6 +771,32 @@ def nba_full_pipeline():
         count = _compute(run_date, run_number=run_number)
         return {"conviction_rows": count}
 
+    @task(task_id="check_feature_store", retries=0)
+    def check_feature_store(xl_result: dict[str, Any]) -> dict[str, Any]:
+        """Check feature store coverage after predictions wrote features inline.
+
+        Features are written during extract_features() in generate_xl_predictions.
+        This task verifies coverage and logs gaps.
+        """
+        try:
+            from zoneinfo import ZoneInfo
+
+            from nba.features.feature_store import FeatureStore
+
+            run_date = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+            store = FeatureStore()
+            coverage = store.get_coverage("xl_v1", stat_type=None)
+            today = store.get_coverage("xl_v1")
+            store.close()
+
+            return {
+                "total_features": coverage["count"],
+                "date_range": f"{coverage['min_date']} to {coverage['max_date']}",
+                "today_count": today["count"],
+            }
+        except Exception as e:
+            return {"total_features": 0, "error": str(e)}
+
     # ========================================================================
     # Task Dependencies
     # ========================================================================
@@ -826,6 +852,9 @@ def nba_full_pipeline():
     # Axiom write + conviction — after summary, never block pipeline
     axiom = write_to_axiom(gate, xl, summary)
     compute_conviction(axiom)
+
+    # Feature store — verify today's features were written during prediction (after XL)
+    check_feature_store(xl)
 
 
 dag = nba_full_pipeline()

@@ -559,3 +559,118 @@ class TestPrintReport:
         analyzer._print_report(report)
         out = capsys.readouterr().out
         assert "and 5 more" in out
+
+    def test_print_report_missing_from_direct_truncated(self, capsys):
+        """When > 10 missing_from_direct, shows '... and N more'."""
+        analyzer = DiscrepancyAnalyzer(verbose=True)
+        missing_direct = [
+            {"player_name": f"P{i}", "stat_type": "POINTS", "book_base": "fd"} for i in range(12)
+        ]
+        report = {
+            "game_date": "2026-03-16",
+            "total_comparisons": 10,
+            "avg_line_diff": 0.0,
+            "avg_abs_line_diff": 0.0,
+            "max_line_diff": 0.0,
+            "stale_lines_count": 0,
+            "missing_from_bp": [],
+            "missing_from_direct": missing_direct,
+            "per_book_summary": {},
+        }
+        analyzer._print_report(report)
+        out = capsys.readouterr().out
+        assert "Props in BP but NOT in Direct" in out
+        assert "and 2 more" in out
+
+
+# ─────────────────────────────────────────────────────────────────
+# Verbose output paths (coverage for lines 358-362, 455-456, 537-543, 585-590)
+# ─────────────────────────────────────────────────────────────────
+
+
+class TestVerboseOutputPaths:
+    def test_flag_stale_lines_verbose_prints_count(self, capsys):
+        """Line 358-362: verbose=True in flag_stale_lines prints count."""
+        analyzer, mock_conn = _make_analyzer(verbose=True)
+        mock_cur = MagicMock()
+        ts_direct = datetime(2026, 3, 16, 14, 0, 0)
+        ts_bp = datetime(2026, 3, 16, 12, 30, 0)
+        lag_sec = (ts_direct - ts_bp).total_seconds()
+        mock_cur.fetchall.return_value = [
+            ("LeBron", "POINTS", "dk_direct", "dk", 25.5, 26.0, ts_direct, ts_bp, lag_sec),
+        ]
+        mock_conn.cursor.return_value = mock_cur
+        result = analyzer.flag_stale_lines("2026-03-16", staleness_minutes=30)
+        out = capsys.readouterr().out
+        assert "1 stale lines" in out
+        assert ">30 min behind direct" in out
+
+    @patch.object(DiscrepancyAnalyzer, "flag_stale_lines", return_value=[])
+    @patch.object(DiscrepancyAnalyzer, "compute_discrepancies")
+    def test_generate_daily_report_verbose_prints_report(self, mock_compute, mock_stale, capsys):
+        """Line 455-456: verbose=True in generate_daily_report calls _print_report."""
+        analyzer, _ = _make_analyzer(verbose=True)
+        ts = datetime(2026, 3, 16, 12, 0, 0)
+        df = pd.DataFrame(
+            [
+                {
+                    "player_name": "P1",
+                    "stat_type": "POINTS",
+                    "book_base": "dk",
+                    "direct_line": 25.0,
+                    "bp_line": 25.5,
+                    "line_diff": -0.5,
+                    "direct_odds_over": -110,
+                    "bp_odds_over": -115,
+                    "odds_diff": 5,
+                    "direct_timestamp": ts,
+                    "bp_timestamp": ts,
+                    "latency_seconds": 0,
+                },
+            ]
+        )
+        mock_compute.return_value = df
+        report = analyzer.generate_daily_report("2026-03-16")
+        out = capsys.readouterr().out
+        assert "LINE DISCREPANCY REPORT" in out
+
+    def test_compute_cross_source_consensus_verbose(self, capsys):
+        """Lines 537-543: verbose=True in compute_cross_source_consensus prints stats."""
+        analyzer, mock_conn = _make_analyzer(verbose=True)
+        mock_cur = MagicMock()
+        mock_cur.fetchall.return_value = [
+            ("LeBron James", "POINTS", "draftkings_direct", 25.0),
+            ("LeBron James", "POINTS", "fanduel_direct", 26.0),
+        ]
+        mock_conn.cursor.return_value = mock_cur
+        df = analyzer.compute_cross_source_consensus("2026-03-16")
+        out = capsys.readouterr().out
+        assert "Direct consensus:" in out
+        assert "1 props" in out
+        assert "with cross-book spread" in out
+
+
+# ─────────────────────────────────────────────────────────────────
+# Branch 185→181: empty bp_map (bp_rows empty, all keys from direct_map)
+# ─────────────────────────────────────────────────────────────────
+
+
+class TestEmptyBpMap:
+    def test_compute_discrepancies_with_no_bp_rows(self):
+        """Branch 185→181: bp_rows is empty so bp_map stays empty."""
+        analyzer, mock_conn = _make_analyzer()
+        ts = datetime(2026, 3, 16, 12, 0, 0)
+        direct_rows = [
+            ("Player A", "POINTS", "draftkings_direct", 25.0, -110, 100, ts),
+            ("Player B", "REBOUNDS", "fanduel_direct", 8.5, -110, 100, ts),
+        ]
+        bp_rows = []  # empty bp_map, branch 185→181 never entered
+        mock_cur = MagicMock()
+        mock_cur.fetchall.side_effect = [direct_rows, bp_rows]
+        mock_conn.cursor.return_value = mock_cur
+
+        df = analyzer.compute_discrepancies("2026-03-16")
+        assert len(df) == 2
+        # All bp fields should be None
+        assert df.iloc[0]["bp_line"] is None
+        assert df.iloc[1]["bp_line"] is None

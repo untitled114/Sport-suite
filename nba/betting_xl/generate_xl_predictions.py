@@ -39,15 +39,23 @@ from nba.betting_xl.risk_filters import RiskFilter
 from nba.betting_xl.utils.hit_rate_loader import HitRateCache
 from nba.betting_xl.xl_predictor import XLPredictor
 from nba.config.database import get_connection
+from nba.core.bet_sizing import KellySizer
 from nba.core.drift_service import DriftService
+from nba.core.edge_calculator import EdgeCalculator
 from nba.core.logging_config import add_logging_args, get_logger, setup_logging
+from nba.core.probability_engine import ProbabilityEngine
 from nba.features.extract_live_features_xl import LiveFeatureExtractorXL
+from nba.features.feature_store import FeatureStore
 from nba.utils.name_normalizer import NameNormalizer
 
 EST = ZoneInfo("America/New_York")
 
 # Logger will be configured in main() - use get_logger for module-level access
 logger = get_logger(__name__)
+
+# V4 pipeline feature flag — set USE_V4_ENRICHMENT=true to enable
+# distribution prob, standardized edge, Kelly sizing on every pick
+USE_V4_ENRICHMENT = os.getenv("USE_V4_ENRICHMENT", "false").lower() == "true"
 
 # Drift detection configuration
 DRIFT_DETECTION_ENABLED = os.getenv("NBA_DRIFT_DETECTION_ENABLED", "true").lower() == "true"
@@ -103,6 +111,19 @@ class XLPredictionsGenerator:
         self.bias_adjustments: Dict[str, float] = {}
         self.opp_rank_cache: Dict[str, int] = {}  # (opponent_team, stat_type) -> rank
 
+        # V4 enrichment components (only initialized when flag is set)
+        if USE_V4_ENRICHMENT:
+            self.probability_engine = ProbabilityEngine()
+            self.edge_calculator = EdgeCalculator(min_edge=0.05)
+            self.kelly_sizer = KellySizer(bankroll=float(os.getenv("BANKROLL", "1000")))
+        else:
+            self.probability_engine = None
+            self.edge_calculator = None
+            self.kelly_sizer = None
+
+        # Feature store always writes (accumulates training data regardless of V4 flag)
+        self.feature_store = FeatureStore()
+
         # Database connections
         self.conn_intelligence = None
         self.conn_players = None
@@ -131,6 +152,8 @@ class XLPredictionsGenerator:
             self.feature_extractor.close()
         if hasattr(self, "line_optimizer") and self.line_optimizer:
             self.line_optimizer.close()
+        if hasattr(self, "feature_store") and self.feature_store:
+            self.feature_store.close()
         if hasattr(self, "conn_intelligence") and self.conn_intelligence:
             self.conn_intelligence.close()
         if hasattr(self, "conn_players") and self.conn_players:
@@ -1061,6 +1084,61 @@ class XLPredictionsGenerator:
                         if blowout:
                             pick["blowout_risk"] = blowout
                             pick["risk_flags"].append(f"BLOWOUT_{blowout['level']}")
+
+                        # V4 enrichment: distribution prob, standardized edge, Kelly sizing
+                        if USE_V4_ENRICHMENT:
+                            try:
+                                # 1. Distribution-based probability cross-check
+                                std_dev = float(
+                                    features.get("stat_std_L10", features.get("stat_std_L5", 5.0))
+                                    or 5.0
+                                )
+                                dist_prob = self.probability_engine.calculate_probability(
+                                    projected_value=adjusted_prediction,
+                                    std_dev=std_dev,
+                                    line=optimized["best_line"],
+                                    stat_type=stat_type,
+                                )
+                                pick["distribution_prob"] = round(dist_prob, 4)
+                                pick["prob_agreement"] = round(
+                                    abs(optimized["p_over"] - dist_prob), 4
+                                )
+
+                                # 2. Standardized edge calculation
+                                book_odds = int(optimized.get("best_odds", -110) or -110)
+                                edge_result = self.edge_calculator.calculate_edge(
+                                    model_prob=optimized["p_over"],
+                                    book_odds=book_odds,
+                                )
+                                pick["implied_prob"] = edge_result["implied_prob"]
+                                pick["true_edge"] = edge_result["edge"]
+                                pick["true_edge_pct"] = edge_result["edge_pct"]
+                                pick["has_edge"] = edge_result["has_edge"]
+                                pick["expected_value"] = edge_result["expected_value"]
+                                pick["kelly_fraction"] = edge_result["kelly_fraction"]
+
+                                # 3. Kelly bet sizing
+                                kelly_result = self.kelly_sizer.size_bet(
+                                    model_prob=optimized["p_over"],
+                                    odds=book_odds,
+                                )
+                                pick["bet_units"] = kelly_result["bet_units"]
+                                pick["bet_amount"] = kelly_result["bet_amount"]
+                            except Exception as e:
+                                logger.debug(f"V4 enrichment failed for {player_name}: {e}")
+
+                        # Feature store write (non-blocking)
+                        if self.feature_store:
+                            try:
+                                self.feature_store.write_features(
+                                    player_name=player_name,
+                                    game_date=self.game_date,
+                                    stat_type=stat_type,
+                                    feature_set_name="xl_v1",
+                                    feature_values=features,
+                                )
+                            except Exception:
+                                pass  # Feature store writes are non-critical
 
                         # Game key for correlation grouping
                         pick["game_key"] = opp_team

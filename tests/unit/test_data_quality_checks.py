@@ -519,3 +519,154 @@ class TestRunDailyChecks:
         checker = DataQualityChecker()
         result = checker.run_daily_checks()
         assert result is False
+
+
+# =============================================================================
+# Coverage: connect() and close() (lines 64-66, 71-73)
+# =============================================================================
+
+
+class TestConnectAndClose:
+    """Tests for connect() and close() methods."""
+
+    @patch("nba.core.data_quality_checks.get_intelligence_db_config")
+    @patch("nba.core.data_quality_checks.get_games_db_config")
+    @patch("nba.core.data_quality_checks.get_players_db_config")
+    @patch("nba.core.data_quality_checks.psycopg2.connect")
+    def test_connect_creates_all_connections(
+        self, mock_connect, mock_players_cfg, mock_games_cfg, mock_intel_cfg
+    ):
+        """Lines 64-66: connect() calls psycopg2.connect three times."""
+        mock_players_cfg.return_value = {"host": "localhost", "port": 5536}
+        mock_games_cfg.return_value = {"host": "localhost", "port": 5537}
+        mock_intel_cfg.return_value = {"host": "localhost", "port": 5539}
+        mock_conn = MagicMock()
+        mock_connect.return_value = mock_conn
+
+        checker = DataQualityChecker()
+        checker.connect()
+        assert mock_connect.call_count == 3
+        assert checker.conn_players is mock_conn
+        assert checker.conn_games is mock_conn
+        assert checker.conn_intel is mock_conn
+
+    def test_close_closes_all_connections(self):
+        """Lines 71-73: close() calls conn.close() on each connection."""
+        checker = DataQualityChecker()
+        mock_p = MagicMock()
+        mock_g = MagicMock()
+        mock_i = MagicMock()
+        checker.conn_players = mock_p
+        checker.conn_games = mock_g
+        checker.conn_intel = mock_i
+
+        checker.close()
+        mock_p.close.assert_called_once()
+        mock_g.close.assert_called_once()
+        mock_i.close.assert_called_once()
+
+    def test_close_handles_none_connections(self):
+        """close() should not raise when connections are None."""
+        checker = DataQualityChecker()
+        checker.close()  # Should not raise
+
+
+# =============================================================================
+# Coverage: exception handlers in run_pre_training_checks (lines 376-377)
+# and run_daily_checks (lines 398-399)
+# =============================================================================
+
+
+class TestRunChecksExceptionHandling:
+    """Tests for exception handling in run checks."""
+
+    def test_pre_training_check_exception(self):
+        """Lines 376-377: check that raises exception gets caught."""
+        import psycopg2
+
+        checker = DataQualityChecker()
+
+        def failing_freshness():
+            raise psycopg2.Error("connection lost")
+
+        failing_freshness.__name__ = "check_player_game_logs_freshness"
+        ok_result = CheckResult(name="test", passed=True, message="OK")
+
+        with (
+            patch.object(
+                checker,
+                "check_player_game_logs_freshness",
+                failing_freshness,
+            ),
+            patch.object(
+                checker,
+                "check_player_rolling_stats_coverage",
+                return_value=ok_result,
+            ),
+            patch.object(
+                checker,
+                "check_no_null_critical_fields",
+                return_value=ok_result,
+            ),
+            patch.object(
+                checker,
+                "check_training_data_volume",
+                return_value=ok_result,
+            ),
+            patch.object(
+                checker,
+                "check_home_away_balance",
+                return_value=ok_result,
+            ),
+            patch.object(
+                checker,
+                "check_no_future_data_leakage",
+                return_value=ok_result,
+            ),
+        ):
+            result = checker.run_pre_training_checks()
+
+        # Should have a failed result from the caught exception
+        assert result is False
+        failed = [r for r in checker.results if not r.passed]
+        assert len(failed) == 1
+        assert "connection lost" in failed[0].message
+
+    def test_daily_check_exception(self):
+        """Lines 398-399: daily check that raises exception gets caught."""
+        checker = DataQualityChecker()
+
+        def failing_props():
+            raise TypeError("type error in check")
+
+        failing_props.__name__ = "check_props_freshness"
+        ok_result = CheckResult(name="test", passed=True, message="OK")
+
+        with (
+            patch.object(
+                checker,
+                "check_props_freshness",
+                failing_props,
+            ),
+            patch.object(
+                checker,
+                "check_props_multi_book_coverage",
+                return_value=ok_result,
+            ),
+            patch.object(
+                checker,
+                "check_props_stat_type_distribution",
+                return_value=ok_result,
+            ),
+            patch.object(
+                checker,
+                "check_player_game_logs_freshness",
+                return_value=ok_result,
+            ),
+        ):
+            result = checker.run_daily_checks()
+
+        assert result is False
+        failed = [r for r in checker.results if not r.passed]
+        assert len(failed) == 1
+        assert "type error in check" in failed[0].message

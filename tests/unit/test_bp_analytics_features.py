@@ -454,3 +454,101 @@ class TestFeatureNames:
     def test_no_duplicate_feature_names(self):
         names = BPAnalyticsFeatureExtractor.FEATURE_NAMES
         assert len(names) == len(set(names))
+
+
+# ─────────────────────────────────────────────────────────────────
+# Coverage: missing lines/branches
+# ─────────────────────────────────────────────────────────────────
+
+
+class TestCoverageMissingPaths:
+    @pytest.fixture
+    def extractor(self):
+        return BPAnalyticsFeatureExtractor(MagicMock())
+
+    def test_stat_type_not_in_dvp_map_skips_dvp(self, extractor):
+        """Line 137 (and branch): stat_type 'BLOCKS' not in STAT_TO_DVP returns early."""
+        defaults = BPAnalyticsFeatureExtractor.get_defaults()
+        with patch.object(extractor, "_safe_query", return_value=None):
+            result = extractor.extract(
+                "Test Player",
+                "2025-01-15",
+                "BLOCKS",
+                opponent_team="BOS",
+            )
+        # DVP features should remain at defaults since BLOCKS is not in STAT_TO_DVP
+        assert result["dvp_stat_allowed"] == defaults["dvp_stat_allowed"]
+        assert result["dvp_stat_rank"] == defaults["dvp_stat_rank"]
+
+    def test_dvp_stat_is_none_returns_early(self, extractor):
+        """Line 224: dvp_stat is None when stat_type not in STAT_TO_DVP."""
+        features = BPAnalyticsFeatureExtractor.get_defaults()
+        extractor._compute_dvp_features("BOS", "STEALS", "2025-01-15", None, features)
+        # Should return early without querying
+        assert features["dvp_stat_allowed"] == 0.0
+        assert features["dvp_stat_rank"] == 15.0
+
+    def test_dvp_rank_df_empty(self, extractor):
+        """Branch 257->265: val_df has data but rank_df is empty/None."""
+        val_df = pd.DataFrame([{"value": 22.5}])
+        # First call returns val_df, second call returns None (empty rank df)
+        extractor._safe_query = MagicMock(side_effect=[val_df, None])
+
+        features = BPAnalyticsFeatureExtractor.get_defaults()
+        extractor._compute_dvp_features("LAL", "POINTS", "2025-01-15", None, features)
+
+        # Value should be set from val_df
+        assert features["dvp_stat_allowed"] == 22.5
+        # Rank should remain default since rank_df is empty
+        assert features["dvp_stat_rank"] == 15.0
+        # Should still cache the result
+        assert len(extractor._dvp_cache) == 1
+
+    def test_dvp_rank_df_empty_dataframe(self, extractor):
+        """Branch 257->265: rank_df is empty DataFrame (len == 0)."""
+        val_df = pd.DataFrame([{"value": 18.0}])
+        # _safe_query returns None for empty DataFrames (see base.py line 99)
+        extractor._safe_query = MagicMock(side_effect=[val_df, None])
+
+        features = BPAnalyticsFeatureExtractor.get_defaults()
+        extractor._compute_dvp_features("CHI", "REBOUNDS", "2025-02-10", "C", features)
+
+        assert features["dvp_stat_allowed"] == 18.0
+        assert features["dvp_stat_rank"] == 15.0
+
+    def test_extract_with_opponent_and_valid_stat_calls_dvp(self, extractor):
+        """Line 137: extract() with opponent_team + stat_type in STAT_TO_DVP hits DVP path."""
+        bp_df = pd.DataFrame(
+            [
+                {
+                    "bp_projection": 25.0,
+                    "bp_projection_diff": 1.0,
+                    "bp_probability": 0.6,
+                    "bp_expected_value": 0.05,
+                    "bp_bet_rating": 4,
+                    "bp_recommended_side": "over",
+                    "bp_opposition_rank": 5,
+                    "bp_opposition_value": 112.0,
+                    "bp_hit_rate_l5": 0.7,
+                    "bp_hit_rate_l10": 0.6,
+                    "bp_hit_rate_l15": 0.55,
+                    "bp_hit_rate_season": 0.58,
+                    "bp_consensus_line": 24.0,
+                }
+            ]
+        )
+        # First call from _fetch_bp_analytics (exact match returns bp_df),
+        # then two calls from _compute_dvp_features (val query + rank query)
+        extractor._safe_query = MagicMock(side_effect=[bp_df, None, None])
+
+        result = extractor.extract(
+            "Nikola Jokic",
+            "2025-01-15",
+            "POINTS",
+            line=24.0,
+            opponent_team="BOS",
+            player_position="C",
+        )
+        assert result["bp_analytics_projection_diff"] == 1.0
+        # DVP defaults since val query returned None
+        assert result["dvp_stat_rank"] == 15.0

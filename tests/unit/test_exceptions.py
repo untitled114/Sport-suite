@@ -417,3 +417,222 @@ class TestLineShoppingExceptions:
 
         error = AllBooksBlacklistedError(player_name="Giannis Antetokounmpo", stat_type="THREES")
         assert error.books is None
+
+
+# =============================================================================
+# Branch coverage: optional params empty vs populated
+# =============================================================================
+
+
+class TestExceptionBranchCoverage:
+    """Tests for branch misses where optional params are None."""
+
+    def test_feature_extraction_error_feature_name_only(self):
+        """Line 91 + branch 88->90: feature_name set but player_name is None."""
+        from nba.core.exceptions import FeatureExtractionError
+
+        error = FeatureExtractionError("Extraction failed", feature_name="ema_points_L3")
+        assert "feature=ema_points_L3" in str(error)
+        assert "player=" not in str(error)
+        assert error.player_name is None
+        assert error.feature_name == "ema_points_L3"
+
+    def test_feature_extraction_error_no_optional_args(self):
+        """Branch: both player_name and feature_name are None."""
+        from nba.core.exceptions import FeatureExtractionError
+
+        error = FeatureExtractionError("Extraction failed")
+        assert str(error) == "Extraction failed"
+        assert error.player_name is None
+        assert error.feature_name is None
+
+    def test_feature_extraction_error_both_args(self):
+        """Branch: both player_name and feature_name provided."""
+        from nba.core.exceptions import FeatureExtractionError
+
+        error = FeatureExtractionError(
+            "Extraction failed", player_name="Curry", feature_name="ema_L5"
+        )
+        assert "player=Curry" in str(error)
+        assert "feature=ema_L5" in str(error)
+
+    def test_model_prediction_error_no_optional(self):
+        """Branch: player_name and stat_type both None."""
+        from nba.core.exceptions import ModelPredictionError
+
+        error = ModelPredictionError("Prediction failed")
+        assert str(error) == "Prediction failed"
+        assert error.player_name is None
+        assert error.stat_type is None
+
+    def test_model_not_found_error_no_market(self):
+        """Branch 43->45: market is None."""
+        from nba.core.exceptions import ModelNotFoundError
+
+        error = ModelNotFoundError("/path/model.pkl")
+        assert "Model not found" in str(error)
+        assert error.market is None
+
+    def test_model_load_error_no_reason(self):
+        """Branch 55->57: reason is None."""
+        from nba.core.exceptions import ModelLoadError
+
+        error = ModelLoadError("/path/model.pkl")
+        assert "Failed to load model" in str(error)
+        assert error.reason is None
+
+    def test_pickle_load_error_no_reason(self):
+        """Branch 300->302: reason is None."""
+        from nba.core.exceptions import PickleLoadError
+
+        error = PickleLoadError("/models/test.pkl")
+        assert "Failed to load pickle file" in str(error)
+        assert error.reason is None
+
+    def test_json_load_error_no_reason(self):
+        """Branch: reason is None."""
+        from nba.core.exceptions import JSONLoadError
+
+        error = JSONLoadError("/config/test.json")
+        assert "Failed to load JSON file" in str(error)
+        assert error.reason is None
+
+    def test_invalid_prop_line_error_no_optional(self):
+        """Branch 137->139: player_name and line both None."""
+        from nba.core.exceptions import InvalidPropLineError
+
+        error = InvalidPropLineError("Line invalid")
+        assert str(error) == "Line invalid"
+        assert error.player_name is None
+        assert error.line is None
+
+    def test_invalid_prediction_error_no_field(self):
+        """Branch 147->149: field is None."""
+        from nba.core.exceptions import InvalidPredictionError
+
+        error = InvalidPredictionError("Prediction invalid")
+        assert str(error) == "Prediction invalid"
+        assert error.field is None
+
+    def test_database_connection_error_no_host_port(self):
+        """Branch 171->173: host and port both None."""
+        from nba.core.exceptions import DatabaseConnectionError
+
+        error = DatabaseConnectionError("nba_intel")
+        assert "Failed to connect" in str(error)
+        assert error.host is None
+        assert error.port is None
+
+    def test_database_query_error_no_query(self):
+        """Branch 181->185: query is None."""
+        from nba.core.exceptions import DatabaseQueryError
+
+        error = DatabaseQueryError("Query failed")
+        assert str(error) == "Query failed"
+        assert error.query is None
+
+    def test_data_not_found_error_no_identifier(self):
+        """Branch 195->197: identifier is None."""
+        from nba.core.exceptions import DataNotFoundError
+
+        error = DataNotFoundError("Player")
+        assert str(error) == "Player not found"
+        assert error.identifier is None
+
+    def test_api_connection_error_no_status_code(self):
+        """Branch 219->221: status_code is None."""
+        from nba.core.exceptions import APIConnectionError
+
+        error = APIConnectionError("ESPN")
+        assert "Failed to connect to ESPN" in str(error)
+        assert error.status_code is None
+
+    def test_api_rate_limit_error_no_retry_after(self):
+        """Branch 231->233: retry_after is None."""
+        from nba.core.exceptions import APIRateLimitError
+
+        error = APIRateLimitError("ESPN")
+        assert "rate limit exceeded" in str(error)
+        assert error.retry_after is None
+
+    def test_missing_config_error_no_source(self):
+        """Branch 264->266: source is None."""
+        from nba.core.exceptions import MissingConfigError
+
+        error = MissingConfigError("API_KEY")
+        assert "Missing required configuration: API_KEY" in str(error)
+        assert error.source is None
+
+    def test_invalid_config_error_no_reason(self):
+        """Branch 277->279: reason is None."""
+        from nba.core.exceptions import InvalidConfigError
+
+        error = InvalidConfigError("THRESHOLD", value="-0.5")
+        assert "THRESHOLD=-0.5" in str(error)
+        assert error.reason is None
+
+    def test_calibration_data_error_no_samples(self):
+        """Branch 336->338: samples is None."""
+        from nba.core.exceptions import CalibrationDataError
+
+        error = CalibrationDataError(market="POINTS", reason="bad data")
+        assert "samples=" not in str(error)
+        assert error.samples is None
+
+    def test_calibration_fit_error_no_reason(self):
+        """Branch 348->350: reason is None."""
+        from nba.core.exceptions import CalibrationFitError
+
+        error = CalibrationFitError(market="REBOUNDS")
+        assert "Failed to fit calibrator" in str(error)
+        assert error.reason is None
+
+    def test_mongodb_connection_error_no_host_port(self):
+        """Branch 372->373: host/port None."""
+        from nba.core.exceptions import MongoDBConnectionError
+
+        error = MongoDBConnectionError(reason="timeout")
+        assert "Failed to connect to MongoDB" in str(error)
+        assert "timeout" in str(error)
+        assert error.host is None
+
+    def test_mongodb_connection_error_host_port_no_reason(self):
+        """Branch 374->375: reason is None."""
+        from nba.core.exceptions import MongoDBConnectionError
+
+        error = MongoDBConnectionError(host="localhost", port=27017)
+        assert "localhost:27017" in str(error)
+        assert error.reason is None
+
+    def test_mongodb_query_error_no_operation(self):
+        """Branch 386->388: operation is None."""
+        from nba.core.exceptions import MongoDBQueryError
+
+        error = MongoDBQueryError(collection="props", message="failed")
+        assert "operation=" not in str(error)
+        assert error.operation is None
+
+    def test_no_lines_found_error_no_date(self):
+        """Branch 410->412: game_date is None."""
+        from nba.core.exceptions import NoLinesFoundError
+
+        error = NoLinesFoundError(player_name="LeBron", stat_type="POINTS")
+        assert "LeBron" in str(error)
+        assert error.game_date is None
+
+    def test_all_books_blacklisted_no_books(self):
+        """Branch 423->424: books is None."""
+        from nba.core.exceptions import AllBooksBlacklistedError
+
+        error = AllBooksBlacklistedError(player_name="Test", stat_type="POINTS")
+        assert "books=" not in str(error)
+        assert error.books is None
+
+    def test_missing_feature_error_no_player(self):
+        """Branch 102->104: player_name is None."""
+        from nba.core.exceptions import MissingFeatureError
+
+        error = MissingFeatureError("ema_points_L5")
+        assert "Missing required feature" in str(error)
+        assert "player=" not in str(error)
+        assert error.player_name is None

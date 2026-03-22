@@ -105,6 +105,22 @@ class TestExtract:
         assert result["game_pace"] == 100.0
         assert result["opp_score_margin_avg"] == 0.0
 
+    def test_with_opponent_calls_game_features(self, extractor):
+        """Line 89: extract() with opponent_team invokes _compute_game_features."""
+        game_df = pd.DataFrame([{"avg_pace": 105.0, "avg_margin": 9.0, "blowout_rate": 0.3}])
+        player_df = pd.DataFrame(
+            {
+                "minutes_played": [30, 32, 28, 35, 31],
+                "plus_minus": [10, -5, 8, 3, -2],
+                "points": [25, 20, 30, 22, 18],
+                "fg_attempted": [18, 15, 22, 16, 14],
+            }
+        )
+        with patch("pandas.read_sql_query", side_effect=[game_df, player_df]):
+            result = extractor.extract("LeBron James", "2025-01-15", "POINTS", opponent_team="MIA")
+        assert result["game_pace"] == 105.0
+        assert result["opp_score_margin_avg"] == 9.0
+
 
 # ─────────────────────────────────────────────────────────────────
 # _compute_game_features
@@ -325,3 +341,120 @@ class TestComputePlayerFeatures:
             extractor._compute_player_features("Test", "2025-01-15", features)
         # Only 2 non-null plus_minus values, should still compute mean
         assert features["player_plus_minus_L5"] == pytest.approx(1.0)
+
+    def test_player_features_none_df_returns_early(self, extractor):
+        """Line 89 / line 148-149: query returns None → early return."""
+        with patch("pandas.read_sql_query", return_value=None):
+            features = GameContextFeatureExtractor.get_defaults()
+            extractor._compute_player_features("Ghost Player", "2025-01-15", features)
+        # All player features should remain at defaults
+        defaults = GameContextFeatureExtractor.get_defaults()
+        assert features["player_plus_minus_L5"] == defaults["player_plus_minus_L5"]
+        assert features["player_usage_proxy"] == defaults["player_usage_proxy"]
+        assert features["player_minutes_stability"] == defaults["player_minutes_stability"]
+
+
+# ─────────────────────────────────────────────────────────────────
+# Blowout risk boundary conditions (branches 163→167, 170→174, 186→exit)
+# ─────────────────────────────────────────────────────────────────
+
+
+class TestBlowoutRiskBoundaries:
+    @pytest.fixture
+    def extractor(self):
+        return GameContextFeatureExtractor(MagicMock(), MagicMock())
+
+    def test_blowout_risk_zero_when_no_blowouts(self, extractor):
+        """Branch 163→167: no plus_minus values > 15 → blowout_risk = 0."""
+        df = pd.DataFrame(
+            {
+                "minutes_played": [30, 30, 30, 30, 30],
+                "plus_minus": [5, -3, 2, 1, -1],
+                "points": [20, 20, 20, 20, 20],
+                "fg_attempted": [15, 15, 15, 15, 15],
+            }
+        )
+        with patch("pandas.read_sql_query", return_value=df):
+            features = GameContextFeatureExtractor.get_defaults()
+            extractor._compute_player_features("Test", "2025-01-15", features)
+        assert features["player_blowout_risk"] == 0.0
+
+    def test_blowout_risk_all_blowouts(self, extractor):
+        """Branch 170→174: all plus_minus > 15 → blowout_risk = 1.0."""
+        df = pd.DataFrame(
+            {
+                "minutes_played": [30, 30, 30],
+                "plus_minus": [20, -18, 25],
+                "points": [25, 20, 30],
+                "fg_attempted": [18, 15, 20],
+            }
+        )
+        with patch("pandas.read_sql_query", return_value=df):
+            features = GameContextFeatureExtractor.get_defaults()
+            extractor._compute_player_features("Test", "2025-01-15", features)
+        assert features["player_blowout_risk"] == 1.0
+
+    def test_minutes_vs_avg_not_computed_single_game(self, extractor):
+        """Branch 186→exit: only 1 game → minutes_vs_avg stays default (needs >=2)."""
+        df = pd.DataFrame(
+            {
+                "minutes_played": [35],
+                "plus_minus": [10],
+                "points": [25],
+                "fg_attempted": [18],
+            }
+        )
+        with patch("pandas.read_sql_query", return_value=df):
+            features = GameContextFeatureExtractor.get_defaults()
+            extractor._compute_player_features("Test", "2025-01-15", features)
+        assert features["player_minutes_vs_avg"] == 1.0  # Default
+
+    def test_minutes_vs_avg_zero_avg(self, extractor):
+        """Branch: season_avg == 0 → skip minutes_vs_avg."""
+        df = pd.DataFrame(
+            {
+                "minutes_played": [0, 0, 0],
+                "plus_minus": [0, 0, 0],
+                "points": [0, 0, 0],
+                "fg_attempted": [0, 0, 0],
+            }
+        )
+        with patch("pandas.read_sql_query", return_value=df):
+            features = GameContextFeatureExtractor.get_defaults()
+            extractor._compute_player_features("Test", "2025-01-15", features)
+        # season_avg is 0, so minutes_vs_avg should stay at default
+        assert features["player_minutes_vs_avg"] == 1.0
+
+    def test_blowout_risk_not_computed_with_fewer_than_3(self, extractor):
+        """Branch: plus_minus has < 3 values → blowout_risk stays default."""
+        df = pd.DataFrame(
+            {
+                "minutes_played": [30, 30],
+                "plus_minus": [20, -18],
+                "points": [25, 20],
+                "fg_attempted": [18, 15],
+            }
+        )
+        with patch("pandas.read_sql_query", return_value=df):
+            features = GameContextFeatureExtractor.get_defaults()
+            extractor._compute_player_features("Test", "2025-01-15", features)
+        # Only 2 plus_minus values, needs >= 3 for blowout_risk
+        assert features["player_blowout_risk"] == 0.0  # Default
+
+    def test_all_null_plus_minus(self, extractor):
+        """Branch 163->167: all plus_minus values are None → elif is False."""
+        df = pd.DataFrame(
+            {
+                "minutes_played": [30, 30, 30],
+                "plus_minus": [None, None, None],
+                "points": [25, 20, 22],
+                "fg_attempted": [18, 15, 16],
+            }
+        )
+        with patch("pandas.read_sql_query", return_value=df):
+            features = GameContextFeatureExtractor.get_defaults()
+            extractor._compute_player_features("Test", "2025-01-15", features)
+        # plus_minus.dropna() has 0 elements → both if and elif fail
+        assert features["player_plus_minus_L5"] == 0.0  # Default
+        # blowout_risk also needs >= 3 non-null plus_minus
+        assert features["player_blowout_risk"] == 0.0  # Default
