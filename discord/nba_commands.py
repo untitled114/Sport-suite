@@ -967,10 +967,11 @@ def register(bot):
             try:
                 conn = psycopg2.connect(
                     host=os.environ.get("DB_HOST", "localhost"),
-                    port=5541,
-                    dbname="cephalon_axiom",
+                    port=int(os.environ.get("DB_PORT", "5500")),
+                    dbname=os.environ.get("DB_NAME", "sportsuite"),
                     user=os.environ.get("DB_USER", "mlb_user"),
                     password=os.environ.get("DB_PASSWORD", ""),
+                    options="-c search_path=axiom,public",
                     connect_timeout=5,
                 )
                 cur = conn.cursor()
@@ -993,10 +994,11 @@ def register(bot):
             try:
                 conn = psycopg2.connect(
                     host=os.environ.get("DB_HOST", "localhost"),
-                    port=5541,
-                    dbname="cephalon_axiom",
+                    port=int(os.environ.get("DB_PORT", "5500")),
+                    dbname=os.environ.get("DB_NAME", "sportsuite"),
                     user=os.environ.get("DB_USER", "mlb_user"),
                     password=os.environ.get("DB_PASSWORD", ""),
+                    options="-c search_path=axiom,public",
                     connect_timeout=5,
                 )
                 cur = conn.cursor()
