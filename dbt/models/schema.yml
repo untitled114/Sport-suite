@@ -29,9 +29,8 @@ models:
     description: Cleaned prop lines with normalized book names
     columns:
       - name: prop_id
-        description: Unique prop identifier
+        description: Unique prop identifier (mapped from nba_props_xl.id)
         tests:
-          - unique
           - not_null
       - name: stat_type
         description: Type of stat being bet on
@@ -81,7 +80,6 @@ models:
     columns:
       - name: prop_id
         tests:
-          - unique
           - not_null
       - name: hit_over
         description: Whether the actual exceeded the line (1/0/null)

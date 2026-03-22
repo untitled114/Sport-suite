@@ -16,7 +16,7 @@ cleaned as (
         game_id,
         game_date,
         team_abbrev,
-        opponent_team,
+        opponent_abbrev as opponent_team,
 
         -- Game context
         is_home,
@@ -31,11 +31,11 @@ cleaned as (
         coalesce(points, 0) as points,
         coalesce(rebounds, 0) as rebounds,
         coalesce(assists, 0) as assists,
-        coalesce(threes_made, 0) as threes_made,
+        coalesce(three_pointers_made, 0) as threes_made,
         coalesce(steals, 0) as steals,
         coalesce(blocks, 0) as blocks,
         coalesce(turnovers, 0) as turnovers,
-        coalesce(minutes, 0) as minutes,
+        coalesce(minutes_played, 0) as minutes,
 
         -- Shooting
         coalesce(fg_made, 0) as fg_made,
@@ -51,8 +51,8 @@ cleaned as (
         end as fg_pct,
 
         case
-            when coalesce(minutes, 0) > 0
-            then round(points::numeric / minutes, 3)
+            when coalesce(minutes_played, 0) > 0
+            then round(points::numeric / minutes_played, 3)
             else null
         end as points_per_minute,
 
@@ -60,7 +60,7 @@ cleaned as (
         current_timestamp as _loaded_at
 
     from source
-    where minutes > 0  -- Exclude DNPs
+    where minutes_played > 0  -- Exclude DNPs
 )
 
 select * from cleaned

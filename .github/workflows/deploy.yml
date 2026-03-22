@@ -81,8 +81,9 @@ jobs:
       - name: Run tests
         run: pytest tests/unit -v -m "not slow"
 
-  # Deploy only after security scan and tests pass
+  # Deploy only on manual trigger (server not reachable from GH Actions runners)
   deploy:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     needs: [security-scan, test]
     environment: production
@@ -99,7 +100,11 @@ jobs:
       - name: Add server to known_hosts
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          cat >> ~/.ssh/known_hosts << 'HOSTKEYS'
+          |1|yvYTQKBJV6yl8hN6jCmbv9U+1BM=|IpsZv1vxNbkGxeBImfRHHUHN7ww= ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCUm/OwyaxM1C+OtQauPPn4YFb+kZF7Isot4QgZDl5a8TbQV9r9vjnpkAwfeG593r7//RCiIir0J8twDZa27dfnzLE2wkYT4XRAQ+CgSRmqJM/q3DRrqvPn3L9NvpGxb/qk5PoRJKuxQYqsjP+9LykXPZPiyxu+rDHDXHMMSFVEh63RE812FTkMk7snsVE8u2YzJwaPoCZDtCDNFFgjZ4zyHfitJvUJql8PmADtOPLFeqgAF0bhjpJAqGwz9ke1oD48Jgl87EjMKZbZWth51PgXDqIGhtXZJdzQ7HGut1P9oPbJigEfLKZlN3HJBGsY2SBXyZzYBw2lwG7PYpLv/h7nHUlj76Vi5MD2bXO8YcIaSl0SMmuT5YLDCWxycq2hdON8u9hoRUGw36nPK4L0i2vXeXpRO/PSm048KvaERuFsvIMf6XDlPmk9bWhMkrN9ixLKvN9SIR88DQGMNx6sB1qn2K5eE8lnImkVapc68WzupqQgKsrbeB5tIyuuwUu9X8M=
+          |1|sKIw1aSIdF86dj/1evAbahmpz60=|wV1+cFDw0fy7vQgjD0Ea/Yledoc= ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBKb7IGaXkArn0iderVrBvQ0Q+I0Mpit6uGLVnN+pAZyX31ypqrdfBohefJaG5MBhXMfmxbVIqPJa8rnLzaPPZTA=
+          |1|I7/aXcB+JRvZ2Ei8OMZxdWnThDI=|gI5RYwlWPeQt911iVEr5fvvRg8g= ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPrLN3El6qvBrMqMPNn3xyJXRCFfp4YwoGSye3kskR/K
+          HOSTKEYS
 
       # ── Sport-Suite code deploy ──
       - name: Deploy Sport-Suite via rsync

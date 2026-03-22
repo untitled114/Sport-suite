@@ -12,21 +12,20 @@ with source as (
 cleaned as (
     select
         -- Identifiers
-        prop_id,
+        id as prop_id,
         player_name,
         player_id,
         game_date,
         stat_type,
 
         -- Game context
-        team as player_team,
+        player_team,
         opponent_team,
         is_home,
 
         -- Line data
-        line,
-        book_id,
-        {{ map_book_name('book_id') }} as book_name,
+        over_line as line,
+        book_name,
 
         -- Consensus metrics (pre-computed)
         consensus_line,
@@ -36,8 +35,8 @@ cleaned as (
         -- Outcome (for training/validation)
         actual_value,
         case
-            when actual_value is not null and actual_value > line then 1
-            when actual_value is not null and actual_value <= line then 0
+            when actual_value is not null and actual_value > over_line then 1
+            when actual_value is not null and actual_value <= over_line then 0
             else null
         end as hit_over,
 
@@ -46,7 +45,7 @@ cleaned as (
         current_timestamp as _loaded_at
 
     from source
-    where line is not null
+    where over_line is not null
       and stat_type in ('POINTS', 'REBOUNDS', 'ASSISTS', 'THREES')
 )
 

@@ -42,7 +42,7 @@ book_lines as (
         max(case when book_name = 'Underdog' then line end) as underdog_line,
 
         -- Aggregate metrics
-        count(distinct book_id) as num_books,
+        count(distinct book_name) as num_books,
         min(line) as min_line,
         max(line) as max_line,
         round(avg(line), 2) as avg_line,

@@ -31,6 +31,12 @@ data/
 # Archive (very large - 735 MB+)
 archive/
 
+# dbt artifacts
+dbt/target/
+dbt/dbt_packages/
+dbt/.user.yml
+dbt/package-lock.yml
+
 # Databases
 *.db
 *.sql

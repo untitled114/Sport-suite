@@ -1,0 +1,24 @@
+nba_features:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('DB_HOST', 'localhost') }}"
+      port: 5500
+      user: "{{ env_var('DB_USER', 'mlb_user') }}"
+      password: "{{ env_var('DB_PASSWORD', '') }}"
+      dbname: sportsuite
+      schema: features
+      threads: 4
+      connect_timeout: 10
+
+    prod:
+      type: postgres
+      host: "{{ env_var('DB_HOST', 'localhost') }}"
+      port: 5500
+      user: "{{ env_var('DB_USER', 'mlb_user') }}"
+      password: "{{ env_var('DB_PASSWORD', '') }}"
+      dbname: sportsuite
+      schema: features
+      threads: 4
+      connect_timeout: 10

@@ -105,8 +105,7 @@ feature_vectors as (
         r.points_consistency,
 
         -- Minutes baseline (important for all stats)
-        r.avg_minutes_l5,
-        r.avg_minutes_l10,
+        r.avg_minutes_l3,
 
         -- Derived: line vs recent average
         case p.stat_type
