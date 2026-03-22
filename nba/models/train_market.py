@@ -62,14 +62,13 @@ from nba.config.thresholds import (
     TRAINING_HYPERPARAMETERS,
 )
 from nba.core.logging_config import get_logger, setup_logging
+from nba.models.mlflow_tracking import MLFLOW_AVAILABLE, ProjectionModelTracker
 
-# MLflow integration
+# Legacy experiment tracker (optional)
 try:
     from nba.core.experiment_tracking import ExperimentTracker
-
-    MLFLOW_AVAILABLE = True
 except ImportError:
-    MLFLOW_AVAILABLE = False
+    ExperimentTracker = None
 
 # Logger will be configured in main()
 logger = get_logger(__name__)
@@ -455,6 +454,30 @@ class StackedMarketModel:
         """
         logger.info("Training stacked two-head model", extra={"market": self.market})
 
+        # MLflow tracking (non-blocking — no-ops if mlflow not installed)
+        self._tracker = ProjectionModelTracker(experiment_name="nba-two-head-stacked")
+        self._mlflow_run = None
+        if self._tracker.enabled:
+            self._mlflow_run = self._tracker.start_run(
+                run_name=f"{self.market}_{datetime.now(EST).strftime('%Y%m%d_%H%M')}"
+            )
+            if self._mlflow_run:
+                self._mlflow_run.__enter__()
+            hp = TRAINING_HYPERPARAMETERS
+            self._tracker.log_params(
+                {
+                    "market": self.market,
+                    "feature_count": X_train.shape[1],
+                    "train_samples": X_train.shape[0],
+                    "test_samples": X_test.shape[0],
+                    "num_leaves": hp.num_leaves,
+                    "learning_rate": hp.learning_rate,
+                    "n_estimators": hp.n_estimators,
+                    "feature_fraction": hp.feature_fraction,
+                    "temporal_decay_enabled": TEMPORAL_DECAY_CONFIG.enabled,
+                }
+            )
+
         # ==========================
         # STEP 1: Train Regressor
         # ==========================
@@ -838,7 +861,7 @@ class StackedMarketModel:
         top_features_cls = feature_importance_cls.to_dict("records")
         logger.info("Top 20 features (Classifier)", extra={"features": top_features_cls})
 
-        return {
+        metrics = {
             "regressor": {
                 "rmse_train": rmse_train,
                 "rmse_test": rmse_test,
@@ -857,6 +880,32 @@ class StackedMarketModel:
                 "brier_blended": brier_blend,
             },
         }
+
+        # Log all metrics to MLflow
+        if self._tracker.enabled:
+            self._tracker.log_metrics(
+                {
+                    "regressor_rmse_train": rmse_train,
+                    "regressor_rmse_test": rmse_test,
+                    "regressor_mae_test": mae_test,
+                    "regressor_r2_test": r2_test,
+                    "classifier_acc_train": acc_train,
+                    "classifier_acc_test": acc_test,
+                    "classifier_auc_test": auc_test,
+                    "classifier_auc_calibrated": auc_cal,
+                    "classifier_auc_blended": auc_blend,
+                    "classifier_logloss_test": logloss_test,
+                    "calibration_brier_before": brier_before,
+                    "calibration_brier_after": brier_after,
+                    "blend_brier": brier_blend,
+                    "blend_classifier_weight": blend_weight_cls,
+                    "blend_residual_weight": blend_weight_res,
+                    "regressor_n_trees": self.regressor.n_estimators_,
+                    "classifier_n_trees": self.classifier.n_estimators_,
+                }
+            )
+
+        return metrics
 
     def save(self, output_dir: str, metrics: dict, model_version: str = "v3"):
         """
@@ -926,6 +975,17 @@ class StackedMarketModel:
                 ],
             },
         )
+
+        # End MLflow run
+        if hasattr(self, "_tracker") and self._tracker.enabled:
+            self._tracker.log_params(
+                {
+                    "model_version": model_version,
+                    "output_dir": str(output_path),
+                }
+            )
+            if self._mlflow_run:
+                self._mlflow_run.__exit__(None, None, None)
 
 
 def main():
