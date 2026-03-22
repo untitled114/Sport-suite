@@ -453,6 +453,22 @@ class StackedMarketModel:
             game_dates_test: Optional Series of test game dates
         """
         logger.info("Training stacked two-head model", extra={"market": self.market})
+        import hashlib
+        import time as _time
+
+        _train_start = _time.monotonic()
+
+        # Dataset fingerprint for reproducibility (Pillar 4: Security/Integrity)
+        _dataset_hash = hashlib.md5(
+            pd.util.hash_pandas_object(X_train).values.tobytes(),
+            usedforsecurity=False,
+        ).hexdigest()
+
+        # Feature default rate — % of NaN/zero per feature (Pillar 5: Cost Optimization)
+        _null_rates = X_train.isnull().mean()
+        _zero_rates = (X_train == 0).mean()
+        _default_rate = (_null_rates + _zero_rates) / 2
+        _high_default_features = _default_rate[_default_rate > 0.5].index.tolist()
 
         # MLflow tracking (non-blocking — no-ops if mlflow not installed)
         self._tracker = ProjectionModelTracker(experiment_name="nba-two-head-stacked")
@@ -475,6 +491,9 @@ class StackedMarketModel:
                     "n_estimators": hp.n_estimators,
                     "feature_fraction": hp.feature_fraction,
                     "temporal_decay_enabled": TEMPORAL_DECAY_CONFIG.enabled,
+                    "dataset_hash": _dataset_hash,
+                    "high_default_features": str(_high_default_features[:10]),
+                    "high_default_count": len(_high_default_features),
                 }
             )
 
@@ -881,6 +900,9 @@ class StackedMarketModel:
             },
         }
 
+        # Training duration (Pillar 5: Cost Optimization)
+        _train_duration_s = round(_time.monotonic() - _train_start, 1)
+
         # Log all metrics to MLflow
         if self._tracker.enabled:
             self._tracker.log_metrics(
@@ -902,8 +924,19 @@ class StackedMarketModel:
                     "blend_residual_weight": blend_weight_res,
                     "regressor_n_trees": self.regressor.n_estimators_,
                     "classifier_n_trees": self.classifier.n_estimators_,
+                    "training_duration_seconds": _train_duration_s,
+                    "feature_default_rate_mean": round(float(_default_rate.mean()), 4),
+                    "high_default_feature_count": len(_high_default_features),
                 }
             )
+
+        # Store integrity data for reproducibility
+        metrics["integrity"] = {
+            "dataset_hash": _dataset_hash,
+            "training_duration_seconds": _train_duration_s,
+            "high_default_features": _high_default_features,
+            "feature_default_rate_mean": round(float(_default_rate.mean()), 4),
+        }
 
         return metrics
 

@@ -376,6 +376,19 @@ class TestTrainWithMLflow:
         assert metrics["classifier"]["auc_test"] > 0.0
         assert metrics["classifier"]["auc_blended"] > 0.0
 
+    def test_train_includes_integrity_data(self, training_data):
+        """Test train() returns dataset hash, duration, and default rates."""
+        from nba.models.train_market import StackedMarketModel
+
+        model = StackedMarketModel(market="POINTS")
+        metrics = model.train(**training_data)
+
+        assert "integrity" in metrics
+        assert len(metrics["integrity"]["dataset_hash"]) == 32  # MD5 hex
+        assert metrics["integrity"]["training_duration_seconds"] >= 0
+        assert isinstance(metrics["integrity"]["high_default_features"], list)
+        assert isinstance(metrics["integrity"]["feature_default_rate_mean"], float)
+
     def test_train_creates_all_components(self, training_data):
         """Test train() creates regressor, classifier, calibrator."""
         from nba.models.train_market import StackedMarketModel
