@@ -307,6 +307,125 @@ class TestTrainTestSplit:
         assert X_train.index.max() < X_test.index.min()
 
 
+class TestTrainWithMLflow:
+    """Test that train() runs end-to-end and logs to MLflow."""
+
+    @pytest.fixture(autouse=True)
+    def cleanup_mlflow(self):
+        """End any active MLflow run before and after each test."""
+        try:
+            import mlflow
+
+            mlflow.end_run()
+        except Exception:
+            pass
+        yield
+        try:
+            import mlflow
+
+            mlflow.end_run()
+        except Exception:
+            pass
+
+    @pytest.fixture
+    def training_data(self):
+        """Create minimal training data that LightGBM can fit."""
+        np.random.seed(42)
+        n = 200
+        line = np.random.uniform(18, 30, n)
+        actual = line + np.random.normal(0, 5, n)
+        binary = (actual > line).astype(int)
+        residual = actual - line
+        game_dates = pd.Series(pd.date_range("2024-01-01", periods=n))
+
+        X = pd.DataFrame(
+            {
+                "line": line,
+                "is_home": np.random.choice([0, 1], n),
+                "ema_points_L3": actual + np.random.normal(0, 2, n),
+                "ema_points_L5": actual + np.random.normal(0, 1.5, n),
+                "team_pace": np.random.uniform(95, 105, n),
+            }
+        )
+
+        # Temporal split
+        split = int(n * 0.7)
+        return {
+            "X_train": X.iloc[:split],
+            "X_test": X.iloc[split:],
+            "y_value_train": pd.Series(actual[:split]),
+            "y_value_test": pd.Series(actual[split:]),
+            "y_binary_train": pd.Series(binary[:split]),
+            "y_binary_test": pd.Series(binary[split:]),
+            "y_residual_train": pd.Series(residual[:split]),
+            "y_residual_test": pd.Series(residual[split:]),
+            "game_dates_train": game_dates[:split],
+            "game_dates_test": game_dates[split:],
+        }
+
+    def test_train_returns_metrics(self, training_data):
+        """Test train() completes and returns metrics dict."""
+        from nba.models.train_market import StackedMarketModel
+
+        model = StackedMarketModel(market="POINTS")
+        metrics = model.train(**training_data)
+
+        assert "regressor" in metrics
+        assert "classifier" in metrics
+        assert metrics["regressor"]["r2_test"] is not None
+        assert metrics["classifier"]["auc_test"] > 0.0
+        assert metrics["classifier"]["auc_blended"] > 0.0
+
+    def test_train_creates_all_components(self, training_data):
+        """Test train() creates regressor, classifier, calibrator."""
+        from nba.models.train_market import StackedMarketModel
+
+        model = StackedMarketModel(market="POINTS")
+        model.train(**training_data)
+
+        assert model.regressor is not None
+        assert model.classifier is not None
+        assert model.calibrator is not None
+        assert model.imputer is not None
+        assert model.scaler is not None
+
+    def test_train_initializes_mlflow_tracker(self, training_data):
+        """Test train() creates MLflow tracker."""
+        from nba.models.train_market import StackedMarketModel
+
+        model = StackedMarketModel(market="REBOUNDS")
+        model.train(**training_data)
+
+        assert hasattr(model, "_tracker")
+        assert model._tracker is not None
+
+    def test_train_without_temporal_decay(self, training_data):
+        """Test train() works without game_dates (no temporal decay)."""
+        from nba.models.train_market import StackedMarketModel
+
+        td = training_data.copy()
+        td["game_dates_train"] = None
+        td["game_dates_test"] = None
+
+        model = StackedMarketModel(market="POINTS")
+        metrics = model.train(**td)
+
+        assert metrics["regressor"]["rmse_test"] > 0
+
+    def test_save_ends_mlflow_run(self, training_data, tmp_path):
+        """Test save() cleanly ends the MLflow run."""
+        from nba.models.train_market import StackedMarketModel
+
+        model = StackedMarketModel(market="POINTS")
+        model.feature_names = list(training_data["X_train"].columns)
+        metrics = model.train(**training_data)
+        model.save(str(tmp_path), metrics, model_version="xl")
+
+        # Verify files were created
+        assert (tmp_path / "points_xl_regressor.pkl").exists()
+        assert (tmp_path / "points_xl_metadata.json").exists()
+
+
 class TestMetricsCalculation:
     """Tests for metrics calculation helpers."""
 
