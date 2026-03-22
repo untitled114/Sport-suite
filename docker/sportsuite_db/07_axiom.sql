@@ -24,6 +24,29 @@ CREATE INDEX idx_pr_status ON pipeline_runs(status) WHERE status != 'success';
 CREATE INDEX idx_pr_anomalies ON pipeline_runs(run_date) WHERE anomalies IS NOT NULL;
 
 -- ==========================================================================
+-- MODEL REGISTRY — tracks which model is production/shadow/rolled_back
+-- ==========================================================================
+CREATE TABLE model_registry (
+    id              SERIAL PRIMARY KEY,
+    version         TEXT NOT NULL UNIQUE,     -- 'v4_POINTS_20260322'
+    market          TEXT NOT NULL,            -- 'POINTS', 'REBOUNDS'
+    status          TEXT NOT NULL DEFAULT 'training',  -- training/shadow/production/rolled_back
+    auc             NUMERIC(6,4),
+    r2              NUMERIC(6,4),
+    feature_count   INTEGER,
+    win_rate        NUMERIC(5,4),             -- populated during shadow/production
+    pkl_path        TEXT NOT NULL DEFAULT '',
+    training_samples INTEGER,
+    promoted_at     TIMESTAMPTZ,
+    rolled_back_at  TIMESTAMPTZ,
+    metadata        JSONB,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_mr_market ON model_registry(market, status);
+CREATE INDEX idx_mr_production ON model_registry(market) WHERE status = 'production';
+
+-- ==========================================================================
 -- PIPELINE AUDIT — one row per pipeline run (legacy, kept for backward compat)
 -- ==========================================================================
 CREATE TABLE axiom_pipeline_audit (
@@ -233,6 +256,50 @@ CREATE TABLE atlas_alerts (
 
 CREATE INDEX idx_alerts_unresolved ON atlas_alerts(created_at DESC) WHERE resolved = FALSE;
 CREATE INDEX idx_alerts_severity ON atlas_alerts(severity, created_at DESC);
+
+-- ==========================================================================
+-- VALIDATION RUNS — walk-forward results per model version
+-- ==========================================================================
+CREATE TABLE validation_runs (
+    id SERIAL PRIMARY KEY,
+    model_version TEXT NOT NULL,
+    market TEXT NOT NULL,
+    run_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    auc_mean NUMERIC(6,4),
+    auc_std NUMERIC(6,4),
+    wr_mean NUMERIC(6,4),
+    roi_mean NUMERIC(6,4),
+    fold_count INTEGER NOT NULL,
+    beats_baseline BOOLEAN,
+    promoted BOOLEAN DEFAULT FALSE,
+    promoted_at TIMESTAMPTZ,
+    rolled_back BOOLEAN DEFAULT FALSE,
+    rolled_back_at TIMESTAMPTZ,
+    rollback_reason TEXT,
+    raw_results JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_vr_version ON validation_runs(model_version, market);
+CREATE INDEX idx_vr_promoted ON validation_runs(market, promoted) WHERE promoted = TRUE;
+CREATE INDEX idx_vr_date ON validation_runs(run_date DESC);
+
+-- ==========================================================================
+-- MODEL REGISTRY — which version is production for each market
+-- ==========================================================================
+CREATE TABLE model_registry (
+    market TEXT PRIMARY KEY,
+    production_version TEXT NOT NULL,
+    promoted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    validation_run_id INTEGER REFERENCES validation_runs(id),
+    previous_version TEXT,
+    rollback_count INTEGER DEFAULT 0
+);
+
+INSERT INTO model_registry (market, production_version) VALUES
+    ('POINTS', 'v3'),
+    ('REBOUNDS', 'v3')
+ON CONFLICT (market) DO NOTHING;
 
 -- Seed data sources
 INSERT INTO data_sources (name, provider, source_type, description, cost_monthly_usd, expected_frequency, sla_max_age_hours, markets, books) VALUES
