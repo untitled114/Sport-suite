@@ -7,14 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- Cephalon fleet deployment system (`deploy.sh --deploy-fleet`, `--restart-fleet`)
-- Axiom bot database `tool_use` integration for on-demand queries
-- Gitleaks secret scanning allowlist for test fixtures
+## [3.0.0] - 2026-03-22
 
-### Fixed
-- CI/CD deploy workflow: rsync `--omit-dir-times` for consistent deploys
-- BettingPros API brotli decompression fix (removed `br` from Accept-Encoding)
+### Added — Back to Basics Rebuild
+- **Consolidated Database**: 6 PostgreSQL containers → 1 TimescaleDB instance (port 5500, 6 schemas)
+- **`get_connection(schema)`**: Schema-based routing with `search_path` — existing queries work unchanged
+- **Feature Store**: `features.computed_features` table + `FeatureStore` ETL class for versioned feature vectors
+- **ProbabilityEngine**: Normal/Poisson distribution-based P(OVER) from player stats
+- **EdgeCalculator**: `model_prob - implied_prob` with minimum 5% edge threshold
+- **KellySizer**: Fractional Kelly (0.25x) bet sizing with 3% bankroll hard cap
+- **ProjectionModel**: Pace-adjusted rolling averages with matchup/defense/home adjustments
+- **MLflow tracking**: Integrated into `train_market.py` — logs params, metrics, dataset hash, training duration
+- **Walk-forward validation**: Expanding window splits with ROI simulation
+- **CLVTracker**: Closing line value from `nba_line_snapshots`
+- **ResultTracker**: Rolling WR/ROI by market/tier, anomaly detection (WR < 52% 7d)
+- **Pipeline Telemetry** (`PipelineContext`): Per-task structured telemetry with anomaly detection
+- **Model Registry**: Full lifecycle management (training → shadow → production → rolled_back)
+- **Promotion Gate**: Data-driven promotion decisions (AUC improvement ≥ 0.005, std < 0.03, WR check)
+- **Dataset fingerprinting**: MD5 hash of training data for reproducibility
+- **Feature default rate tracking**: Flags extractors returning >50% defaults
+- **Drift detection DAG**: Weekly PSI/KS-test on features (Sunday 4AM)
+- **FastAPI routes**: `GET /performance`, `PATCH /picks/{id}/result`
+- **Claude workflows**: `/session-start`, `/release`, `/diagnose`, `/status` slash commands
+
+### Changed
+- All pipeline DB connections migrated from hardcoded ports to `get_connection()`
+- `extract_live_features.py` and `extract_live_features_xl.py` use centralized config
+- `generate_xl_predictions.py` uses `get_connection()` instead of per-port configs
+- Validation DAG now runs CLV tracker and result tracker post-grading
+- Coverage config: `nba/models/*` blanket omit replaced with targeted omits
+- Pre-commit hooks catch hardcoded ports and secrets
+
+### Infrastructure
+- **Docker**: `docker-compose.new.yml` with single `sportsuite_db` container
+- **Migration**: `migrate_data.py` — column-matching COPY for schema drift handling
+- **Tables added**: `pipeline_runs`, `model_registry`, `validation_runs`, `computed_features`, `clv_tracking`, `performance_metrics`, `feature_sets`, `feature_metadata`
+- **Seeded**: Model registry with current XL + V3 production models
+
+### Tests
+- 1972 tests, 99.09% coverage
+- New test files: `test_database_config`, `test_feature_store`, `test_pipeline_integration`, `test_pipeline_telemetry`, `test_model_registry`, `test_promotion_gate`
 
 ## [2.0.0] - 2026-02-03
 
@@ -114,6 +146,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | Version | Date       | Highlights                                    |
 |---------|------------|-----------------------------------------------|
+| 3.0.0   | 2026-03-22 | Back to basics: consolidated DB, 5 pillars, model registry |
 | 2.0.0   | 2026-02-03 | V3 models (136 features), dual XL+V3 system   |
 | 1.1.0   | 2026-01-29 | Pydantic schemas, drift detection, MLflow     |
 | 1.0.0   | 2025-11-06 | Production release, multi-book line shopping  |
