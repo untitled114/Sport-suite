@@ -113,3 +113,64 @@ def get_mongo_config() -> Dict[str, Any]:
         "collection": os.getenv("NBA_MONGO_COLLECTION", "nba_props_xl"),
         "timeout_ms": int(os.getenv("NBA_MONGO_TIMEOUT_MS", 8000)),
     }
+
+
+# ==========================================================================
+# CONSOLIDATED DATABASE INTERFACE
+# Single TimescaleDB instance with schema-based isolation (port 5500).
+# Set DB_PORT=5500 and DB_NAME=sportsuite in .env to use.
+# ==========================================================================
+
+SCHEMAS = {
+    "players": "players",
+    "games": "games",
+    "teams": "teams",
+    "intelligence": "intelligence",
+    "axiom": "axiom",
+    "features": "features",
+}
+
+
+def get_schema_config(schema: str) -> Dict[str, Any]:
+    """
+    Get connection config for the consolidated database with search_path
+    set to the given schema. Existing queries work without schema-qualifying.
+    """
+    if schema not in SCHEMAS:
+        raise ValueError(f"Unknown schema: {schema}. Valid: {list(SCHEMAS.keys())}")
+
+    return {
+        "host": os.getenv("DB_HOST", "localhost"),
+        "port": int(os.getenv("DB_PORT", "5500")),
+        "database": os.getenv("DB_NAME", "sportsuite"),
+        "user": os.getenv("DB_USER", DB_DEFAULT_USER),
+        "password": os.getenv("DB_PASSWORD", DB_DEFAULT_PASSWORD),
+        "connect_timeout": int(os.getenv("NBA_DB_CONNECT_TIMEOUT", 10)),
+        "options": f"-c search_path={SCHEMAS[schema]},public",
+    }
+
+
+def get_connection(schema: str, autocommit: bool = True):
+    """
+    Get a psycopg2 connection to the consolidated database with the given schema.
+
+    Args:
+        schema: One of players, games, teams, intelligence, axiom, features
+        autocommit: Set autocommit (default True to prevent silent failures)
+    """
+    import psycopg2
+
+    config = get_schema_config(schema)
+    conn = psycopg2.connect(**config)
+    conn.autocommit = autocommit
+    return conn
+
+
+def get_axiom_db_config() -> Dict[str, Any]:
+    """Get axiom schema config for the consolidated database."""
+    return get_schema_config("axiom")
+
+
+def get_features_db_config() -> Dict[str, Any]:
+    """Get features schema config for the consolidated database."""
+    return get_schema_config("features")
