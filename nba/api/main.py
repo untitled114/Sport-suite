@@ -35,7 +35,7 @@ from fastapi.responses import JSONResponse
 
 from nba.api import __version__
 from nba.api.dependencies import get_model_manager
-from nba.api.routes import health_router, picks_router, predictions_router
+from nba.api.routes import health_router, performance_router, picks_router, predictions_router
 
 EST = ZoneInfo("America/New_York")
 
@@ -213,6 +213,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 app.include_router(predictions_router)
 app.include_router(picks_router)
 app.include_router(health_router)
+app.include_router(performance_router)
 
 
 # ==============================================================================
@@ -256,6 +257,11 @@ async def root():
                 "models": "GET /health/models",
                 "database": "GET /health/db",
                 "ready": "GET /health/ready",
+            },
+            "performance": {
+                "rolling": "GET /performance",
+                "clv": "GET /performance/clv",
+                "anomalies": "GET /performance/anomalies",
             },
         },
         "enabled_markets": ["POINTS", "REBOUNDS"],
