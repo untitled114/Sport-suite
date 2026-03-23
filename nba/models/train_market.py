@@ -1018,6 +1018,8 @@ class StackedMarketModel:
             "feature_default_rate_mean": round(float(_default_rate.mean()), 4),
         }
 
+        self._tracker.end_run()
+
         return metrics
 
     def save(self, output_dir: str, metrics: dict, model_version: str = "v3"):
@@ -1099,7 +1101,7 @@ class StackedMarketModel:
             },
         )
 
-        # End MLflow run
+        # Log save-time params (run may already be ended, tracker handles gracefully)
         if hasattr(self, "_tracker") and self._tracker.enabled:
             self._tracker.log_params(
                 {
@@ -1107,7 +1109,6 @@ class StackedMarketModel:
                     "output_dir": str(output_path),
                 }
             )
-            self._tracker.end_run()
 
 
 def main():

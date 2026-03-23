@@ -439,6 +439,7 @@ class PlayerProjectionModel:
                 "training_duration_s": train_duration,
             }
         )
+        self._tracker.end_run()
 
         return metrics
 
@@ -484,11 +485,6 @@ class PlayerProjectionModel:
 
         with open(output_path / f"{prefix}_metadata.json", "w") as f:
             json.dump(metadata, f, indent=2)
-
-        # End MLflow run
-        if hasattr(self, "_tracker"):
-            self._tracker.log_params({"model_version": model_version})
-            self._tracker.end_run()
 
         logger.info(
             "Projection model saved",

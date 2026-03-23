@@ -168,15 +168,35 @@ class MarketClassifierModel:
             extra={"features": len(model1.feature_names)},
         )
 
-        # Get Model 1 predictions — fill missing columns with NaN (imputer handles them)
-        missing = set(model1.feature_names) - set(df.columns)
+        # Map XL CSV columns to Model 1 feature names where possible
+        _COL_MAP = {
+            "player_plus_minus_L5": "plus_minus_L5",
+        }
+        df_m1 = df.copy()
+        for src, dst in _COL_MAP.items():
+            if src in df_m1.columns and dst not in df_m1.columns:
+                df_m1[dst] = df_m1[src]
+
+        # Derive features Model 1 needs but XL CSV doesn't have
+        if "games_played_season" not in df_m1.columns and "season_pct" in df_m1.columns:
+            df_m1["games_played_season"] = (df_m1["season_pct"] * 82).round()
+        if "days_since_return" not in df_m1.columns:
+            df_m1["days_since_return"] = 3  # default: not recently returned
+        if "opp_pace" not in df_m1.columns and "opponent_def_rating" in df_m1.columns:
+            df_m1["opp_pace"] = 100.0  # league average fallback
+        if "opp_off_rating" not in df_m1.columns:
+            df_m1["opp_off_rating"] = 112.0  # league average fallback
+        if "opp_def_rating" not in df_m1.columns and "opponent_def_rating" in df_m1.columns:
+            df_m1["opp_def_rating"] = df_m1["opponent_def_rating"]
+
+        missing = set(model1.feature_names) - set(df_m1.columns)
         if missing:
             logger.warning(
-                "Model 1 features missing from CSV, filling NaN",
+                "Model 1 features still missing after mapping",
                 extra={"missing_count": len(missing), "missing": sorted(missing)},
             )
 
-        model1_input = df.reindex(columns=model1.feature_names)
+        model1_input = df_m1.reindex(columns=model1.feature_names)
         projections = model1.predict(model1_input)
 
         # Compute projection_diff
@@ -468,6 +488,7 @@ class MarketClassifierModel:
                 "training_duration_s": train_duration,
             }
         )
+        self._tracker.end_run()
 
         return metrics
 
@@ -515,10 +536,6 @@ class MarketClassifierModel:
 
         with open(output_path / f"{prefix}_market_metadata.json", "w") as f:
             json.dump(metadata, f, indent=2)
-
-        # End MLflow run
-        if hasattr(self, "_tracker"):
-            self._tracker.end_run()
 
         logger.info(
             "Market classifier saved",
