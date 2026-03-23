@@ -1,41 +1,36 @@
 """
-MLflow Tracking for Projection Model
-======================================
-Extends the existing ExperimentTracker with projection-model-specific
-tracking capabilities.
+MLflow Tracking for Sport-Suite Models
+=======================================
+Single tracker used by all model types (stacked two-head, projection, market classifier).
 
-Wraps training runs for both the existing two-head LightGBM model and
-the new projection + distribution model, enabling side-by-side comparison
-in the MLflow UI.
+Handles:
+- Experiment creation and selection
+- Run lifecycle (start/end with proper cleanup)
+- Parameter, metric, and artifact logging
+- Stale run cleanup
 
 Usage:
-    from nba.models.mlflow_tracking import ProjectionModelTracker
+    from nba.models.mlflow_tracking import ModelTracker
 
-    tracker = ProjectionModelTracker()
-
-    with tracker.start_run(run_name="projection_POINTS_v1"):
-        tracker.log_projection_config(...)
-        tracker.log_projection_metrics(...)
-        tracker.log_comparison(lgbm_metrics, projection_metrics)
+    tracker = ModelTracker(experiment="nba-model-cascade")
+    tracker.start_run("POINTS_projection_20260323")
+    tracker.log_params({"market": "POINTS", "features": 30})
+    tracker.log_metrics({"rmse_test": 6.53, "r2_test": 0.39})
+    tracker.end_run()
 
 Environment:
-    pip install mlflow  # or: pip install -e ".[mlops]"
-    export MLFLOW_TRACKING_URI=sqlite:///mlruns.db
+    pip install mlflow
+    Tracking URI defaults to sqlite:///mlruns.db
 """
 
-import json
 import logging
 import os
-import tempfile
-from contextlib import contextmanager
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 EST = ZoneInfo("America/New_York")
-
-logger = logging.getLogger(__name__)
+log = logging.getLogger("nba.mlflow_tracking")
 
 try:
     import mlflow
@@ -45,198 +40,96 @@ except ImportError:
     MLFLOW_AVAILABLE = False
 
 
-class ProjectionModelTracker:
-    """
-    MLflow tracker specialized for projection model experiments.
+class ModelTracker:
+    """MLflow tracker for all Sport-Suite models.
 
-    Builds on top of ExperimentTracker but adds:
-    - Projection-specific parameter logging
-    - Distribution fit quality metrics
-    - Side-by-side comparison with LightGBM models
-    - Walk-forward fold tracking
+    Not a context manager — uses explicit start_run/end_run to avoid the
+    generator-based __enter__/__exit__ bug that caused orphaned runs.
     """
 
     def __init__(
         self,
-        experiment_name: str = "nba-projection-model",
+        experiment: str = "nba-model-cascade",
         tracking_uri: Optional[str] = None,
     ):
-        self.experiment_name = experiment_name
+        self.experiment = experiment
         self.tracking_uri = tracking_uri or os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlruns.db")
         self.enabled = MLFLOW_AVAILABLE
-        self._run = None
+        self._active = False
 
         if self.enabled:
             self._setup()
 
     def _setup(self):
-        """Configure MLflow."""
+        """Configure MLflow, cleaning up any stale runs."""
         mlflow.set_tracking_uri(self.tracking_uri)
-        experiment = mlflow.get_experiment_by_name(self.experiment_name)
-        if experiment is None:
-            mlflow.create_experiment(
-                self.experiment_name,
-                tags={"project": "nba-props-ml", "model_type": "projection"},
-            )
-        mlflow.set_experiment(self.experiment_name)
 
-    @contextmanager
-    def start_run(
-        self,
-        run_name: Optional[str] = None,
-        tags: Optional[Dict[str, str]] = None,
-        nested: bool = False,
-    ):
-        """Start a new MLflow run."""
+        # End any orphaned active run from a prior crash
+        if mlflow.active_run():
+            log.warning("Ending orphaned MLflow run: %s", mlflow.active_run().info.run_id)
+            mlflow.end_run()
+
+        if not mlflow.get_experiment_by_name(self.experiment):
+            mlflow.create_experiment(self.experiment)
+        mlflow.set_experiment(self.experiment)
+
+    def start_run(self, run_name: str, tags: Optional[dict[str, str]] = None):
+        """Start a new MLflow run. Safe to call even if a prior run leaked."""
         if not self.enabled:
-            yield None
             return
 
-        default_tags = {
-            "timestamp": datetime.now(EST).isoformat(),
-            "model_type": "projection",
-        }
+        # Safety: end any lingering run
+        if mlflow.active_run():
+            mlflow.end_run()
+
+        all_tags = {"timestamp": datetime.now(EST).isoformat()}
         if tags:
-            default_tags.update(tags)
+            all_tags.update(tags)
 
         try:
-            self._run = mlflow.start_run(run_name=run_name, tags=default_tags, nested=nested)
-            yield self._run
-        finally:
-            if self._run:
-                mlflow.end_run()
-                self._run = None
+            mlflow.start_run(run_name=run_name, tags=all_tags)
+            self._active = True
+        except Exception as e:
+            log.warning("MLflow start_run failed: %s", e)
+            self._active = False
 
-    def log_projection_config(
-        self,
-        market: str,
-        rolling_weights: Dict[str, float],
-        home_advantage: float,
-        league_avg_pace: float,
-    ):
-        """Log projection model configuration."""
-        if not self.enabled or not self._run:
+    def end_run(self):
+        """End the active MLflow run."""
+        if not self.enabled or not self._active:
             return
-
-        params = {
-            "market": market,
-            "model_type": "pace_adjusted_projection",
-            "league_avg_pace": league_avg_pace,
-            "home_advantage": home_advantage,
-        }
-        for window, weight in rolling_weights.items():
-            params[f"weight_{window}"] = weight
-
-        mlflow.log_params(params)
-
-    def log_projection_metrics(
-        self,
-        mae: float,
-        rmse: float,
-        r2: float,
-        auc: Optional[float] = None,
-        brier_score: Optional[float] = None,
-        win_rate: Optional[float] = None,
-        roi: Optional[float] = None,
-        step: Optional[int] = None,
-    ):
-        """Log projection model performance metrics."""
-        if not self.enabled or not self._run:
-            return
-
-        metrics = {"mae": mae, "rmse": rmse, "r2": r2}
-        if auc is not None:
-            metrics["auc"] = auc
-        if brier_score is not None:
-            metrics["brier_score"] = brier_score
-        if win_rate is not None:
-            metrics["win_rate"] = win_rate
-        if roi is not None:
-            metrics["roi"] = roi
-
-        for key, value in metrics.items():
-            mlflow.log_metric(key, value, step=step)
-
-    def log_walk_forward_fold(
-        self,
-        fold_num: int,
-        train_start: str,
-        train_end: str,
-        test_start: str,
-        test_end: str,
-        metrics: Dict[str, float],
-    ):
-        """Log metrics for a single walk-forward fold."""
-        if not self.enabled or not self._run:
-            return
-
-        # Log fold boundaries as params
-        mlflow.set_tag(f"fold_{fold_num}_train", f"{train_start} to {train_end}")
-        mlflow.set_tag(f"fold_{fold_num}_test", f"{test_start} to {test_end}")
-
-        # Log fold metrics
-        for key, value in metrics.items():
-            mlflow.log_metric(f"fold_{fold_num}_{key}", value)
-
-    def log_comparison(
-        self,
-        lgbm_metrics: Dict[str, float],
-        projection_metrics: Dict[str, float],
-    ):
-        """
-        Log side-by-side comparison between LightGBM and projection model.
-
-        Args:
-            lgbm_metrics: Metrics from the existing two-head model
-            projection_metrics: Metrics from the new projection model
-        """
-        if not self.enabled or not self._run:
-            return
-
-        for key, value in lgbm_metrics.items():
-            mlflow.log_metric(f"lgbm_{key}", value)
-        for key, value in projection_metrics.items():
-            mlflow.log_metric(f"proj_{key}", value)
-
-        # Log deltas
-        common_keys = set(lgbm_metrics.keys()) & set(projection_metrics.keys())
-        for key in common_keys:
-            delta = projection_metrics[key] - lgbm_metrics[key]
-            mlflow.log_metric(f"delta_{key}", delta)
-
-    def log_comparison_artifact(
-        self,
-        comparison_data: Dict[str, Any],
-        filename: str = "model_comparison.json",
-    ):
-        """Save comparison data as a JSON artifact."""
-        if not self.enabled or not self._run:
-            return
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(comparison_data, f, indent=2, default=str)
-            temp_path = f.name
-
         try:
-            mlflow.log_artifact(temp_path, "comparison")
+            mlflow.end_run()
+        except Exception as e:
+            log.warning("MLflow end_run failed: %s", e)
         finally:
-            os.remove(temp_path)
+            self._active = False
 
-    def log_params(self, params: Dict[str, Any]):
-        """Log parameters."""
-        if not self.enabled or not self._run:
+    def log_params(self, params: dict[str, Any]):
+        """Log parameters. Converts non-primitive values to strings."""
+        if not self.enabled or not self._active:
             return
-
         clean = {}
         for k, v in params.items():
-            clean[k] = v if isinstance(v, (str, int, float, bool)) else str(v)
-        mlflow.log_params(clean)
+            if isinstance(v, (str, int, float, bool)):
+                clean[k] = v
+            else:
+                clean[k] = str(v)
+        try:
+            mlflow.log_params(clean)
+        except Exception as e:
+            log.debug("MLflow log_params failed: %s", e)
 
-    def log_metrics(self, metrics: Dict[str, float], step: Optional[int] = None):
-        """Log metrics."""
-        if not self.enabled or not self._run:
+    def log_metrics(self, metrics: dict[str, float]):
+        """Log metrics. Skips non-numeric values."""
+        if not self.enabled or not self._active:
             return
+        try:
+            for k, v in metrics.items():
+                if isinstance(v, (int, float)):
+                    mlflow.log_metric(k, float(v))
+        except Exception as e:
+            log.debug("MLflow log_metrics failed: %s", e)
 
-        for k, v in metrics.items():
-            if isinstance(v, (int, float)):
-                mlflow.log_metric(k, float(v), step=step)
+
+# Backwards compatibility — old code imports ProjectionModelTracker
+ProjectionModelTracker = ModelTracker

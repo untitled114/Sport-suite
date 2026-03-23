@@ -8,39 +8,22 @@ regardless of short-term variance. CLV measures whether the market
 moved in your direction after you made your pick.
 
 Data sources:
-  - nba_line_snapshots (port 5539, nba_intelligence): append-only line history
+  - nba_line_snapshots (intelligence schema): append-only line history
   - nba_prediction_history (axiom schema): pick records with lines
 
-Schema for clv_results table (to be created by Claude 1):
-  CREATE TABLE clv_results (
-      id SERIAL PRIMARY KEY,
-      run_date DATE NOT NULL,
-      player_name TEXT NOT NULL,
-      stat_type TEXT NOT NULL,
-      model_version TEXT,
-      book TEXT,
-      opening_line NUMERIC(5,1),
-      closing_line NUMERIC(5,1),
-      our_line NUMERIC(5,1),
-      opening_implied_prob NUMERIC(5,4),
-      closing_implied_prob NUMERIC(5,4),
-      model_prob NUMERIC(5,4),
-      clv_cents NUMERIC(6,2),
-      beat_close BOOLEAN,
-      computed_at TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE (run_date, player_name, stat_type)
-  );
+Persistence target: features.clv_tracking
+  UNIQUE (player_name, game_date, stat_type, book_name)
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 import psycopg2
 import psycopg2.extras
 
-from nba.config.database import get_axiom_db_config, get_intelligence_db_config
+from nba.config.database import get_axiom_db_config, get_connection, get_intelligence_db_config
 
 log = logging.getLogger("nba.clv_tracker")
 
@@ -314,6 +297,149 @@ class CLVTracker:
             "clv_positive_rate": round(positive_count / len(clv_results), 3),
             "by_market": market_summary,
         }
+
+    def persist_daily_clv(self, game_date: str) -> int:
+        """Compute CLV for a date and persist per-pick results to features.clv_tracking.
+
+        Fetches graded picks from axiom.nba_prediction_history, computes CLV
+        for each pick, and UPSERTs into features.clv_tracking.
+
+        Args:
+            game_date: Date string in YYYY-MM-DD format.
+
+        Returns:
+            Number of rows persisted.
+        """
+        # Fetch graded picks (deduplicated, latest run per player+stat)
+        axiom_conn = _connect_axiom()
+        try:
+            with axiom_conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    WITH ranked AS (
+                        SELECT *,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY player_name, stat_type
+                                   ORDER BY run_number DESC
+                               ) AS rn
+                        FROM nba_prediction_history
+                        WHERE run_date = %s AND is_hit IS NOT NULL
+                    )
+                    SELECT id, player_name, stat_type, line, p_over, book,
+                           run_date, model_version, actual_result, is_hit
+                    FROM ranked WHERE rn = 1
+                    """,
+                    (game_date,),
+                )
+                picks = [dict(r) for r in cur.fetchall()]
+        finally:
+            axiom_conn.close()
+
+        if not picks:
+            log.info("persist_daily_clv: no graded picks for %s", game_date)
+            return 0
+
+        # Compute CLV for each pick and collect rows to insert
+        rows_to_upsert = []
+        for pick in picks:
+            clv = self.compute_clv(pick)
+            if clv is None:
+                continue
+
+            rows_to_upsert.append(
+                (
+                    pick["id"],  # prediction_id
+                    pick["player_name"],
+                    pick["stat_type"],
+                    game_date,
+                    pick.get("book"),  # book_name
+                    clv["opening_line"],
+                    clv["closing_line"],
+                    float(pick.get("line") or 0),  # model_line
+                    clv["opening_implied_prob"],
+                    clv["closing_implied_prob"],
+                    clv["model_prob"],
+                    clv["clv_cents"],
+                    clv["beat_close"],  # beat_closing_line
+                    float(pick["actual_result"]) if pick.get("actual_result") is not None else None,
+                    pick.get("is_hit"),
+                )
+            )
+
+        if not rows_to_upsert:
+            log.info("persist_daily_clv: no CLV data for %s (no snapshots)", game_date)
+            return 0
+
+        # UPSERT into features.clv_tracking
+        feat_conn = get_connection("features", autocommit=False)
+        try:
+            with feat_conn.cursor() as cur:
+                cur.executemany(
+                    """
+                    INSERT INTO features.clv_tracking (
+                        prediction_id, player_name, stat_type, game_date,
+                        book_name, opening_line, closing_line, model_line,
+                        opening_implied_prob, closing_implied_prob, model_prob,
+                        clv_cents, beat_closing_line, actual_value, is_hit,
+                        computed_at
+                    ) VALUES (
+                        %s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, %s,
+                        %s, %s, %s, %s,
+                        NOW()
+                    )
+                    ON CONFLICT (player_name, game_date, stat_type, book_name)
+                    DO UPDATE SET
+                        prediction_id = EXCLUDED.prediction_id,
+                        opening_line = EXCLUDED.opening_line,
+                        closing_line = EXCLUDED.closing_line,
+                        model_line = EXCLUDED.model_line,
+                        opening_implied_prob = EXCLUDED.opening_implied_prob,
+                        closing_implied_prob = EXCLUDED.closing_implied_prob,
+                        model_prob = EXCLUDED.model_prob,
+                        clv_cents = EXCLUDED.clv_cents,
+                        beat_closing_line = EXCLUDED.beat_closing_line,
+                        actual_value = EXCLUDED.actual_value,
+                        is_hit = EXCLUDED.is_hit,
+                        computed_at = NOW()
+                    """,
+                    rows_to_upsert,
+                )
+            feat_conn.commit()
+            log.info("persist_daily_clv: persisted %d rows for %s", len(rows_to_upsert), game_date)
+            return len(rows_to_upsert)
+        except Exception:
+            feat_conn.rollback()
+            raise
+        finally:
+            feat_conn.close()
+
+    def backfill_clv(self, start_date: str, end_date: str) -> int:
+        """Backfill CLV data for a date range (inclusive).
+
+        Args:
+            start_date: Start date string in YYYY-MM-DD format.
+            end_date: End date string in YYYY-MM-DD format.
+
+        Returns:
+            Total number of rows persisted across all dates.
+        """
+        start = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
+        total = 0
+        current = start
+
+        while current <= end:
+            date_str = current.isoformat()
+            count = self.persist_daily_clv(date_str)
+            if count:
+                print(f"  {date_str}: persisted {count} CLV rows")
+            total += count
+            current += timedelta(days=1)
+
+        print(f"[CLV] Backfill complete: {total} rows across {(end - start).days + 1} days")
+        return total
 
     def compute_rolling_clv(self, days: int = 7) -> dict[str, Any]:
         """Compute rolling CLV metrics over a window.

@@ -1456,6 +1456,651 @@ class XLDatasetBuilder:
             self.disconnect()
 
 
+def build_projection_dataset(market: str, output_path: str = None, verbose: bool = True):
+    """
+    Build training dataset for Model 1 (Player Projection Regressor).
+
+    This model predicts raw stat values (points, rebounds) using ONLY player
+    performance and team context features. NO line features, NO book features,
+    NO BP features. Trains on player_game_logs (games with >=20min) instead of
+    nba_props_xl, giving access to ~71K rows of real game data.
+
+    Feature groups (~35-40 features):
+    - EMA rolling stats (L3, L5, L10) for target stat and minutes
+    - Rolling standard deviations (L5, L10)
+    - Shooting efficiency (FG%, FT rate, true shooting)
+    - Plus/minus and points per minute
+    - Rest/schedule features (days_rest, back-to-back, return from absence)
+    - Season progress (games_played_season, season_pct)
+    - Team context (pace, off/def rating from team_rolling_stats)
+    - Opponent context (pace, def rating)
+    - Static features (is_home, position_encoded, starter_flag)
+
+    LEAKAGE PREVENTION:
+    - All rolling features use .shift(1) so only PRIOR games inform features
+    - Team rolling stats are point-in-time (as_of_date <= game_date)
+    - No line, book, or consensus features included
+
+    Args:
+        market: Stat type ('POINTS' or 'REBOUNDS')
+        output_path: Path for output CSV. If None, uses default datasets dir.
+        verbose: Enable verbose logging
+    """
+    market = market.upper()
+    stat_col_map = {
+        "POINTS": "points",
+        "REBOUNDS": "rebounds",
+        "ASSISTS": "assists",
+        "THREES": "three_pointers_made",
+    }
+    if market not in stat_col_map:
+        raise ValueError(f"Unsupported market: {market}. Valid: {list(stat_col_map.keys())}")
+
+    stat_col = stat_col_map[market]
+
+    # Position encoding map (matches LiveFeatureExtractor convention)
+    position_map = {
+        "PG": 1,
+        "G": 1.5,
+        "SG": 2,
+        "SF": 3,
+        "F": 3.5,
+        "PF": 4,
+        "C": 5,
+        "F-C": 4.5,
+        "G-F": 2.5,
+    }
+
+    # Output path
+    datasets_dir = Path(__file__).resolve().parent / "datasets"
+    datasets_dir.mkdir(exist_ok=True, parents=True)
+    if output_path is None:
+        output_path = datasets_dir / f"projection_training_{market}.csv"
+    else:
+        output_path = Path(output_path)
+
+    if verbose:
+        print("=" * 80)
+        print(f"PROJECTION DATASET BUILDER — Model 1 ({market})")
+        print("=" * 80)
+        print("Mode: Line-blind player projection (NO book/line/BP features)")
+        print(f"Output: {output_path}")
+        print("=" * 80)
+
+    # -------------------------------------------------------------------------
+    # Step 1: Get prop-relevant players from nba_props_xl
+    # -------------------------------------------------------------------------
+    if verbose:
+        print("\n[1/7] Fetching prop-relevant players from nba_props_xl...")
+
+    conn_intel = get_connection("intelligence")
+    try:
+        with conn_intel.cursor() as cur:
+            # Map market to stat_type values in nba_props_xl
+            stat_type_map = {
+                "POINTS": "POINTS",
+                "REBOUNDS": "REBOUNDS",
+                "ASSISTS": "ASSISTS",
+                "THREES": "THREES",
+            }
+            cur.execute(
+                """
+                SELECT player_name, COUNT(*) as cnt
+                FROM nba_props_xl
+                WHERE stat_type = %s
+                GROUP BY player_name
+                HAVING COUNT(*) >= 5
+                """,
+                (stat_type_map[market],),
+            )
+            prop_players = {row[0] for row in cur.fetchall()}
+    finally:
+        conn_intel.close()
+
+    if verbose:
+        print(f"   Found {len(prop_players):,} prop-relevant players")
+
+    if not prop_players:
+        print("   No prop-relevant players found. Aborting.")
+        return None
+
+    # Normalize prop player names for matching
+    prop_players_normalized = {normalize_player_name(name) for name in prop_players}
+
+    # -------------------------------------------------------------------------
+    # Step 2: Fetch game logs with player profile data
+    # -------------------------------------------------------------------------
+    if verbose:
+        print("\n[2/7] Fetching game logs from player_game_logs (minutes >= 20)...")
+
+    conn_players = get_connection("players")
+    try:
+        with conn_players.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    pgl.player_id,
+                    pp.full_name AS player_name,
+                    pp.position,
+                    pgl.game_date,
+                    pgl.season,
+                    pgl.team_abbrev,
+                    pgl.opponent_abbrev,
+                    pgl.is_home,
+                    pgl.minutes_played,
+                    pgl.points,
+                    pgl.rebounds,
+                    pgl.assists,
+                    pgl.steals,
+                    pgl.blocks,
+                    pgl.turnovers,
+                    pgl.three_pointers_made,
+                    pgl.fg_made,
+                    pgl.fg_attempted,
+                    pgl.three_pt_attempted,
+                    pgl.ft_made,
+                    pgl.ft_attempted,
+                    pgl.plus_minus
+                FROM player_game_logs pgl
+                JOIN player_profile pp ON pgl.player_id = pp.player_id
+                WHERE pgl.minutes_played >= 20
+                  AND pgl.game_date >= '2023-10-01'
+                ORDER BY pgl.player_id, pgl.game_date
+                """
+            )
+            columns = [
+                "player_id",
+                "player_name",
+                "position",
+                "game_date",
+                "season",
+                "team_abbrev",
+                "opponent_abbrev",
+                "is_home",
+                "minutes_played",
+                "points",
+                "rebounds",
+                "assists",
+                "steals",
+                "blocks",
+                "turnovers",
+                "three_pointers_made",
+                "fg_made",
+                "fg_attempted",
+                "three_pt_attempted",
+                "ft_made",
+                "ft_attempted",
+                "plus_minus",
+            ]
+            rows = cur.fetchall()
+    finally:
+        conn_players.close()
+
+    df = pd.DataFrame(rows, columns=columns)
+
+    if verbose:
+        print(f"   Fetched {len(df):,} game logs")
+        print(f"   Date range: {df['game_date'].min()} to {df['game_date'].max()}")
+        print(f"   Unique players: {df['player_id'].nunique()}")
+
+    # -------------------------------------------------------------------------
+    # Step 2b: Filter to prop-relevant players using normalized name matching
+    # -------------------------------------------------------------------------
+    if verbose:
+        print("\n   Filtering to prop-relevant players...")
+
+    df["player_name_normalized"] = df["player_name"].apply(normalize_player_name)
+    df = df[df["player_name_normalized"].isin(prop_players_normalized)].copy()
+
+    if verbose:
+        print(f"   After filter: {len(df):,} game logs for {df['player_id'].nunique()} players")
+
+    if len(df) == 0:
+        print("   No matching game logs found. Aborting.")
+        return None
+
+    # -------------------------------------------------------------------------
+    # Step 3: Compute rolling features (SHIFT to prevent leakage)
+    # -------------------------------------------------------------------------
+    if verbose:
+        print(f"\n[3/7] Computing rolling features for {market}...")
+
+    # Sort by player and game date for correct rolling computation
+    df = df.sort_values(["player_id", "game_date"]).reset_index(drop=True)
+
+    # Convert numeric columns
+    numeric_cols = [
+        "minutes_played",
+        "points",
+        "rebounds",
+        "assists",
+        "steals",
+        "blocks",
+        "turnovers",
+        "three_pointers_made",
+        "fg_made",
+        "fg_attempted",
+        "three_pt_attempted",
+        "ft_made",
+        "ft_attempted",
+        "plus_minus",
+    ]
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+
+    # Compute per-game derived stats before shifting
+    df["fg_pct_game"] = np.where(df["fg_attempted"] > 0, df["fg_made"] / df["fg_attempted"], 0.0)
+    df["ft_rate_game"] = np.where(
+        df["fg_attempted"] > 0, df["ft_attempted"] / df["fg_attempted"], 0.0
+    )
+    df["true_shooting_game"] = np.where(
+        (df["fg_attempted"] + 0.44 * df["ft_attempted"]) > 0,
+        df["points"] / (2.0 * (df["fg_attempted"] + 0.44 * df["ft_attempted"])),
+        0.0,
+    )
+    df["points_per_minute_game"] = np.where(
+        df["minutes_played"] > 0, df["points"] / df["minutes_played"], 0.0
+    )
+
+    # Group by player for rolling computations
+    grouped = df.groupby("player_id")
+
+    # CRITICAL: .shift(1) on all rolling inputs — only use PRIOR games
+    stat_shifted = grouped[stat_col].shift(1)
+    minutes_shifted = grouped["minutes_played"].shift(1)
+    fg_pct_shifted = grouped["fg_pct_game"].shift(1)
+    ft_rate_shifted = grouped["ft_rate_game"].shift(1)
+    ts_shifted = grouped["true_shooting_game"].shift(1)
+    plus_minus_shifted = grouped["plus_minus"].shift(1)
+    ppm_shifted = grouped["points_per_minute_game"].shift(1)
+
+    # EMA rolling averages for target stat
+    for span in [3, 5, 10]:
+        df[f"ema_{stat_col}_L{span}"] = stat_shifted.groupby(df["player_id"]).transform(
+            lambda x, s=span: x.ewm(span=s, min_periods=1).mean()
+        )
+
+    # EMA rolling averages for minutes
+    for span in [3, 5, 10]:
+        df[f"ema_minutes_L{span}"] = minutes_shifted.groupby(df["player_id"]).transform(
+            lambda x, s=span: x.ewm(span=s, min_periods=1).mean()
+        )
+
+    # Rolling standard deviations for target stat
+    for window in [5, 10]:
+        df[f"{stat_col}_std_L{window}"] = stat_shifted.groupby(df["player_id"]).transform(
+            lambda x, w=window: x.rolling(w, min_periods=2).std()
+        )
+
+    # Rolling standard deviations for minutes
+    for window in [5, 10]:
+        df[f"minutes_std_L{window}"] = minutes_shifted.groupby(df["player_id"]).transform(
+            lambda x, w=window: x.rolling(w, min_periods=2).std()
+        )
+
+    # FG% rolling
+    for window in [5, 10]:
+        df[f"fg_pct_L{window}"] = fg_pct_shifted.groupby(df["player_id"]).transform(
+            lambda x, w=window: x.rolling(w, min_periods=2).mean()
+        )
+
+    # FT rate rolling (L10 only)
+    df["ft_rate_L10"] = ft_rate_shifted.groupby(df["player_id"]).transform(
+        lambda x: x.rolling(10, min_periods=2).mean()
+    )
+
+    # True shooting rolling (L10 only)
+    df["true_shooting_L10"] = ts_shifted.groupby(df["player_id"]).transform(
+        lambda x: x.rolling(10, min_periods=2).mean()
+    )
+
+    # Plus/minus rolling (L5 only)
+    df["plus_minus_L5"] = plus_minus_shifted.groupby(df["player_id"]).transform(
+        lambda x: x.rolling(5, min_periods=2).mean()
+    )
+
+    # Points per minute rolling (L5 only)
+    df["points_per_minute_L5"] = ppm_shifted.groupby(df["player_id"]).transform(
+        lambda x: x.rolling(5, min_periods=2).mean()
+    )
+
+    if verbose:
+        print("   Computed EMA and rolling features (shifted by 1 game)")
+
+    # -------------------------------------------------------------------------
+    # Step 4: Schedule/rest features
+    # -------------------------------------------------------------------------
+    if verbose:
+        print("\n[4/7] Computing schedule and rest features...")
+
+    # days_rest: days between consecutive games for same player
+    df["game_date_dt"] = pd.to_datetime(df["game_date"])
+    df["prev_game_date"] = grouped["game_date_dt"].shift(1)
+    df["days_rest"] = (df["game_date_dt"] - df["prev_game_date"]).dt.days
+    df["days_rest"] = df["days_rest"].fillna(7.0)  # First game of season default
+
+    # is_back_to_back
+    df["is_back_to_back"] = (df["days_rest"] <= 1).astype(int)
+
+    # days_since_return: count games since a gap > 7 days
+    def compute_days_since_return(group):
+        """Compute games since return from absence (gap > 7 days)."""
+        result = pd.Series(0, index=group.index, dtype=int)
+        games_since = 99  # Start high (no recent absence)
+        for i, (idx, row) in enumerate(group.iterrows()):
+            if row["days_rest"] > 7 and i > 0:
+                games_since = 0
+            elif games_since < 99:
+                games_since += 1
+            result.at[idx] = min(games_since, 3)  # Cap at 3+
+        return result
+
+    df["days_since_return"] = grouped.apply(compute_days_since_return).reset_index(
+        level=0, drop=True
+    )
+
+    # games_played_season: cumulative count within each season
+    df["games_played_season"] = grouped.cumcount() + 1
+    # Adjust for season boundaries — reset count per season
+    df["games_played_season"] = df.groupby(["player_id", "season"]).cumcount() + 1
+
+    # season_pct: games_played / 82
+    df["season_pct"] = df["games_played_season"] / 82.0
+
+    if verbose:
+        print(f"   Back-to-back games: {df['is_back_to_back'].sum():,}")
+        print(f"   Avg days rest: {df['days_rest'].mean():.1f}")
+
+    # -------------------------------------------------------------------------
+    # Step 5: Team context from team_rolling_stats
+    # -------------------------------------------------------------------------
+    if verbose:
+        print("\n[5/7] Merging team context from team_rolling_stats...")
+
+    conn_teams = get_connection("teams")
+    try:
+        with conn_teams.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    team_abbrev,
+                    as_of_date,
+                    avg_pace,
+                    avg_offensive_rating,
+                    avg_defensive_rating
+                FROM team_rolling_stats
+                WHERE window_size = 10
+                ORDER BY team_abbrev, as_of_date
+                """
+            )
+            trs_rows = cur.fetchall()
+    finally:
+        conn_teams.close()
+
+    trs_df = pd.DataFrame(
+        trs_rows,
+        columns=[
+            "team_abbrev",
+            "as_of_date",
+            "avg_pace",
+            "avg_offensive_rating",
+            "avg_defensive_rating",
+        ],
+    )
+    trs_df["as_of_date"] = pd.to_datetime(trs_df["as_of_date"]).dt.date
+
+    if verbose:
+        print(f"   Loaded {len(trs_df):,} team rolling stat records")
+
+    # Point-in-time merge: for each game, find the most recent team_rolling_stats
+    # where as_of_date <= game_date. Build a lookup dict per team for efficiency.
+    trs_df["as_of_date"] = pd.to_datetime(trs_df["as_of_date"])
+    trs_df = trs_df.sort_values("as_of_date")
+
+    # Build per-team sorted arrays for fast point-in-time lookups
+    _team_dates: dict[str, np.ndarray] = {}
+    _team_pace: dict[str, np.ndarray] = {}
+    _team_off: dict[str, np.ndarray] = {}
+    _team_def: dict[str, np.ndarray] = {}
+
+    for team, grp in trs_df.groupby("team_abbrev"):
+        _team_dates[team] = grp["as_of_date"].values
+        _team_pace[team] = grp["avg_pace"].values
+        _team_off[team] = grp["avg_offensive_rating"].values
+        _team_def[team] = grp["avg_defensive_rating"].values
+
+    def _lookup_team_stat(team: str, game_date, arrays: tuple) -> tuple:
+        """Point-in-time lookup: find most recent stats on or before game_date."""
+        dates, pace, off, def_ = arrays
+        if team not in _team_dates:
+            return np.nan, np.nan, np.nan
+        td = _team_dates[team]
+        gd = np.datetime64(game_date)
+        mask = td <= gd
+        if not mask.any():
+            return np.nan, np.nan, np.nan
+        idx = np.where(mask)[0][-1]
+        return _team_pace[team][idx], _team_off[team][idx], _team_def[team][idx]
+
+    # Player's team context
+    df["game_date_dt"] = pd.to_datetime(df["game_date"])
+    team_ctx = df.apply(
+        lambda r: _lookup_team_stat(
+            r["team_abbrev"],
+            r["game_date_dt"],
+            (_team_dates, _team_pace, _team_off, _team_def),
+        ),
+        axis=1,
+        result_type="expand",
+    )
+    df[["team_pace", "team_off_rating", "team_def_rating"]] = team_ctx.values
+
+    # Opponent context
+    opp_ctx = df.apply(
+        lambda r: _lookup_team_stat(
+            r["opponent_abbrev"],
+            r["game_date_dt"],
+            (_team_dates, _team_pace, _team_off, _team_def),
+        ),
+        axis=1,
+        result_type="expand",
+    )
+    df[["opp_pace", "opp_off_rating", "opp_def_rating"]] = opp_ctx.values
+
+    # Fill NaN team stats with league averages
+    df["team_pace"] = df["team_pace"].fillna(100.0)
+    df["team_off_rating"] = df["team_off_rating"].fillna(112.0)
+    df["team_def_rating"] = df["team_def_rating"].fillna(112.0)
+    df["opp_pace"] = df["opp_pace"].fillna(100.0)
+    df["opp_off_rating"] = df["opp_off_rating"].fillna(112.0)
+    df["opp_def_rating"] = df["opp_def_rating"].fillna(112.0)
+
+    team_matched = df["team_pace"].notna().sum()
+    if verbose:
+        print(f"   Team context matched: {team_matched:,}/{len(df):,}")
+
+    # -------------------------------------------------------------------------
+    # Step 6: Static features
+    # -------------------------------------------------------------------------
+    if verbose:
+        print("\n[6/7] Adding static features...")
+
+    # is_home — already in df from game logs (convert to int)
+    df["is_home"] = df["is_home"].fillna(False).astype(int)
+
+    # position_encoded — from player_profile position column
+    df["position_encoded"] = df["position"].apply(
+        lambda p: position_map.get(str(p).upper().strip(), 3.0) if pd.notna(p) else 3.0
+    )
+
+    # starter_flag — 1 if minutes >= 25 in majority of last 5 games (shifted)
+    min_shifted_flag = grouped["minutes_played"].shift(1)
+    starter_rolling = min_shifted_flag.groupby(df["player_id"]).transform(
+        lambda x: x.rolling(5, min_periods=1).apply(lambda w: (w >= 25).mean(), raw=True)
+    )
+    df["starter_flag"] = (starter_rolling >= 0.5).astype(int)
+
+    if verbose:
+        print(f"   Position distribution: {df['position_encoded'].value_counts().to_dict()}")
+        print(f"   Starters: {df['starter_flag'].sum():,}/{len(df):,}")
+        print(f"   Home games: {df['is_home'].sum():,}/{len(df):,}")
+
+    # -------------------------------------------------------------------------
+    # Step 7: Clean up and save
+    # -------------------------------------------------------------------------
+    if verbose:
+        print(f"\n[7/7] Finalizing dataset...")
+
+    # Define the target column
+    target_col = f"actual_{market.lower()}"
+    df[target_col] = df[stat_col].astype(float)
+
+    # Define feature columns (everything we computed, NO line/book/BP features)
+    feature_cols = [
+        # EMA rolling averages
+        f"ema_{stat_col}_L3",
+        f"ema_{stat_col}_L5",
+        f"ema_{stat_col}_L10",
+        "ema_minutes_L3",
+        "ema_minutes_L5",
+        "ema_minutes_L10",
+        # Rolling standard deviations
+        f"{stat_col}_std_L5",
+        f"{stat_col}_std_L10",
+        "minutes_std_L5",
+        "minutes_std_L10",
+        # Shooting efficiency
+        "fg_pct_L5",
+        "fg_pct_L10",
+        "ft_rate_L10",
+        "true_shooting_L10",
+        # Performance
+        "plus_minus_L5",
+        "points_per_minute_L5",
+        # Schedule/rest
+        "days_rest",
+        "is_back_to_back",
+        "days_since_return",
+        "games_played_season",
+        "season_pct",
+        # Team context
+        "team_pace",
+        "team_off_rating",
+        "team_def_rating",
+        # Opponent context
+        "opp_pace",
+        "opp_off_rating",
+        "opp_def_rating",
+        # Static
+        "is_home",
+        "position_encoded",
+        "starter_flag",
+    ]
+
+    # Metadata columns to keep
+    metadata_cols = [
+        "player_name",
+        "player_id",
+        "game_date",
+        "team_abbrev",
+        "opponent_abbrev",
+        "season",
+        target_col,
+    ]
+
+    # Select only the columns we want
+    output_cols = metadata_cols + feature_cols
+    existing_cols = [c for c in output_cols if c in df.columns]
+    missing_cols = [c for c in output_cols if c not in df.columns]
+    if missing_cols and verbose:
+        print(f"   WARNING: Missing expected columns: {missing_cols}")
+
+    df_out = df[existing_cols].copy()
+
+    # Drop rows with NaN in rolling features (first few games per player)
+    rolling_cols = [
+        c
+        for c in feature_cols
+        if c in df_out.columns
+        and c
+        not in [
+            "days_rest",
+            "is_back_to_back",
+            "days_since_return",
+            "games_played_season",
+            "season_pct",
+            "is_home",
+            "position_encoded",
+            "starter_flag",
+            "team_pace",
+            "team_off_rating",
+            "team_def_rating",
+            "opp_pace",
+            "opp_off_rating",
+            "opp_def_rating",
+        ]
+    ]
+    before_drop = len(df_out)
+    df_out = df_out.dropna(subset=rolling_cols)
+    after_drop = len(df_out)
+
+    if verbose:
+        print(
+            f"   Dropped {before_drop - after_drop:,} rows with NaN rolling features "
+            f"(first few games per player)"
+        )
+
+    # Sort by game_date for temporal integrity
+    df_out = df_out.sort_values("game_date").reset_index(drop=True)
+
+    # Replace any remaining NaN with 0.0 in feature columns
+    for col in feature_cols:
+        if col in df_out.columns:
+            df_out[col] = df_out[col].fillna(0.0)
+
+    # Replace inf/-inf with 0.0
+    df_out = df_out.replace([np.inf, -np.inf], 0.0)
+
+    # Save
+    df_out.to_csv(output_path, index=False)
+
+    if verbose:
+        print(f"\n{'=' * 80}")
+        print(f"PROJECTION DATASET COMPLETE — {market}")
+        print(f"{'=' * 80}")
+        print(f"   Rows: {len(df_out):,}")
+        print(f"   Features: {len(feature_cols)}")
+        print(f"   Players: {df_out['player_id'].nunique()}")
+        print(f"   Date range: {df_out['game_date'].min()} to {df_out['game_date'].max()}")
+        print(f"   Target: {target_col}")
+        print(f"   Target mean: {df_out[target_col].mean():.2f}")
+        print(f"   Target std: {df_out[target_col].std():.2f}")
+        print(f"   Output: {output_path}")
+        print(f"{'=' * 80}")
+
+        # Leakage spot-check: correlation between features and target
+        print("\n   Leakage spot-check (top correlations with target):")
+        corrs = {}
+        for col in feature_cols:
+            if col in df_out.columns:
+                c = df_out[col].corr(df_out[target_col])
+                if not np.isnan(c):
+                    corrs[col] = abs(c)
+        sorted_corrs = sorted(corrs.items(), key=lambda x: x[1], reverse=True)[:10]
+        for feat, corr_val in sorted_corrs:
+            flag = " *** SUSPICIOUS" if corr_val >= 0.95 else ""
+            print(f"      {feat}: {corr_val:.4f}{flag}")
+
+        suspicious = [f for f, c in corrs.items() if c >= 0.95]
+        if suspicious:
+            print(f"\n   LEAKAGE WARNING: {len(suspicious)} features with |corr| >= 0.95!")
+            print(f"   {suspicious}")
+        else:
+            print(f"\n   No leakage detected (all |corr| < 0.95)")
+
+    return df_out
+
+
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description="Build NBA XL training datasets")
@@ -1474,8 +2119,23 @@ def main():
         action="store_true",
         help="Only use DFS platforms (PrizePicks, Underdog) for training data",
     )
+    parser.add_argument(
+        "--projection",
+        action="store_true",
+        help="Build projection dataset (Model 1 — line-blind player stat regressor)",
+    )
 
     args = parser.parse_args()
+
+    # Projection dataset mode
+    if args.projection:
+        markets = [args.market.upper()] if args.market else ["POINTS", "REBOUNDS"]
+        for m in markets:
+            build_projection_dataset(
+                market=m,
+                verbose=not args.quiet,
+            )
+        return
 
     builder = XLDatasetBuilder(
         output_dir=args.output, verbose=not args.quiet, dfs_only=args.dfs_only

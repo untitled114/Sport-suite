@@ -625,3 +625,135 @@ class TestResultTrackerPerformanceSummary:
             clv_mod.CLVTracker = original
 
         assert result["clv_7d"] is None
+
+
+class TestPersistMetrics:
+    """Tests for ResultTracker.persist_metrics()."""
+
+    def setup_method(self):
+        self.tracker = ResultTracker()
+
+    @patch("nba.core.result_tracker.get_connection")
+    @patch.object(ResultTracker, "check_anomalies", return_value=[])
+    @patch.object(ResultTracker, "compute_rolling")
+    def test_persist_metrics_creates_table(self, mock_rolling, mock_anomalies, mock_get_conn):
+        """Verify CREATE TABLE IF NOT EXISTS is called."""
+        mock_rolling.return_value = {
+            "total": 5,
+            "wins": 3,
+            "losses": 2,
+            "win_rate": 60.0,
+            "roi": 5.0,
+            "profit": 0.55,
+            "by_market": {},
+            "by_tier": {},
+            "by_edge_bucket": {},
+            "by_model": {},
+        }
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.rowcount = 1
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_get_conn.return_value = mock_conn
+
+        self.tracker.persist_metrics("2026-03-22")
+
+        # First cursor call should be CREATE TABLE
+        calls = mock_cursor.execute.call_args_list
+        assert len(calls) >= 1
+        create_sql = calls[0][0][0]
+        assert "CREATE TABLE IF NOT EXISTS" in create_sql
+        assert "performance_metrics" in create_sql
+
+    @patch("nba.core.result_tracker.get_connection")
+    @patch.object(ResultTracker, "check_anomalies", return_value=["alert1"])
+    @patch.object(ResultTracker, "compute_rolling")
+    def test_persist_metrics_inserts_rows(self, mock_rolling, mock_anomalies, mock_get_conn):
+        """Verify INSERT is called with correct data for each period."""
+        mock_rolling.return_value = {
+            "total": 10,
+            "wins": 6,
+            "losses": 4,
+            "win_rate": 60.0,
+            "roi": 5.5,
+            "profit": 1.45,
+            "by_market": {"POINTS": {"w": 6, "l": 4}},
+            "by_tier": {"META": {"w": 6, "l": 4}},
+            "by_edge_bucket": {"5-7%": {"w": 6, "l": 4}},
+            "by_model": {"xl": {"w": 6, "l": 4}},
+        }
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.rowcount = 1
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_get_conn.return_value = mock_conn
+
+        rows = self.tracker.persist_metrics("2026-03-22")
+
+        # Should have written rows for both 7d and 30d periods
+        assert rows == 2  # 1 row per period * 2 periods
+
+        # Verify INSERT calls (after the CREATE TABLE call)
+        insert_calls = [
+            c
+            for c in mock_cursor.execute.call_args_list
+            if "INSERT INTO performance_metrics" in str(c)
+        ]
+        assert len(insert_calls) == 2
+
+        # Verify the data in the first INSERT call
+        first_insert_params = insert_calls[0][0][1]
+        assert first_insert_params[0] == "2026-03-22"  # metric_date
+        assert first_insert_params[1] == "7d"  # period
+        assert first_insert_params[2] == 10  # total_picks
+
+        # Verify commit was called
+        mock_conn.commit.assert_called_once()
+
+    @patch("nba.core.result_tracker.get_connection")
+    def test_persist_metrics_handles_error(self, mock_get_conn):
+        """On DB error, returns 0 (doesn't raise)."""
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.execute.side_effect = Exception("DB connection failed")
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_get_conn.return_value = mock_conn
+
+        result = self.tracker.persist_metrics("2026-03-22")
+
+        assert result == 0
+        mock_conn.rollback.assert_called_once()
+        mock_conn.close.assert_called_once()
+
+    @patch("nba.core.result_tracker.get_connection")
+    @patch.object(ResultTracker, "check_anomalies", return_value=[])
+    @patch.object(ResultTracker, "compute_rolling")
+    def test_persist_metrics_skips_empty_periods(self, mock_rolling, mock_anomalies, mock_get_conn):
+        """Periods with 0 total picks are skipped (no INSERT)."""
+        mock_rolling.return_value = {
+            "total": 0,
+            "wins": 0,
+            "losses": 0,
+            "win_rate": 0,
+            "roi": 0,
+            "profit": 0,
+            "by_market": {},
+            "by_tier": {},
+            "by_edge_bucket": {},
+            "by_model": {},
+        }
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_get_conn.return_value = mock_conn
+
+        rows = self.tracker.persist_metrics("2026-03-22")
+
+        assert rows == 0
+        # Only CREATE TABLE should have been called, no INSERTs
+        insert_calls = [c for c in mock_cursor.execute.call_args_list if "INSERT" in str(c)]
+        assert len(insert_calls) == 0

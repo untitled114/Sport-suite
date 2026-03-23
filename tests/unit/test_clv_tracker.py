@@ -4,6 +4,7 @@ Tests for CLV (Closing Line Value) Tracker.
 Tests the core CLV computation logic without requiring database connections.
 """
 
+from decimal import Decimal
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -633,3 +634,254 @@ class TestCLVTrackerRolling:
         assert result["period"] == "1d"
         assert result["picks_with_clv"] == 4
         assert result["avg_clv_cents"] == 2.5
+
+
+class TestPersistDailyCLV:
+    """Test persist_daily_clv with mocked DB connections."""
+
+    def setup_method(self):
+        self.tracker = CLVTracker()
+
+    @patch("nba.core.clv_tracker._connect_axiom")
+    def test_no_graded_picks_returns_zero(self, mock_connect):
+        """No graded picks for the date -> return 0, no writes."""
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall.return_value = []
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_connect.return_value = mock_conn
+
+        result = self.tracker.persist_daily_clv("2026-03-20")
+        assert result == 0
+
+    @patch("nba.core.clv_tracker.get_connection")
+    @patch("nba.core.clv_tracker._connect_axiom")
+    def test_picks_with_no_snapshots_returns_zero(self, mock_axiom, mock_get_conn):
+        """Picks exist but no line snapshots -> no CLV to persist."""
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall.return_value = [
+            {
+                "id": 1,
+                "player_name": "LeBron",
+                "stat_type": "POINTS",
+                "line": Decimal("25.5"),
+                "p_over": Decimal("0.70"),
+                "book": "dk",
+                "run_date": "2026-03-20",
+                "model_version": "xl",
+                "actual_result": Decimal("30.0"),
+                "is_hit": True,
+            },
+        ]
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_axiom.return_value = mock_conn
+
+        with patch.object(self.tracker, "compute_clv", return_value=None):
+            result = self.tracker.persist_daily_clv("2026-03-20")
+
+        assert result == 0
+        mock_get_conn.assert_not_called()
+
+    @patch("nba.core.clv_tracker.get_connection")
+    @patch("nba.core.clv_tracker._connect_axiom")
+    def test_successful_persist(self, mock_axiom, mock_get_conn):
+        """Full path: picks + CLV data -> rows persisted to features.clv_tracking."""
+        # Mock axiom connection (pick reads)
+        axiom_conn = MagicMock()
+        axiom_cursor = MagicMock()
+        axiom_cursor.fetchall.return_value = [
+            {
+                "id": 42,
+                "player_name": "LeBron",
+                "stat_type": "POINTS",
+                "line": Decimal("25.5"),
+                "p_over": Decimal("0.72"),
+                "book": "dk",
+                "run_date": "2026-03-20",
+                "model_version": "xl",
+                "actual_result": Decimal("31.0"),
+                "is_hit": True,
+            },
+        ]
+        axiom_conn.cursor.return_value.__enter__ = MagicMock(return_value=axiom_cursor)
+        axiom_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_axiom.return_value = axiom_conn
+
+        # Mock features connection (writes)
+        feat_conn = MagicMock()
+        feat_cursor = MagicMock()
+        feat_conn.cursor.return_value.__enter__ = MagicMock(return_value=feat_cursor)
+        feat_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_get_conn.return_value = feat_conn
+
+        clv_result = {
+            "opening_line": 25.5,
+            "closing_line": 24.5,
+            "our_line": 25.5,
+            "opening_implied_prob": 0.5238,
+            "closing_implied_prob": 0.5652,
+            "model_prob": 0.72,
+            "clv_cents": 4.14,
+            "beat_close": True,
+            "line_movement": -1.0,
+        }
+
+        with patch.object(self.tracker, "compute_clv", return_value=clv_result):
+            result = self.tracker.persist_daily_clv("2026-03-20")
+
+        assert result == 1
+        mock_get_conn.assert_called_once_with("features", autocommit=False)
+        feat_cursor.executemany.assert_called_once()
+        feat_conn.commit.assert_called_once()
+
+        # Verify the row tuple structure
+        rows = feat_cursor.executemany.call_args[0][1]
+        assert len(rows) == 1
+        row = rows[0]
+        assert row[0] == 42  # prediction_id
+        assert row[1] == "LeBron"  # player_name
+        assert row[2] == "POINTS"  # stat_type
+        assert row[3] == "2026-03-20"  # game_date
+        assert row[4] == "dk"  # book_name
+        assert row[5] == 25.5  # opening_line
+        assert row[6] == 24.5  # closing_line
+        assert row[7] == 25.5  # model_line
+        assert row[12] is True  # beat_closing_line
+        assert row[13] == 31.0  # actual_value
+        assert row[14] is True  # is_hit
+
+    @patch("nba.core.clv_tracker.get_connection")
+    @patch("nba.core.clv_tracker._connect_axiom")
+    def test_persist_rollback_on_error(self, mock_axiom, mock_get_conn):
+        """DB write error -> rollback, re-raise."""
+        axiom_conn = MagicMock()
+        axiom_cursor = MagicMock()
+        axiom_cursor.fetchall.return_value = [
+            {
+                "id": 1,
+                "player_name": "LeBron",
+                "stat_type": "POINTS",
+                "line": Decimal("25.5"),
+                "p_over": Decimal("0.72"),
+                "book": "dk",
+                "run_date": "2026-03-20",
+                "model_version": "xl",
+                "actual_result": Decimal("31.0"),
+                "is_hit": True,
+            },
+        ]
+        axiom_conn.cursor.return_value.__enter__ = MagicMock(return_value=axiom_cursor)
+        axiom_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_axiom.return_value = axiom_conn
+
+        feat_conn = MagicMock()
+        feat_cursor = MagicMock()
+        feat_cursor.executemany.side_effect = Exception("DB error")
+        feat_conn.cursor.return_value.__enter__ = MagicMock(return_value=feat_cursor)
+        feat_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_get_conn.return_value = feat_conn
+
+        clv_result = {
+            "opening_line": 25.5,
+            "closing_line": 24.5,
+            "our_line": 25.5,
+            "opening_implied_prob": 0.5238,
+            "closing_implied_prob": 0.5652,
+            "model_prob": 0.72,
+            "clv_cents": 4.14,
+            "beat_close": True,
+            "line_movement": -1.0,
+        }
+
+        with patch.object(self.tracker, "compute_clv", return_value=clv_result):
+            with pytest.raises(Exception, match="DB error"):
+                self.tracker.persist_daily_clv("2026-03-20")
+
+        feat_conn.rollback.assert_called_once()
+        feat_conn.close.assert_called_once()
+
+    @patch("nba.core.clv_tracker.get_connection")
+    @patch("nba.core.clv_tracker._connect_axiom")
+    def test_persist_null_actual_result(self, mock_axiom, mock_get_conn):
+        """Pick with None actual_result persists as None."""
+        axiom_conn = MagicMock()
+        axiom_cursor = MagicMock()
+        axiom_cursor.fetchall.return_value = [
+            {
+                "id": 10,
+                "player_name": "AD",
+                "stat_type": "REBOUNDS",
+                "line": Decimal("10.5"),
+                "p_over": Decimal("0.65"),
+                "book": "fd",
+                "run_date": "2026-03-20",
+                "model_version": "v3",
+                "actual_result": None,
+                "is_hit": True,
+            },
+        ]
+        axiom_conn.cursor.return_value.__enter__ = MagicMock(return_value=axiom_cursor)
+        axiom_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_axiom.return_value = axiom_conn
+
+        feat_conn = MagicMock()
+        feat_cursor = MagicMock()
+        feat_conn.cursor.return_value.__enter__ = MagicMock(return_value=feat_cursor)
+        feat_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_get_conn.return_value = feat_conn
+
+        clv_result = {
+            "opening_line": 10.5,
+            "closing_line": 11.0,
+            "our_line": 10.5,
+            "opening_implied_prob": 0.5238,
+            "closing_implied_prob": 0.5000,
+            "model_prob": 0.65,
+            "clv_cents": -2.38,
+            "beat_close": True,
+            "line_movement": 0.5,
+        }
+
+        with patch.object(self.tracker, "compute_clv", return_value=clv_result):
+            result = self.tracker.persist_daily_clv("2026-03-20")
+
+        assert result == 1
+        rows = feat_cursor.executemany.call_args[0][1]
+        assert rows[0][13] is None  # actual_value
+
+
+class TestBackfillCLV:
+    """Test backfill_clv method."""
+
+    def setup_method(self):
+        self.tracker = CLVTracker()
+
+    def test_backfill_single_day(self):
+        """Backfill a single day."""
+        with patch.object(self.tracker, "persist_daily_clv", return_value=5) as mock_persist:
+            total = self.tracker.backfill_clv("2026-03-20", "2026-03-20")
+
+        assert total == 5
+        mock_persist.assert_called_once_with("2026-03-20")
+
+    def test_backfill_date_range(self):
+        """Backfill a multi-day range."""
+        with patch.object(self.tracker, "persist_daily_clv", return_value=3) as mock_persist:
+            total = self.tracker.backfill_clv("2026-03-18", "2026-03-20")
+
+        assert total == 9  # 3 days * 3 rows each
+        assert mock_persist.call_count == 3
+        mock_persist.assert_any_call("2026-03-18")
+        mock_persist.assert_any_call("2026-03-19")
+        mock_persist.assert_any_call("2026-03-20")
+
+    def test_backfill_empty_range(self):
+        """Backfill with no data returns 0."""
+        with patch.object(self.tracker, "persist_daily_clv", return_value=0) as mock_persist:
+            total = self.tracker.backfill_clv("2026-03-20", "2026-03-20")
+
+        assert total == 0
+        mock_persist.assert_called_once()

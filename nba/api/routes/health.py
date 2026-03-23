@@ -14,7 +14,7 @@ EST = ZoneInfo("America/New_York")
 from fastapi import APIRouter, Depends
 
 from nba.api import __version__
-from nba.api.dependencies import DatabaseConfig, check_all_databases, get_model_manager
+from nba.api.dependencies import check_all_databases, get_model_manager
 from nba.api.schemas import (
     DatabaseHealthResponse,
     DatabaseStatus,

@@ -270,14 +270,12 @@ class LiveFeatureExtractor:
 
     def get_team_rolling_stats(self, team_abbrev, as_of_date, opponent_abbrev=None, window=10):
         """
-        Get team's rolling statistics from team_season_stats (primary) with validation.
+        Get team's rolling statistics using point-in-time rolling averages.
 
-        Priority order (uses team_season_stats which has verified correct data):
-        1. team_season_stats (most recent season) - PRIMARY SOURCE
-        2. League average defaults - FALLBACK
-
-        Note: team_game_logs was previously used but contains incorrect pace values
-        (170+ instead of expected 95-105 range). Using season stats until game logs are fixed.
+        Priority order:
+        1. team_rolling_stats (10-game rolling window, point-in-time) - PRIMARY
+        2. team_season_stats (full-season aggregates) - FALLBACK
+        3. League average defaults - LAST RESORT
 
         Args:
             team_abbrev: Team abbreviation (e.g., 'GSW')
@@ -291,7 +289,47 @@ class LiveFeatureExtractor:
         # Normalize team abbreviation
         team_abbrev = self.normalize_team_abbrev(team_abbrev)
 
-        # PRIMARY: Use team_season_stats (verified correct data)
+        # Normalize as_of_date to a date object for the query
+        if isinstance(as_of_date, str):
+            as_of_date_val = pd.to_datetime(as_of_date).date()
+        elif hasattr(as_of_date, "date"):
+            as_of_date_val = as_of_date.date()
+        else:
+            as_of_date_val = as_of_date
+
+        # PRIMARY: Point-in-time rolling stats (no target leakage)
+        rolling_query = """
+        SELECT avg_pace, avg_offensive_rating, avg_defensive_rating
+        FROM team_rolling_stats
+        WHERE team_abbrev = %s
+          AND as_of_date <= %s
+          AND window_size = %s
+        ORDER BY as_of_date DESC
+        LIMIT 1
+        """
+
+        try:
+            with self.team_conn.cursor() as cur:
+                cur.execute(rolling_query, (team_abbrev, as_of_date_val, window))
+                result = cur.fetchone()
+                if result and result[0] is not None:
+                    pace = float(result[0])
+                    # Validate pace is in expected NBA range (85-115)
+                    if 85.0 <= pace <= 115.0:
+                        return {
+                            "pace": pace,
+                            "off_rating": float(result[1]) if result[1] else 112.0,
+                            "def_rating": float(result[2]) if result[2] else 112.0,
+                        }
+                    else:
+                        logger.debug(
+                            f"Invalid rolling pace {pace} for {team_abbrev}, "
+                            f"trying season stats"
+                        )
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
+            logger.debug(f"Error querying team_rolling_stats for {team_abbrev}: {e}")
+
+        # FALLBACK: Use team_season_stats (full-season aggregates)
         season_query = """
         SELECT pace, offensive_rating, defensive_rating
         FROM team_season_stats
@@ -306,19 +344,18 @@ class LiveFeatureExtractor:
                 result = cur.fetchone()
                 if result and result[0] is not None:
                     pace = float(result[0])
-                    # Validate pace is in expected NBA range (90-110)
-                    if 90.0 <= pace <= 115.0:
+                    if 85.0 <= pace <= 115.0:
                         return {
                             "pace": pace,
-                            "off_rating": float(result[1]) if result[1] else 110.0,
-                            "def_rating": float(result[2]) if result[2] else 110.0,
+                            "off_rating": float(result[1]) if result[1] else 112.0,
+                            "def_rating": float(result[2]) if result[2] else 112.0,
                         }
                     else:
                         logger.debug(f"Invalid pace {pace} for {team_abbrev}, using defaults")
         except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.debug(f"Error querying team_season_stats for {team_abbrev}: {e}")
 
-        # FALLBACK: League average defaults
+        # LAST RESORT: League average defaults
         logger.debug(f"Using league defaults for {team_abbrev}")
         return {"pace": 100.0, "off_rating": 112.0, "def_rating": 112.0}
 
@@ -869,12 +906,12 @@ class LiveFeatureExtractor:
         """
         Get opponent's defensive efficiency (points allowed per possession).
 
-        Uses team_season_stats as primary source (verified correct data).
+        Priority: team_rolling_stats (point-in-time) -> team_season_stats -> default.
 
         Args:
             opponent_team: Team abbreviation (e.g., 'GSW', 'LAL')
             as_of_date: Date to calculate stats as of (datetime or string)
-            window: Number of games to include (default 10, unused - using season stats)
+            window: Number of games to include (default 10)
 
         Returns:
             Points allowed per possession (e.g., 1.08 = 108 points per 100 possessions)
@@ -882,7 +919,39 @@ class LiveFeatureExtractor:
         if opponent_team is None:
             return 1.12  # League average default
 
-        # Use team_season_stats directly (team_game_logs has incorrect data)
+        opponent_team = self.normalize_team_abbrev(opponent_team)
+
+        # Normalize as_of_date
+        if isinstance(as_of_date, str):
+            as_of_date_val = pd.to_datetime(as_of_date).date()
+        elif hasattr(as_of_date, "date"):
+            as_of_date_val = as_of_date.date()
+        else:
+            as_of_date_val = as_of_date
+
+        # PRIMARY: Point-in-time rolling defensive rating
+        rolling_query = """
+        SELECT avg_defensive_rating
+        FROM team_rolling_stats
+        WHERE team_abbrev = %s
+          AND as_of_date <= %s
+          AND window_size = %s
+        ORDER BY as_of_date DESC
+        LIMIT 1
+        """
+
+        try:
+            with self.team_conn.cursor() as cur:
+                cur.execute(rolling_query, (opponent_team, as_of_date_val, window))
+                result = cur.fetchone()
+                if result and result[0] is not None:
+                    def_rating = float(result[0])
+                    if 85.0 <= def_rating <= 130.0:
+                        return def_rating / 100.0  # Convert to per possession
+        except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
+            logger.debug(f"Error querying team_rolling_stats def rating: {e}")
+
+        # FALLBACK: Season-level defensive rating
         return self._get_opponent_season_def_rating(opponent_team)
 
     def _get_opponent_season_def_rating(self, opponent_team):

@@ -390,7 +390,11 @@ class TestTrainWithMLflow:
         assert isinstance(metrics["integrity"]["feature_default_rate_mean"], float)
 
     def test_train_creates_all_components(self, training_data):
-        """Test train() creates regressor, classifier, calibrator."""
+        """Test train() creates regressor, classifier, and preprocessors.
+
+        Calibrator may be None if isotonic calibration degraded Brier score
+        (calibration quality gate skips it in that case).
+        """
         from nba.models.train_market import StackedMarketModel
 
         model = StackedMarketModel(market="POINTS")
@@ -398,9 +402,12 @@ class TestTrainWithMLflow:
 
         assert model.regressor is not None
         assert model.classifier is not None
-        assert model.calibrator is not None
+        # Calibrator is None when calibration quality gate rejects isotonic
+        assert hasattr(model, "calibrator")
         assert model.imputer is not None
         assert model.scaler is not None
+        assert hasattr(model, "classifier_feature_names")
+        assert len(model.classifier_feature_names) > 0
 
     def test_train_initializes_mlflow_tracker(self, training_data):
         """Test train() creates MLflow tracker."""

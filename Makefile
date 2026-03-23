@@ -32,6 +32,12 @@ help:
 	@echo "  train-points-v3 Retrain POINTS V3 model only"
 	@echo "  train-rebounds-v3 Retrain REBOUNDS V3 model only"
 	@echo "  validate-data   Run data quality checks before training"
+	@echo "  train-projection        Train projection models (POINTS + REBOUNDS)"
+	@echo "  train-projection-points Train POINTS projection model only"
+	@echo "  train-projection-rebounds Train REBOUNDS projection model only"
+	@echo "  train-market-classifier  Train market classifier (Model 2, both markets)"
+	@echo "  train-market-classifier-points  Train POINTS market classifier only"
+	@echo "  train-market-classifier-rebounds Train REBOUNDS market classifier only"
 	@echo "  walk-forward    Run walk-forward validation (all markets)"
 	@echo "  walk-forward-points   Walk-forward for POINTS only"
 	@echo "  walk-forward-rebounds Walk-forward for REBOUNDS only"
@@ -147,6 +153,17 @@ build-dataset:
 	python3 nba/features/build_xl_training_dataset.py --output nba/features/datasets/
 	@echo "Datasets built"
 
+build-projection:
+	@echo "Building projection training datasets (Model 1 — line-blind)..."
+	python3 nba/features/build_xl_training_dataset.py --projection
+	@echo "Projection datasets built"
+
+build-projection-points:
+	python3 nba/features/build_xl_training_dataset.py --projection --market POINTS
+
+build-projection-rebounds:
+	python3 nba/features/build_xl_training_dataset.py --projection --market REBOUNDS
+
 walk-forward: validate-data
 	@echo "Running walk-forward validation for POINTS..."
 	python3 -m nba.models.walk_forward_validation --market POINTS --output nba/models/walk_forward_POINTS.txt
@@ -159,6 +176,32 @@ walk-forward-points:
 
 walk-forward-rebounds:
 	python3 -m nba.models.walk_forward_validation --market REBOUNDS
+
+train-projection: validate-data
+	@echo "Training POINTS projection model..."
+	python3 nba/models/player_projection_model.py --market POINTS --data nba/features/datasets/projection_training_POINTS.csv
+	@echo "Training REBOUNDS projection model..."
+	python3 nba/models/player_projection_model.py --market REBOUNDS --data nba/features/datasets/projection_training_REBOUNDS.csv
+	@echo "Projection model training complete"
+
+train-projection-points: validate-data
+	python3 nba/models/player_projection_model.py --market POINTS --data nba/features/datasets/projection_training_POINTS.csv
+
+train-projection-rebounds: validate-data
+	python3 nba/models/player_projection_model.py --market REBOUNDS --data nba/features/datasets/projection_training_REBOUNDS.csv
+
+train-market-classifier: validate-data
+	@echo "Training POINTS market classifier (Model 2)..."
+	python3 nba/models/market_classifier_model.py --market POINTS --data nba/features/datasets/xl_training_POINTS_2024_present.csv
+	@echo "Training REBOUNDS market classifier (Model 2)..."
+	python3 nba/models/market_classifier_model.py --market REBOUNDS --data nba/features/datasets/xl_training_REBOUNDS_2024_present.csv
+	@echo "Market classifier training complete"
+
+train-market-classifier-points: validate-data
+	python3 nba/models/market_classifier_model.py --market POINTS --data nba/features/datasets/xl_training_POINTS_2024_present.csv
+
+train-market-classifier-rebounds: validate-data
+	python3 nba/models/market_classifier_model.py --market REBOUNDS --data nba/features/datasets/xl_training_REBOUNDS_2024_present.csv
 
 # =============================================================================
 # dbt

@@ -253,54 +253,17 @@ def get_feature_extractor():
 
 
 class DatabaseConfig:
-    """Database configuration from environment variables."""
+    """Database configuration — consolidated DB on port 5500, schema-based isolation."""
 
-    # Default credentials (from docker-compose)
-    DEFAULT_USER = os.getenv("DB_USER", "mlb_user")
-    DEFAULT_PASSWORD = os.getenv("DB_PASSWORD", "")
-
-    # Database configurations
-    PLAYERS_DB = {
-        "host": os.getenv("NBA_PLAYERS_DB_HOST", "localhost"),
-        "port": int(os.getenv("NBA_PLAYERS_DB_PORT", 5536)),
-        "user": os.getenv("NBA_PLAYERS_DB_USER", DEFAULT_USER),
-        "password": os.getenv("NBA_PLAYERS_DB_PASSWORD", DEFAULT_PASSWORD),
-        "database": "nba_players",
-    }
-
-    GAMES_DB = {
-        "host": os.getenv("NBA_GAMES_DB_HOST", "localhost"),
-        "port": int(os.getenv("NBA_GAMES_DB_PORT", 5537)),
-        "user": os.getenv("NBA_GAMES_DB_USER", DEFAULT_USER),
-        "password": os.getenv("NBA_GAMES_DB_PASSWORD", DEFAULT_PASSWORD),
-        "database": "nba_games",
-    }
-
-    TEAM_DB = {
-        "host": os.getenv("NBA_TEAM_DB_HOST", "localhost"),
-        "port": int(os.getenv("NBA_TEAM_DB_PORT", 5538)),
-        "user": os.getenv("NBA_TEAM_DB_USER", DEFAULT_USER),
-        "password": os.getenv("NBA_TEAM_DB_PASSWORD", DEFAULT_PASSWORD),
-        "database": "nba_team",
-    }
-
-    INTELLIGENCE_DB = {
-        "host": os.getenv("NBA_INTEL_DB_HOST", "localhost"),
-        "port": int(os.getenv("NBA_INTEL_DB_PORT", 5539)),
-        "user": os.getenv("NBA_INTEL_DB_USER", DEFAULT_USER),
-        "password": os.getenv("NBA_INTEL_DB_PASSWORD", DEFAULT_PASSWORD),
-        "database": "nba_intelligence",
-    }
+    # Schemas to health-check in the consolidated sportsuite database
+    SCHEMAS = ("players", "games", "teams", "intelligence", "axiom", "features")
 
     @classmethod
     def get_all_configs(cls) -> Dict:
-        """Get all database configurations."""
-        return {
-            "nba_players": cls.PLAYERS_DB,
-            "nba_games": cls.GAMES_DB,
-            "nba_team": cls.TEAM_DB,
-            "nba_intelligence": cls.INTELLIGENCE_DB,
-        }
+        """Get connection configs for all schemas in the consolidated DB."""
+        from nba.config.database import get_schema_config
+
+        return {schema: get_schema_config(schema) for schema in cls.SCHEMAS}
 
 
 def check_database_connection(config: Dict) -> Dict:
@@ -308,13 +271,18 @@ def check_database_connection(config: Dict) -> Dict:
     Check if a database connection is available.
 
     Args:
-        config: Database configuration dict
+        config: Database configuration dict (from get_schema_config)
 
     Returns:
         Dict with connection status
     """
+    schema = "unknown"
+    options = config.get("options", "")
+    if "search_path=" in options:
+        schema = options.split("search_path=")[1].split(",")[0]
+
     result = {
-        "name": config["database"],
+        "name": schema,
         "host": config["host"],
         "port": config["port"],
         "connected": False,
@@ -322,14 +290,7 @@ def check_database_connection(config: Dict) -> Dict:
     }
 
     try:
-        conn = psycopg2.connect(
-            host=config["host"],
-            port=config["port"],
-            user=config["user"],
-            password=config["password"],
-            database=config["database"],
-            connect_timeout=5,
-        )
+        conn = psycopg2.connect(**config)
         conn.close()
         result["connected"] = True
     except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
@@ -340,10 +301,10 @@ def check_database_connection(config: Dict) -> Dict:
 
 def check_all_databases() -> Dict:
     """
-    Check connectivity to all databases.
+    Check connectivity to all schemas in the consolidated database.
 
     Returns:
-        Dict with overall status and individual database statuses
+        Dict with overall status and individual schema statuses
     """
     configs = DatabaseConfig.get_all_configs()
     results = []

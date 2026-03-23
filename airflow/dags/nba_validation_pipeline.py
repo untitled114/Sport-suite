@@ -338,9 +338,58 @@ def nba_validation_pipeline():
             print("[WARN] Validation card send failed")
             return {"sent": False, "reason": "discord_error"}
 
+    @task(task_id="compute_clv")
+    def compute_clv(backfill: dict[str, Any]) -> dict[str, Any]:
+        """Compute and persist CLV for yesterday + 2 prior days.
+
+        Non-blocking: exceptions are caught and logged, never fails the DAG.
+        """
+        from nba.core.clv_tracker import CLVTracker
+
+        now = datetime.now(_EST)
+        tracker = CLVTracker()
+        total = 0
+        by_date = {}
+
+        for days_ago in range(1, 4):
+            d = (now - timedelta(days=days_ago)).strftime("%Y-%m-%d")
+            try:
+                count = tracker.persist_daily_clv(d)
+                by_date[d] = count
+                total += count
+                if count:
+                    print(f"  CLV {d}: persisted {count} rows")
+            except Exception as exc:
+                print(f"  [WARN] CLV {d} failed: {exc}")
+                by_date[d] = 0
+
+        print(f"[CLV] Total persisted: {total} rows")
+        return {"total_persisted": total, "by_date": by_date}
+
+    @task(task_id="persist_performance")
+    def persist_performance(perf_result: dict[str, Any]) -> dict[str, Any]:
+        """Persist rolling performance metrics to features.performance_metrics.
+
+        Non-blocking — logs warnings on failure, never fails the DAG.
+        """
+        try:
+            from nba.core.result_tracker import ResultTracker
+
+            tracker = ResultTracker()
+            now = datetime.now(_EST)
+            metric_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+            rows = tracker.persist_metrics(metric_date)
+            print(f"[Performance] Persisted {rows} metric rows for {metric_date}")
+            return {"rows_persisted": rows, "metric_date": metric_date}
+        except Exception as e:
+            print(f"[Performance] WARNING: {e}")
+            return {"rows_persisted": 0, "error": str(e)}
+
     # ── Task Dependencies ──────────────────────────────────────────
     backfill = backfill_actuals()
+    compute_clv(backfill)
     perf = validate_performance(backfill)
+    persist_performance(perf)
     alerts = check_alerts(perf)
     save_results(perf, alerts)
     send_validation_card(perf, alerts)

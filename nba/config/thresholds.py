@@ -641,11 +641,16 @@ class TrainingHyperparameters:
     random_state: int = 42
     test_size: float = 0.3
 
-    # Classifier-specific overrides (needs simpler trees + faster learning
-    # to avoid early-stopping at 13 trees with 185 features)
+    # Regularization (prevents overfitting with 170+ features)
+    lambda_l1: float = 0.1  # L1 regularization
+    lambda_l2: float = 1.0  # L2 regularization
+    min_child_samples: int = 50  # LightGBM default=20, too low for high feature count
+
+    # Classifier-specific overrides
     classifier_num_leaves: int = 31  # XL used 31 → built 369 trees
     classifier_learning_rate: float = 0.05  # XL used 0.05
-    classifier_n_estimators: int = 500  # XL used 500
+    classifier_n_estimators: int = 1000  # More room before early stopping
+    classifier_early_stopping_rounds: int = 100  # More patience than regressor
 
 
 @dataclass(frozen=True)

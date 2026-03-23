@@ -39,7 +39,7 @@ from zoneinfo import ZoneInfo
 import psycopg2
 import psycopg2.extras
 
-from nba.config.database import get_axiom_db_config
+from nba.config.database import get_axiom_db_config, get_connection
 
 log = logging.getLogger("nba.result_tracker")
 
@@ -304,3 +304,104 @@ class ResultTracker:
             "anomalies": anomalies,
             "computed_at": datetime.now(_EST).isoformat(),
         }
+
+    def persist_metrics(self, metric_date: str | None = None) -> int:
+        """Persist rolling performance metrics to features.performance_metrics.
+
+        Computes 7d and 30d rolling metrics and writes one row per period.
+        Creates the table if it doesn't exist.
+
+        Args:
+            metric_date: YYYY-MM-DD (defaults to yesterday EST).
+
+        Returns:
+            Number of rows upserted.
+        """
+        if metric_date is None:
+            metric_date = (datetime.now(_EST) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        conn = get_connection("features", autocommit=False)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS performance_metrics (
+                        id SERIAL PRIMARY KEY,
+                        metric_date DATE NOT NULL,
+                        period TEXT NOT NULL,
+                        total_picks INTEGER,
+                        wins INTEGER,
+                        losses INTEGER,
+                        win_rate NUMERIC(5,2),
+                        roi NUMERIC(6,2),
+                        profit NUMERIC(8,2),
+                        avg_clv_cents NUMERIC(6,2),
+                        beat_close_rate NUMERIC(5,3),
+                        by_market JSONB,
+                        by_tier JSONB,
+                        by_edge_bucket JSONB,
+                        by_model JSONB,
+                        anomalies JSONB,
+                        computed_at TIMESTAMPTZ DEFAULT NOW(),
+                        UNIQUE (metric_date, period)
+                    )
+                """
+                )
+
+            anomalies = self.check_anomalies()
+            rows_written = 0
+
+            for days, period_label in [(7, "7d"), (30, "30d")]:
+                m = self.compute_rolling(days)
+                if m.get("total", 0) == 0:
+                    continue
+
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO performance_metrics
+                            (metric_date, period, total_picks, wins, losses,
+                             win_rate, roi, profit, by_market, by_tier,
+                             by_edge_bucket, by_model, anomalies)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (metric_date, period) DO UPDATE SET
+                            total_picks = EXCLUDED.total_picks,
+                            wins = EXCLUDED.wins,
+                            losses = EXCLUDED.losses,
+                            win_rate = EXCLUDED.win_rate,
+                            roi = EXCLUDED.roi,
+                            profit = EXCLUDED.profit,
+                            by_market = EXCLUDED.by_market,
+                            by_tier = EXCLUDED.by_tier,
+                            by_edge_bucket = EXCLUDED.by_edge_bucket,
+                            by_model = EXCLUDED.by_model,
+                            anomalies = EXCLUDED.anomalies,
+                            computed_at = NOW()
+                        """,
+                        (
+                            metric_date,
+                            period_label,
+                            m.get("total", 0),
+                            m.get("wins", 0),
+                            m.get("losses", 0),
+                            m.get("win_rate", 0),
+                            m.get("roi", 0),
+                            m.get("profit", 0),
+                            json.dumps(m.get("by_market", {})),
+                            json.dumps(m.get("by_tier", {})),
+                            json.dumps(m.get("by_edge_bucket", {})),
+                            json.dumps(m.get("by_model", {})),
+                            json.dumps(anomalies),
+                        ),
+                    )
+                    rows_written += cur.rowcount
+
+            conn.commit()
+            log.info(f"Persisted {rows_written} performance metric rows for {metric_date}")
+            return rows_written
+        except Exception:
+            conn.rollback()
+            log.exception("Failed to persist performance metrics")
+            return 0
+        finally:
+            conn.close()

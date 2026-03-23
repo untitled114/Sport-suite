@@ -471,14 +471,12 @@ class StackedMarketModel:
         _high_default_features = _default_rate[_default_rate > 0.5].index.tolist()
 
         # MLflow tracking (non-blocking — no-ops if mlflow not installed)
-        self._tracker = ProjectionModelTracker(experiment_name="nba-two-head-stacked")
-        self._mlflow_run = None
+        self._tracker = ProjectionModelTracker(experiment="nba-two-head-stacked")
+        self._tracker.start_run(
+            f"{self.market}_stacked_{datetime.now(EST).strftime('%Y%m%d_%H%M')}",
+            tags={"model_type": "stacked_two_head"},
+        )
         if self._tracker.enabled:
-            self._mlflow_run = self._tracker.start_run(
-                run_name=f"{self.market}_{datetime.now(EST).strftime('%Y%m%d_%H%M')}"
-            )
-            if self._mlflow_run:
-                self._mlflow_run.__enter__()
             hp = TRAINING_HYPERPARAMETERS
             self._tracker.log_params(
                 {
@@ -588,6 +586,9 @@ class StackedMarketModel:
             feature_fraction=hp.feature_fraction,
             bagging_fraction=hp.bagging_fraction,
             bagging_freq=hp.bagging_freq,
+            reg_alpha=hp.lambda_l1,
+            reg_lambda=hp.lambda_l2,
+            min_child_samples=hp.min_child_samples,
             verbose=-1,
             random_state=hp.random_state,
         )
@@ -642,12 +643,67 @@ class StackedMarketModel:
             },
         )
 
-        # Augment features
-        X_train_augmented = X_train_scaled.copy()
+        # Augment features — classifier gets a REDUCED feature set:
+        # expected_diff + line/book features + BP features only.
+        # Player rolling stats stay in the regressor; the classifier focuses
+        # on market-level signals where edge actually lives.
+        _classifier_prefixes = (
+            "line",
+            "consensus_line",
+            "line_spread",
+            "line_std",
+            "line_coef",
+            "num_books",
+            "books_agree",
+            "books_disagree",
+            "draftkings_deviation",
+            "fanduel_deviation",
+            "betmgm_deviation",
+            "caesars_deviation",
+            "betrivers_deviation",
+            "softest_",
+            "hardest_",
+            "min_line",
+            "max_line",
+            "line_spread_percentile",
+            "bp_",
+            "snapshot_count",
+            "line_delta",
+            "line_movement_std",
+            "consensus_strength",
+            "volume_proxy",
+            "line_source_reliability",
+            "prop_hit_rate",
+            "prop_line_vs",
+            "prop_line_percentile",
+            "prop_bayesian",
+            "prop_consecutive",
+            "prop_days_since",
+            "prop_sample",
+            "dvp_",
+        )
+        classifier_cols = [
+            c for c in X_train_scaled.columns if any(c.startswith(p) for p in _classifier_prefixes)
+        ]
+        # Always include 'line' itself if present
+        if "line" not in classifier_cols and "line" in X_train_scaled.columns:
+            classifier_cols.insert(0, "line")
+
+        X_train_augmented = X_train_scaled[classifier_cols].copy()
         X_train_augmented["expected_diff"] = expected_diff_train
 
-        X_test_augmented = X_test_scaled.copy()
+        X_test_augmented = X_test_scaled[classifier_cols].copy()
         X_test_augmented["expected_diff"] = expected_diff_test
+
+        self.classifier_feature_names = list(X_train_augmented.columns)
+        logger.info(
+            "Classifier feature reduction",
+            extra={
+                "total_features": len(X_train_scaled.columns),
+                "classifier_features": len(self.classifier_feature_names),
+                "kept": self.classifier_feature_names[:10],
+            },
+        )
 
         # ==========================
         # Enhanced Class Balancing + Temporal Decay
@@ -705,17 +761,24 @@ class StackedMarketModel:
             feature_fraction=hp.feature_fraction,
             bagging_fraction=hp.bagging_fraction,
             bagging_freq=hp.bagging_freq,
+            reg_alpha=hp.lambda_l1,
+            reg_lambda=hp.lambda_l2,
+            min_child_samples=hp.min_child_samples,
             verbose=-1,
             random_state=hp.random_state,
         )
 
+        cls_es = getattr(hp, "classifier_early_stopping_rounds", hp.early_stopping_rounds)
         self.classifier.fit(
             X_train_augmented,
             y_binary_train,
             sample_weight=sample_weights,
             eval_set=[(X_test_augmented, y_binary_test)],
             eval_metric="binary_logloss",
-            callbacks=[lgb.early_stopping(stopping_rounds=50), lgb.log_evaluation(period=100)],
+            callbacks=[
+                lgb.early_stopping(stopping_rounds=cls_es),
+                lgb.log_evaluation(period=100),
+            ],
         )
 
         # Evaluate classifier
@@ -792,6 +855,22 @@ class StackedMarketModel:
         brier_after = brier_score_loss(y_binary_test, y_prob_test_cal)
         auc_cal = roc_auc_score(y_binary_test, y_prob_test_cal)
 
+        # Calibration quality gate: if isotonic makes Brier worse, skip it
+        if brier_after > brier_before:
+            logger.warning(
+                "Calibration DEGRADED Brier score — using raw probabilities",
+                extra={
+                    "brier_before": round(brier_before, 4),
+                    "brier_after": round(brier_after, 4),
+                    "delta": round(brier_after - brier_before, 4),
+                },
+            )
+            y_prob_test_cal = y_prob_test
+            y_prob_train_cal = y_prob_train
+            brier_after = brier_before
+            auc_cal = roc_auc_score(y_binary_test, y_prob_test)
+            self.calibrator = None  # Signal: no calibration applied
+
         logger.info(
             "Calibration results",
             extra={
@@ -799,6 +878,7 @@ class StackedMarketModel:
                 "brier_after": round(brier_after, 4),
                 "calibration_improvement": round(brier_before - brier_after, 4),
                 "auc_calibrated": round(auc_cal, 4),
+                "calibration_applied": self.calibrator is not None,
             },
         )
 
@@ -980,12 +1060,22 @@ class StackedMarketModel:
         with open(output_path / f"{prefix}_features.pkl", "wb") as f:
             pickle.dump(self.feature_names, f)
 
+        # Save classifier feature names (reduced set)
+        cls_feat_names = getattr(self, "classifier_feature_names", self.feature_names)
+        with open(output_path / f"{prefix}_classifier_features.pkl", "wb") as f:
+            pickle.dump(cls_feat_names, f)
+
         # Save metadata
         metadata = {
             "market": self.market,
             "trained_date": datetime.now(EST).strftime("%Y-%m-%d %H:%M:%S"),
             "architecture": "stacked_two_head_calibrated_blended",
             "features": {"count": len(self.feature_names), "names": self.feature_names},
+            "classifier_features": {
+                "count": len(cls_feat_names),
+                "names": cls_feat_names,
+            },
+            "calibration_applied": self.calibrator is not None,
             "blend_config": self.blend_config,
             "metrics": metrics,
         }
@@ -1017,8 +1107,7 @@ class StackedMarketModel:
                     "output_dir": str(output_path),
                 }
             )
-            if self._mlflow_run:
-                self._mlflow_run.__exit__(None, None, None)
+            self._tracker.end_run()
 
 
 def main():
@@ -1120,12 +1209,10 @@ def main():
         logger.error("Dataset not found", extra={"path": str(data_path)})
         return 1
 
-    # Initialize MLflow tracker if enabled
-    tracker: Optional[ExperimentTracker] = None
-    if args.track and MLFLOW_AVAILABLE:
-        tracker = ExperimentTracker(experiment_name=args.experiment_name)
-        logger.info("MLflow tracking enabled", extra={"experiment": args.experiment_name})
-    elif args.track and not MLFLOW_AVAILABLE:
+    # MLflow tracking is handled inside train() via ModelTracker.
+    # The --track flag is kept for CLI compatibility but train() always tracks.
+    tracker = None
+    if args.track and not MLFLOW_AVAILABLE:
         logger.warning(
             "MLflow tracking requested but not available. Install with: pip install mlflow"
         )
