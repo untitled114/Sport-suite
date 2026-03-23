@@ -65,28 +65,23 @@ def get_db_config(
 
 
 def get_players_db_config() -> Dict[str, Any]:
-    """Get nba_players database config (port 5536)."""
-    return get_db_config("NBA_PLAYERS", 5536, "nba_players")
+    """Get players database config — routes to consolidated DB (port 5500)."""
+    return get_schema_config("players")
 
 
 def get_games_db_config() -> Dict[str, Any]:
-    """Get nba_games database config (port 5537)."""
-    return get_db_config("NBA_GAMES", 5537, "nba_games")
+    """Get games database config — routes to consolidated DB (port 5500)."""
+    return get_schema_config("games")
 
 
 def get_team_db_config() -> Dict[str, Any]:
-    """Get nba_team database config (port 5538)."""
-    return get_db_config("NBA_TEAM", 5538, "nba_team")
+    """Get teams database config — routes to consolidated DB (port 5500)."""
+    return get_schema_config("teams")
 
 
 def get_intelligence_db_config() -> Dict[str, Any]:
-    """
-    Get nba_intelligence database config (port 5539).
-
-    IMPORTANT: This is the ORIGINAL/LEGACY database for props.
-    Do NOT use port 5540 (nba_reference) - it gives mixed/bad predictions.
-    """
-    return get_db_config("NBA_INT", 5539, "nba_intelligence")
+    """Get intelligence database config — routes to consolidated DB (port 5500)."""
+    return get_schema_config("intelligence")
 
 
 def get_mongo_config() -> Dict[str, Any]:

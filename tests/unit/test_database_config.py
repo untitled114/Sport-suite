@@ -53,33 +53,39 @@ class TestGetDbConfig:
 
 
 class TestLegacyAliases:
+    """Legacy config functions now route to consolidated DB (port 5500)."""
+
     def test_players(self):
         from nba.config.database import get_players_db_config
 
         config = get_players_db_config()
-        assert config["port"] == 5536
-        assert config["database"] == "nba_players"
+        assert config["port"] == 5500
+        assert config["database"] == "sportsuite"
+        assert "search_path=players" in config["options"]
 
     def test_games(self):
         from nba.config.database import get_games_db_config
 
         config = get_games_db_config()
-        assert config["port"] == 5537
-        assert config["database"] == "nba_games"
+        assert config["port"] == 5500
+        assert config["database"] == "sportsuite"
+        assert "search_path=games" in config["options"]
 
     def test_team(self):
         from nba.config.database import get_team_db_config
 
         config = get_team_db_config()
-        assert config["port"] == 5538
-        assert config["database"] == "nba_team"
+        assert config["port"] == 5500
+        assert config["database"] == "sportsuite"
+        assert "search_path=teams" in config["options"]
 
     def test_intelligence(self):
         from nba.config.database import get_intelligence_db_config
 
         config = get_intelligence_db_config()
-        assert config["port"] == 5539
-        assert config["database"] == "nba_intelligence"
+        assert config["port"] == 5500
+        assert config["database"] == "sportsuite"
+        assert "search_path=intelligence" in config["options"]
 
     def test_all_have_required_keys(self):
         from nba.config.database import (
