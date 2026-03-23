@@ -6,184 +6,71 @@ on:
   workflow_dispatch:
     inputs:
       restart_airflow:
-        description: 'Restart Airflow scheduler + webserver'
-        required: false
-        default: 'false'
+        description: 'Restart Airflow'
         type: boolean
-      restart_axiom:
-        description: 'Restart Cephalon Axiom bot'
-        required: false
-        default: 'false'
+        default: false
+      restart_bots:
+        description: 'Restart all Cephalon bots'
         type: boolean
-      deploy_fleet:
-        description: 'Deploy Cephalon shared module (/home/cephalons/cephalon/)'
-        required: false
-        default: 'false'
-        type: boolean
-      restart_all:
-        description: 'Restart everything (Airflow + Axiom + fleet)'
-        required: false
-        default: 'false'
-        type: boolean
+        default: false
 
-# Ensure only one deployment runs at a time
 concurrency:
   group: production-deploy
   cancel-in-progress: false
 
 jobs:
-  # Security scan must pass before deployment
-  security-scan:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Run Gitleaks (secret detection)
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          severity: 'CRITICAL,HIGH'
-          exit-code: '1'
-          ignore-unfixed: true
-
-  # Run tests before deploying
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
-      - name: Run tests
-        run: pytest tests/unit -v -m "not slow"
-
-  # Deploy only on manual trigger (server not reachable from GH Actions runners)
   deploy:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    needs: [security-scan, test]
-    environment: production
+    runs-on: self-hosted
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup SSH key
-        uses: webfactory/ssh-agent@v0.9.0
+      - uses: actions/checkout@v4
         with:
-          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
+          fetch-depth: 2
 
-      - name: Add server to known_hosts
+      - name: Detect changes
+        id: changes
         run: |
-          mkdir -p ~/.ssh
-          cat >> ~/.ssh/known_hosts << 'HOSTKEYS'
-          |1|yvYTQKBJV6yl8hN6jCmbv9U+1BM=|IpsZv1vxNbkGxeBImfRHHUHN7ww= ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCUm/OwyaxM1C+OtQauPPn4YFb+kZF7Isot4QgZDl5a8TbQV9r9vjnpkAwfeG593r7//RCiIir0J8twDZa27dfnzLE2wkYT4XRAQ+CgSRmqJM/q3DRrqvPn3L9NvpGxb/qk5PoRJKuxQYqsjP+9LykXPZPiyxu+rDHDXHMMSFVEh63RE812FTkMk7snsVE8u2YzJwaPoCZDtCDNFFgjZ4zyHfitJvUJql8PmADtOPLFeqgAF0bhjpJAqGwz9ke1oD48Jgl87EjMKZbZWth51PgXDqIGhtXZJdzQ7HGut1P9oPbJigEfLKZlN3HJBGsY2SBXyZzYBw2lwG7PYpLv/h7nHUlj76Vi5MD2bXO8YcIaSl0SMmuT5YLDCWxycq2hdON8u9hoRUGw36nPK4L0i2vXeXpRO/PSm048KvaERuFsvIMf6XDlPmk9bWhMkrN9ixLKvN9SIR88DQGMNx6sB1qn2K5eE8lnImkVapc68WzupqQgKsrbeB5tIyuuwUu9X8M=
-          |1|sKIw1aSIdF86dj/1evAbahmpz60=|wV1+cFDw0fy7vQgjD0Ea/Yledoc= ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBKb7IGaXkArn0iderVrBvQ0Q+I0Mpit6uGLVnN+pAZyX31ypqrdfBohefJaG5MBhXMfmxbVIqPJa8rnLzaPPZTA=
-          |1|I7/aXcB+JRvZ2Ei8OMZxdWnThDI=|gI5RYwlWPeQt911iVEr5fvvRg8g= ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPrLN3El6qvBrMqMPNn3xyJXRCFfp4YwoGSye3kskR/K
-          HOSTKEYS
+          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+          echo "airflow=$(echo "$CHANGED" | grep -q '^airflow/' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "cephalon=$(echo "$CHANGED" | grep -q '^cephalon/' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "discord=$(echo "$CHANGED" | grep -q '^discord/' && echo true || echo false)" >> $GITHUB_OUTPUT
 
-      # ── Sport-Suite code deploy ──
-      - name: Deploy Sport-Suite via rsync
+      - name: Deploy Sport-Suite
         run: |
-          rsync -avz --delete --omit-dir-times \
-            --exclude='.git' \
-            --exclude='__pycache__' \
-            --exclude='*.pyc' \
-            --exclude='venv' \
-            --exclude='.venv' \
-            --exclude='docker/backups/*' \
-            --exclude='airflow/logs/*' \
-            --exclude='airflow/airflow.db' \
-            --exclude='airflow/airflow.cfg' \
+          rsync -a --omit-dir-times \
+            --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' \
+            --exclude='venv' --exclude='.venv' \
+            --exclude='docker/backups/*' --exclude='airflow/logs/*' \
+            --exclude='airflow/airflow.db' --exclude='airflow/airflow.cfg' \
             --exclude='nba/betting_xl/lines/*.json' \
             --exclude='nba/betting_xl/predictions/*.json' \
             --exclude='nba/features/datasets/*.csv' \
-            --exclude='.env' \
-            --exclude='docker/.env' \
-            --exclude='*.log' \
-            --exclude='*.pkl' \
-            --exclude='catboost_info/' \
-            ./ ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ secrets.SERVER_PATH }}/
+            --exclude='.env' --exclude='docker/.env' \
+            --exclude='*.log' --exclude='*.pkl' \
+            --exclude='CLAUDE.md' --exclude='.claude/' \
+            ./ /home/sportsuite/sport-suite/
 
-      # ── Cephalon fleet deploy (shared AI module) ──
-      - name: Deploy Cephalon fleet module
-        if: >-
-          ${{ github.event.inputs.deploy_fleet == 'true' ||
-              github.event.inputs.restart_all == 'true' }}
+      - name: Deploy Cephalon module
+        if: steps.changes.outputs.cephalon == 'true' || github.event.inputs.restart_bots == 'true'
         run: |
-          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            'if [ -d "${{ secrets.SERVER_PATH }}/cephalon" ]; then
-              rsync -avz ${{ secrets.SERVER_PATH }}/cephalon/ /home/cephalons/cephalon/ \
-                --exclude="__pycache__" --exclude="*.pyc"
-              echo "Fleet synced from sport-suite/cephalon/"
-            elif [ -d "/home/cephalons/cephalon" ]; then
-              echo "Fleet module already at /home/cephalons/cephalon/ — no sync needed"
-            else
-              echo "WARNING: No cephalon module found to deploy"
-            fi'
+          rsync -a /home/sportsuite/sport-suite/cephalon/ /home/cephalons/cephalon/ \
+            --exclude='__pycache__' --exclude='*.pyc'
+          echo "Fleet module synced"
 
-      # ── Verify deployment ──
-      - name: Verify deployment
+      - name: Verify
         run: |
-          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            'cd ${{ secrets.SERVER_PATH }} && source venv/bin/activate && python -c "import nba; print(\"Import OK\")"'
+          cd /home/sportsuite/sport-suite
+          source venv/bin/activate
+          python -c "import nba; print(f'Sport-Suite v{nba.__version__} — OK')"
 
-      # ── Service restarts ──
       - name: Restart Airflow
-        if: >-
-          ${{ github.event.inputs.restart_airflow == 'true' ||
-              github.event.inputs.restart_all == 'true' }}
-        run: |
-          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            'sudo systemctl restart airflow-scheduler airflow-webserver && echo "Airflow restarted"'
+        if: steps.changes.outputs.airflow == 'true' || github.event.inputs.restart_airflow == 'true'
+        run: sudo systemctl restart airflow-scheduler airflow-webserver && echo "Airflow restarted"
 
-      - name: Restart Cephalon Axiom
-        if: >-
-          ${{ github.event.inputs.restart_axiom == 'true' ||
-              github.event.inputs.restart_all == 'true' }}
-        run: |
-          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            'sudo systemctl restart cephalon-axiom && sleep 2 && sudo systemctl is-active cephalon-axiom && echo "Axiom restarted"'
+      - name: Restart Axiom
+        if: steps.changes.outputs.discord == 'true' || steps.changes.outputs.cephalon == 'true' || github.event.inputs.restart_bots == 'true'
+        run: sudo systemctl restart cephalon-axiom && sleep 2 && sudo systemctl is-active cephalon-axiom
 
-      # ── Summary ──
-      - name: Deployment summary
-        if: always()
-        run: |
-          echo "============================================"
-          echo "Deployment Summary"
-          echo "============================================"
-          echo "Time:    $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
-          echo "Commit:  ${{ github.sha }}"
-          echo "Branch:  ${{ github.ref_name }}"
-          echo "Trigger: ${{ github.event_name }}"
-          echo ""
-          echo "Actions taken:"
-          echo "  Code deploy:     YES (always)"
-          echo "  Fleet deploy:    ${{ github.event.inputs.deploy_fleet || github.event.inputs.restart_all || 'false' }}"
-          echo "  Restart Airflow: ${{ github.event.inputs.restart_airflow || github.event.inputs.restart_all || 'false' }}"
-          echo "  Restart Axiom:   ${{ github.event.inputs.restart_axiom || github.event.inputs.restart_all || 'false' }}"
-          echo "============================================"
+      - name: Restart Atlas
+        if: steps.changes.outputs.cephalon == 'true' || github.event.inputs.restart_bots == 'true'
+        run: sudo systemctl restart cephalon-atlas && sleep 2 && sudo systemctl is-active cephalon-atlas

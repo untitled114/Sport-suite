@@ -172,3 +172,4 @@ airflow/logs/
 docs/SERVER_OPERATIONS.md
 airflow/airflow-scheduler.pid
 airflow/airflow-webserver-monitor.pid
+.claude/commands/
