@@ -40,10 +40,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import re
 
-from features.extract_live_features import LiveFeatureExtractor
-from features.extract_live_features_xl import LiveFeatureExtractorXL
-
 from nba.config.database import get_connection
+from nba.features.extract_live_features import LiveFeatureExtractor
+from nba.features.extract_live_features_xl import LiveFeatureExtractorXL
 
 
 def normalize_player_name(name: str) -> str:
@@ -510,14 +509,13 @@ class XLDatasetBuilder:
                         print(
                             f"   ⚠️  {still_null_is_home:,} props missing is_home ({fallback_pct:.2f}%) - using home=True fallback"
                         )
-                    # CRITICAL: fillna returns object dtype, must explicitly convert to bool
-                    df["is_home"] = (
-                        df["is_home"].fillna(True).astype(int)
-                    )  # 0/1 not bool — trainer needs numeric
+                    # CRITICAL: fillna returns object dtype, must explicitly convert to int
+                    pd.set_option("future.no_silent_downcasting", True)
+                    df["is_home"] = df["is_home"].fillna(True).astype(int)
 
             # Verify home/away distribution
-            home_count = df["is_home"].sum()
-            away_count = (~df["is_home"]).sum()
+            home_count = int((df["is_home"] == 1).sum())
+            away_count = int((df["is_home"] == 0).sum())
             home_pct = home_count / len(df) * 100
 
             # Verify opponent_team distribution
@@ -575,22 +573,23 @@ class XLDatasetBuilder:
         df["actual_value"] = pd.to_numeric(df["actual_value"], errors="coerce")
 
         # Group by unique prop (player + game + stat)
+        # NOTE: is_home and opponent_team excluded from groupby — they vary across
+        # fetches (NULL vs real value) and get enriched from game_logs AFTER
+        # aggregation. game_time also excluded to avoid splitting same-day props.
+        # All fetches per day are kept so min/max/std capture line movement.
         grouped = (
             df.groupby(
                 [
                     "player_id",
                     "player_name",
                     "game_date",
-                    "game_time",
-                    "opponent_team",
-                    "is_home",
                     "stat_type",
                 ],
                 dropna=False,
             )
             .agg(
                 {
-                    # Book line statistics
+                    # Book line statistics (min/max/std across all fetches = line movement)
                     "over_line": ["min", "max", "mean", "std", "count"],
                     "consensus_line": "first",
                     "line_spread": "first",
@@ -600,6 +599,10 @@ class XLDatasetBuilder:
                     "hardest_book": "first",
                     # Ground truth
                     "actual_value": "first",
+                    # Enriched after aggregation but pick best non-null here
+                    "opponent_team": "first",
+                    "game_time": "first",
+                    "is_home": "first",
                     # Metadata
                     "fetch_timestamp": "first",
                 }
@@ -635,6 +638,9 @@ class XLDatasetBuilder:
                 "softest_book_first": "softest_book",
                 "hardest_book_first": "hardest_book",
                 "actual_value_first": "actual_value",
+                "opponent_team_first": "opponent_team",
+                "game_time_first": "game_time",
+                "is_home_first": "is_home",
                 "fetch_timestamp_first": "fetch_timestamp",
             },
             inplace=True,
@@ -876,13 +882,17 @@ class XLDatasetBuilder:
 
         # Step 2.6: Fill NaN values to prevent .get() from returning NaN instead of defaults
         # CRITICAL FIX: pandas Series.get() returns NaN when key exists but value is NaN
-        aggregated["opponent_team"] = aggregated["opponent_team"].fillna("")
-        aggregated["is_home"] = aggregated["is_home"].fillna(True)
+        aggregated["opponent_team"] = (
+            aggregated["opponent_team"].fillna("").infer_objects(copy=False)
+        )
+        aggregated["is_home"] = aggregated["is_home"].fillna(True).infer_objects(copy=False)
 
-        # Step 2.7: Deduplicate after enrichment (groupby with is_home NaN creates duplicates)
+        # Step 2.7: Deduplicate to one row per player-game-stat.
+        # Remaining duplicates come from game_time variations in the groupby.
         before_dedup = len(aggregated)
+        aggregated = aggregated.sort_values("num_books", ascending=False)
         aggregated = aggregated.drop_duplicates(
-            subset=["player_name", "game_date", "consensus_line"], keep="first"
+            subset=["player_name", "game_date", "stat_type"], keep="first"
         )
         after_dedup = len(aggregated)
         if self.verbose and before_dedup != after_dedup:

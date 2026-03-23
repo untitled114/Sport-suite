@@ -930,7 +930,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
             WHERE season = %s
             """
             with self.team_conn.cursor() as cur:
-                cur.execute(query, (season,))
+                cur.execute(query, (str(season),))
                 rows = cur.fetchall()
 
                 season_data = {}
