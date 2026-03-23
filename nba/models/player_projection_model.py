@@ -309,6 +309,10 @@ class PlayerProjectionModel:
             }
         )
 
+        # Store feature names from input (in case prepare_features was skipped)
+        if self.feature_names is None:
+            self.feature_names = X_train.columns.tolist()
+
         # Impute missing values
         self.imputer = SimpleImputer(strategy="median")
         X_train_imp = pd.DataFrame(
@@ -538,8 +542,8 @@ class PlayerProjectionModel:
         if self.regressor is None:
             raise RuntimeError("Model not trained or loaded. Call train() or load() first.")
 
-        # Align columns to training feature order
-        X = features[self.feature_names].copy()
+        # Align columns to training feature order, filling missing with NaN
+        X = features.reindex(columns=self.feature_names).copy()
 
         X_imp = self.imputer.transform(X)
         X_scaled = self.scaler.transform(X_imp)
