@@ -587,88 +587,46 @@ def nba_health_check():
         print(f"OVERALL: {overall_status.upper()}")
         print("=" * 60 + "\n")
 
-        # Send email only on issues
-        if has_failures or has_warnings:
-            warnings_html = ""
-            if data_result.get("warnings"):
-                warnings_html = (
-                    "<ul>" + "".join(f"<li>{w}</li>" for w in data_result["warnings"]) + "</ul>"
-                )
+        # Build Discord message — always send, healthy or not
+        db_status = db_result.get("status", "?")
+        model_files = model_result.get("pkl_count", 0)
+        props_count = data_result.get("props_count", 0)
+        disk_pct = disk_result.get("usage_percent", 0)
+        coverage = data_result.get("coverage", 0)
+        game_log_stale = game_log_result.get("days_stale", 0)
+        game_log_latest = game_log_result.get("latest_date", "unknown")
+        logs_display = (
+            f"stale ({game_log_stale}d)" if game_log_stale > 3 else f"ok ({game_log_latest})"
+        )
+        data_warnings = data_result.get("warnings", [])
 
-            body = f"""
-            <h3>NBA System Health Report</h3>
-            <p><b>Status:</b> {overall_status.upper()}</p>
-            <p><b>Time:</b> {datetime.now().isoformat()}</p>
+        if has_failures:
+            icon = "\U0001f6a8"  # siren
+        elif has_warnings:
+            icon = "\u26a0\ufe0f"  # warning
+        else:
+            icon = "\u2705"  # green check
 
-            <h4>Check Results:</h4>
-            <table border="1" cellpadding="5">
-                <tr><th>Component</th><th>Status</th><th>Details</th></tr>
-                <tr>
-                    <td>Database</td>
-                    <td>{db_result.get('status')}</td>
-                    <td>4/4 connected</td>
-                </tr>
-                <tr>
-                    <td>Models</td>
-                    <td>{model_result.get('status')}</td>
-                    <td>{model_result.get('pkl_count')} files</td>
-                </tr>
-                <tr>
-                    <td>Data</td>
-                    <td>{data_result.get('status')}</td>
-                    <td>{data_result.get('props_count')} props</td>
-                </tr>
-                <tr>
-                    <td>Disk</td>
-                    <td>{disk_result.get('status')}</td>
-                    <td>{disk_result.get('usage_percent'):.1f}% used</td>
-                </tr>
-                <tr>
-                    <td>API</td>
-                    <td>{api_result.get('status')}</td>
-                    <td>ESPN: {api_result.get('espn_api')}</td>
-                </tr>
-                <tr>
-                    <td>Game Logs</td>
-                    <td>{"ok" if game_log_result.get("days_stale", 99) <= 3 else "stale"}</td>
-                    <td>latest={game_log_result.get("latest_date", "unknown")} ({game_log_result.get("days_stale", "?")}d ago)</td>
-                </tr>
-            </table>
+        discord_lines = [
+            f"{icon} **NBA Health: {overall_status.upper()}**",
+            f"```",
+            f"DB        {db_status}",
+            f"Models    {model_files} files",
+            f"Props     {props_count}",
+            f"Coverage  {coverage}%",
+            f"Disk      {disk_pct:.1f}%",
+            f"Logs      {logs_display}",
+            f"```",
+        ]
+        if data_warnings:
+            discord_lines.append("**Warnings:** " + " | ".join(data_warnings))
 
-            {f"<h4>Warnings:</h4>{warnings_html}" if warnings_html else ""}
-            """
-
-            icon = "🚨" if has_failures else "⚠️"
-            db_status = db_result.get("status", "?")
-            model_files = model_result.get("pkl_count", 0)
-            props_count = data_result.get("props_count", 0)
-            disk_pct = disk_result.get("usage_percent", 0)
-            game_log_stale = game_log_result.get("days_stale", 0)
-            game_log_latest = game_log_result.get("latest_date", "unknown")
-            logs_display = (
-                f"stale ({game_log_stale}d)" if game_log_stale > 3 else f"ok ({game_log_latest})"
-            )
-            data_warnings = data_result.get("warnings", [])
-
-            discord_lines = [
-                f"{icon} **NBA Health: {overall_status.upper()}**",
-                f"```",
-                f"DB      {db_status}",
-                f"Models  {model_files} files",
-                f"Props   {props_count}",
-                f"Disk    {disk_pct:.1f}%",
-                f"Logs    {logs_display}",
-                f"```",
-            ]
-            if data_warnings:
-                discord_lines.append("**Warnings:** " + " | ".join(data_warnings))
-
-            send_health_alert(
-                f"NBA System Health: {overall_status.upper()}",
-                body,
-                is_critical=has_failures,
-                discord_summary="\n".join(discord_lines),
-            )
+        send_health_alert(
+            f"NBA System Health: {overall_status.upper()}",
+            f"Status: {overall_status.upper()} | Props: {props_count} | Coverage: {coverage}%",
+            is_critical=has_failures,
+            discord_summary="\n".join(discord_lines),
+        )
 
         return {
             "overall_status": overall_status,
