@@ -4,23 +4,60 @@
 ![Lint](https://github.com/untitled114/Sport-suite/actions/workflows/lint.yml/badge.svg)
 ![Security](https://github.com/untitled114/Sport-suite/actions/workflows/security.yml/badge.svg)
 ![Deploy](https://github.com/untitled114/Sport-suite/actions/workflows/deploy.yml/badge.svg)
-![Coverage](https://img.shields.io/badge/coverage-99%25-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-98%25-brightgreen)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 
-Production ML platform for NBA player prop predictions. Ingests live data from **11 sportsbook APIs** (4 direct + 7 via aggregator), stores in a **consolidated TimescaleDB** with 6 schemas, engineers **188 features** per prediction using 10 modular extractors, and generates calibrated probabilities with stacked LightGBM models — orchestrated via 6 Airflow DAGs with automated validation, drift detection, model registry with auto-rollback, and an AI-powered Discord bot (22 tools) for real-time intelligence.
-
-**30-day performance: 69% WR, +32.3% ROI** (as of March 2026)
+Production ML platform for NBA player prop predictions. Ingests live data from **11 sportsbook APIs** (4 direct + 7 via aggregator), stores in a **consolidated TimescaleDB** with 6 schemas, engineers **134 features** per prediction using 10 modular extractors, and generates calibrated probabilities with stacked LightGBM models — orchestrated via 6 Airflow DAGs with automated validation, drift detection, model registry with auto-rollback, and an AI-powered Discord bot (22 tools) for real-time intelligence.
 
 ### Tech Stack
 `Python` · `PostgreSQL/TimescaleDB` · `LightGBM` · `Airflow` · `FastAPI` · `Docker` · `AWS EC2` · `GCP Cloud Run` · `Grafana` · `Metabase` · `MLflow` · `GitHub Actions (self-hosted runner)` · `Claude API (Anthropic)` · `psycopg2` · `scikit-learn` · `pandas` · `Pydantic v2`
+
+## Walk-Forward Validated Results
+
+Models are validated using **expanding-window walk-forward cross-validation** — trained on historical data, tested on future periods never seen during training. No data leakage, no lookahead bias.
+
+### POINTS
+
+**Mean AUC: 0.730 (+/- 0.017) | Win Rate: 62.6% | Edge WR: 68.7% | ROI: +25.3%**
+
+| Fold | Train Period | Test Period | AUC | Win Rate | Edge WR |
+|------|-------------|-------------|-----|----------|---------|
+| 1 | Oct 2024 - Apr 2025 | Oct 2025 | 0.753 | 60.0% | 70.6% |
+| 2 | Oct 2024 - Oct 2025 | Oct - Dec 2025 | 0.712 | 65.1% | 67.7% |
+| 3 | Oct 2024 - Dec 2025 | Dec 2025 - Feb 2026 | 0.724 | 62.6% | 67.8% |
+
+![POINTS AUC](nba/models/model_cards/images/POINTS_walkforward_auc.png)
+![POINTS Win Rate](nba/models/model_cards/images/POINTS_walkforward_winrate.png)
+![POINTS ROI](nba/models/model_cards/images/POINTS_walkforward_roi.png)
+
+### REBOUNDS
+
+**Mean AUC: 0.729 (+/- 0.029) | Win Rate: 65.6% | Edge WR: 69.3% | ROI: +25.8%**
+
+| Fold | Train Period | Test Period | AUC | Win Rate | Edge WR |
+|------|-------------|-------------|-----|----------|---------|
+| 1 | Oct 2024 - Apr 2025 | Oct 2025 | 0.754 | 71.4% | 72.7% |
+| 2 | Oct 2024 - Oct 2025 | Oct - Dec 2025 | 0.689 | 60.3% | 65.2% |
+| 3 | Oct 2024 - Dec 2025 | Dec 2025 - Feb 2026 | 0.743 | 65.2% | 70.0% |
+
+![REBOUNDS AUC](nba/models/model_cards/images/REBOUNDS_walkforward_auc.png)
+![REBOUNDS Win Rate](nba/models/model_cards/images/REBOUNDS_walkforward_winrate.png)
+![REBOUNDS ROI](nba/models/model_cards/images/REBOUNDS_walkforward_roi.png)
+
+### Production Models (V5)
+
+| Model | Market | Features | R² | AUC | WF AUC | Trained | Status |
+|-------|--------|----------|-----|------|--------|---------|--------|
+| V5 | POINTS | 134 | 0.586 | 0.731 | 0.730 | Mar 2026 | Deployed |
+| V5 | REBOUNDS | 134 | 0.534 | 0.729 | 0.729 | Mar 2026 | Deployed |
 
 ## What This Project Demonstrates
 
 - **Multi-Source Data Engineering**: 11 REST API integrations (4 direct sportsbook scrapers via residential proxy + 7 via BettingPros), with append-only line snapshot tracking (15K+ snapshots/day), cross-source deduplication, and historical backfill (67K+ analytics records)
 - **SQL & Data Modeling**: Consolidated TimescaleDB with 6 schemas (3.7M+ prop lines, 108K game logs, 67K BP analytics), schema-based routing via `search_path`, migration tooling
-- **Feature Engineering at Scale**: 188 features across 10 modular extractors — player rolling stats, book disagreement signals, H2H matchups, BettingPros analytics (projections, EV, hit rates), DVP rankings, game context (pace, blowout risk), temporal milestones (trade deadline, All-Star break, team tenure)
-- **ML Pipeline**: Two-head stacked LightGBM (regressor + classifier) with isotonic calibration, temporal decay weighting, walk-forward cross-validation, MLflow tracking, and auto-retraining triggers
-- **Production Operations**: Multi-cloud deployment (AWS + GCP), 6 Airflow DAGs, self-hosted GitHub Actions runner, model registry with promotion gate and auto-rollback, 99% test coverage (1,972 tests)
+- **Feature Engineering at Scale**: 134 features across 10 modular extractors — player rolling stats (all 8 stat types), book disagreement signals, H2H matchups, BettingPros analytics (projections, EV, hit rates), DVP rankings, game context (pace, travel distance, blowout risk)
+- **ML Pipeline**: Two-head stacked LightGBM with out-of-fold expected_diff, Platt scaling calibration, noise injection for variance matching, walk-forward validation, MLflow tracking, and auto-retraining triggers
+- **Production Operations**: Multi-cloud deployment (AWS + GCP), 6 Airflow DAGs, self-hosted GitHub Actions runner, model registry with promotion gate and auto-rollback, 98% test coverage (2,096 tests)
 - **Five-Pillar Observability**: Pipeline telemetry, model registry, validation runs, dataset fingerprinting, feature default rate tracking — all queryable via Grafana and Metabase dashboards
 - **AI-Powered Intelligence**: Discord bot with 22 Claude-powered tools — natural language queries, pick explanation, line movement tracking, performance analytics, bankroll management
 
@@ -46,24 +83,24 @@ Production ML platform for NBA player prop predictions. Ingests live data from *
 └──────────────────┬───────────────────────────────────┘
                    ▼
 ┌──────────────────────────────────────────────────────┐
-│  Feature Engineering (188 features, 10 extractors)   │
-│  ├── Player rolling stats (78)                       │
-│  ├── Book disagreement (23)                          │
-│  ├── H2H matchup (36)                               │
-│  ├── BP analytics (15): projection, EV, hit rates    │
-│  ├── Game context (8): pace, blowout, usage          │
-│  ├── Temporal (10): trade deadline, team tenure       │
-│  ├── Direct line (19): movement, cross-source        │
-│  └── Vegas, team betting, prop history, cheatsheet    │
+│  Feature Engineering (134 features, 10 extractors)   │
+│  ├── Player rolling stats (38): all 8 stats x L3-L20│
+│  ├── Book disagreement (18): per-book deviations     │
+│  ├── H2H matchup (12): primary stat only             │
+│  ├── BP analytics (8): projection, EV, hit rates     │
+│  ├── Prop history (9): context-adjusted hit rates    │
+│  ├── Shooting/advanced (8): FG%, FT rate, TS%, +/-   │
+│  └── Team, game context, vegas, situational          │
 └──────────────────┬───────────────────────────────────┘
                    ▼
 ┌──────────────────────────────────────────────────────┐
-│  Stacked LightGBM (Two-Head)                         │
+│  Stacked LightGBM (Two-Head, V5)                     │
 │  HEAD 1: Regressor → predicted stat value            │
 │  HEAD 2: Classifier → P(OVER) with expected_diff     │
-│  Isotonic calibration → 60/40 ensemble blending      │
-│  XL (102 feat) + V3 (136 feat) in parallel           │
-│  MLflow tracking: params, metrics, dataset hash      │
+│  ├── expected_diff via 5-fold OOF (no leakage)       │
+│  ├── Noise injection (train/test variance matching)  │
+│  ├── Platt scaling on 15% holdout                    │
+│  └── MLflow tracking: params, metrics, git hash      │
 └──────────────────┬───────────────────────────────────┘
                    ▼
 ┌──────────────────────────────────────────────────────┐
@@ -89,29 +126,6 @@ Production ML platform for NBA player prop predictions. Ingests live data from *
 └──────────────────────────────────────────────────────┘
 ```
 
-## Results (March 2026)
-
-### 30-Day Rolling Performance
-
-| Metric | Value |
-|--------|-------|
-| Win Rate | **69%** (88W-39L) |
-| ROI | **+32.3%** |
-| REBOUNDS | 100% WR (9-0 last 7 days) |
-| XL Model | 83% WR (5-1) |
-| V3 Model | 60% WR (12-8) |
-| LOCKED Conviction | 70% WR |
-
-### Production Models
-
-| Model | Market | Features | R² | AUC | Trained | Status |
-|-------|--------|----------|-----|------|---------|--------|
-| XL | POINTS | 102 | 0.410 | 0.767 | Dec 2025 | Deployed |
-| XL | REBOUNDS | 102 | 0.403 | 0.749 | Dec 2025 | Deployed |
-| V3 | POINTS | 136 | 0.548 | 0.740 | Feb 2026 | Deployed |
-| V3 | REBOUNDS | 136 | 0.530 | 0.739 | Feb 2026 | Deployed |
-| V4 | ALL | 188 | — | — | Training | Dataset building |
-
 ## Data Sources (11 APIs)
 
 **Direct Sportsbook Fetchers** (via Colorado/Florida residential proxy):
@@ -130,20 +144,22 @@ Production ML platform for NBA player prop predictions. Ingests live data from *
 
 **Daily volume**: ~8,200 direct props + ~6,800 BettingPros props + 15K+ line snapshots
 
-## Feature Engineering (188 Features)
+## Feature Engineering (134 Features)
 
 | Extractor | Count | Description |
 |-----------|-------|-------------|
-| Player Rolling Stats | 78 | EMA L3/L5/L10/L20, minutes, FG%, plus/minus |
-| Book Disagreement | 23 | Line spread, per-book deviations, softest/hardest |
-| H2H Matchup | 36 | Head-to-head stats with time decay |
-| BP Analytics | 15 | Projection, EV, bet rating, hit rates, opposition rank |
-| Game Context | 8 | Pace, blowout risk, plus/minus, usage, efficiency |
-| Temporal Milestones | 10 | Trade deadline, All-Star break, playoff push, team tenure |
-| Direct Line | 19 | Line movement velocity, cross-source discrepancy |
-| Prop History | 12 | Hit rates by context (home/away, defense, rest) |
+| Player Rolling Stats | 38 | EMA for all 8 stats (pts/reb/ast/3pm/stl/blk/tov/min) at L3/L5/L10/L20 + FG% |
+| Shooting & Advanced | 8 | FG% L3-L20, ft_rate_L10, true_shooting_L10, plus_minus L5/L10 |
+| Book Disagreement | 18 | Line spread, per-book deviations (DK/FD/MGM/CZR/BR), softest/hardest |
+| H2H Matchup | 12 | Primary stat avg/std/L3/L5/L10/L20, home/away splits (no cross-stat) |
+| Prop History | 9 | Hit rates (L20, context-adjusted), bayesian confidence, streaks |
+| BettingPros | 8 | Projection diff, probability, EV%, hit rates, opponent rank |
+| Team & Game Context | 10 | Pace, off/def ratings, travel_distance_km, altitude, projected poss |
+| Situational | 6 | Days rest, starter flag, bench_points_ratio, avg_teammate_usage |
 | Vegas Context | 2 | Game total, spread |
-| Team/Cheatsheet | 13 | Team betting ATS/O/U, BP cheatsheet data |
+| Computed | 1 | expected_diff (5-fold OOF, noise-injected) |
+
+**32 features pruned** via importance audit: zero-signal features (injury flags, season temporals, redundant BP analytics, `days_into_season` temporal leakage) dropped in `FEATURE_PREPROCESSING.common_cols_to_drop`.
 
 ## Five-Pillar Observability
 
@@ -153,7 +169,7 @@ Production ML platform for NBA player prop predictions. Ingests live data from *
 | Reliability | `axiom.model_registry` | Model lifecycle: training → shadow → production → rolled_back |
 | Performance Efficiency | `axiom.validation_runs` | Walk-forward results, promotion gate decisions |
 | Security/Integrity | metadata JSON | Dataset MD5 hash, feature default rates |
-| Cost Optimization | MLflow | Training duration per market, high-default feature flagging |
+| Cost Optimization | MLflow (`ModelTracker`) | Training duration, git hash, feature importance |
 
 **Dashboards**: Grafana (Pipeline Operations, Model Performance) + Metabase (analytics) at `admin.lunara-app.com`
 
@@ -166,7 +182,7 @@ AI-powered sports intelligence assistant with 22 tools, running on Claude Sonnet
 - *"Should I trust this Jokic pick?"* → Explains the pick with full context
 - *"Any line movement?"* → Real-time snapshot comparison across books
 - *"What changed since this morning?"* → Pick evolution (added/dropped/changed)
-- *"How's V3 POINTS doing?"* → Flexible performance breakdown by market/model
+- *"How's V5 POINTS doing?"* → Flexible performance breakdown by market/model
 
 **Tool Categories**:
 
@@ -238,7 +254,7 @@ make refresh          # Quick line refresh only
 make picks            # Show current picks
 make validate         # Validate yesterday's results
 
-make test             # Run tests (99% coverage, 1,972 tests)
+make test             # Run tests (98% coverage, 2,096 tests)
 make lint             # black, isort, flake8
 make deploy           # Auto-deploys via self-hosted runner on push
 ```
@@ -264,11 +280,12 @@ make deploy           # Auto-deploys via self-hosted runner on push
 
 ## Engineering Practices
 
-- **Testing**: 1,972 tests, 99% coverage (pytest + pre-commit hooks)
+- **Testing**: 2,096 tests, 98% coverage (pytest + pre-commit hooks)
 - **CI/CD**: black, isort, flake8, bandit (security), gitleaks (secrets), auto-deploy via self-hosted runner
-- **Architecture**: Frozen dataclasses for config, modular extractors with dependency injection, custom exception hierarchy, 6 Architecture Decision Records
+- **Architecture**: Frozen dataclasses for config, modular extractors with dependency injection, custom exception hierarchy
 - **Data Quality**: Feature drift detection (KS tests), pipeline telemetry with anomaly detection, autocommit on read-only connections
-- **Model Management**: Registry with promotion gate (AUC ≥ 0.005 improvement, std < 0.03, WR check), auto-rollback, dataset fingerprinting (MD5), MLflow experiment tracking
+- **Model Management**: Registry with promotion gate (AUC >= 0.005 improvement, std < 0.03, WR check), auto-rollback, dataset fingerprinting (MD5), MLflow experiment tracking with git hash tagging
+- **Training Integrity**: Out-of-fold expected_diff (prevents classifier early-stopping), noise injection (variance matching), Platt scaling on holdout (not in-sample), 32 zero-importance features pruned
 - Conventional commits, structured JSON logging, automated database backups
 
 ## Related Projects
