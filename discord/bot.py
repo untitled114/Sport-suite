@@ -692,9 +692,14 @@ async def on_message(message):
     async with message.channel.typing():
         reply = await brain.respond(message.author.id, message.content)
 
-    # Split long replies for Discord's 2000 char limit
-    for chunk in _split_message(reply):
-        await message.channel.send(chunk)
+    # Send reply — truncate to Discord's 2000 char limit (no multi-message splits)
+    if len(reply) > 2000:
+        # Cut at last newline before limit to avoid mid-sentence breaks
+        cut = reply.rfind("\n", 0, 1997)
+        if cut == -1:
+            cut = 1997
+        reply = reply[:cut] + "..."
+    await message.channel.send(reply)
 
     await bot.process_commands(message)
 
