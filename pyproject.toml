@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nba-props-ml"
-version = "2.0.0"
+version = "3.0.0"
 description = "NBA player props ML prediction system with dual XL/V3 models and multi-book line shopping"
 readme = "README.md"
 license = {text = "MIT"}
@@ -197,7 +197,7 @@ omit = [
     "nba/models/generate_feature_importance.py",  # SHAP, requires model pickles
     "nba/models/json_calibrator.py",         # Reads prediction JSONs + queries DB
     # Core modules with heavy external dependencies
-    "nba/core/experiment_tracking.py",       # MLflow integration
+    "nba/models/mlflow_tracking.py",          # MLflow integration
     "nba/core/logging_config.py",            # Logging setup
     "nba/core/cli_drift_check.py",           # CLI entry point
     "nba/core/drift_detection.py",           # Requires model files and training data

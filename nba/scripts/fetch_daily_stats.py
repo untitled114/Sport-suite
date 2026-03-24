@@ -144,6 +144,18 @@ class NBAStatsUpdater:
         stats_array = player_stats.get("stats", [])
         stats_dict = dict(zip(labels, stats_array)) if labels and stats_array else {}
 
+        def parse_made_attempted(val):
+            """Parse ESPN 'made-attempted' format (e.g. '5-12' -> (5, 12))"""
+            if not val or val == "--":
+                return 0, 0
+            parts = str(val).split("-")
+            if len(parts) == 2:
+                try:
+                    return int(parts[0]), int(parts[1])
+                except (ValueError, TypeError):
+                    return 0, 0
+            return 0, 0
+
         # Parse stats (skip season totals or invalid data)
         try:
             min_str = str(stats_dict.get("MIN", "0"))
@@ -161,9 +173,15 @@ class NBAStatsUpdater:
             points = int(stats_dict.get("PTS", 0) or 0)
             rebounds = int(stats_dict.get("REB", 0) or 0)
             assists = int(stats_dict.get("AST", 0) or 0)
-            threes = int(stats_dict.get("3PM", 0) or 0)
-            fgm = int(stats_dict.get("FGM", 0) or 0)
-            fga = int(stats_dict.get("FGA", 0) or 0)
+            steals = int(stats_dict.get("STL", 0) or 0)
+            blocks = int(stats_dict.get("BLK", 0) or 0)
+            turnovers = int(stats_dict.get("TO", 0) or 0)
+
+            # ESPN uses "made-attempted" format: FG="5-12", 3PT="2-5", FT="3-4"
+            fgm, fga = parse_made_attempted(stats_dict.get("FG"))
+            threes, three_att = parse_made_attempted(stats_dict.get("3PT"))
+            ftm, fta = parse_made_attempted(stats_dict.get("FT"))
+
             plus_minus_raw = stats_dict.get("+/-", stats_dict.get("PLUSMINUS", 0))
             try:
                 plus_minus = int(float(plus_minus_raw or 0))
@@ -190,9 +208,15 @@ class NBAStatsUpdater:
             "points": points,
             "rebounds": rebounds,
             "assists": assists,
+            "steals": steals,
+            "blocks": blocks,
+            "turnovers": turnovers,
             "three_pointers_made": threes,
+            "three_pt_attempted": three_att,
             "fg_made": fgm,
             "fg_attempted": fga,
+            "ft_made": ftm,
+            "ft_attempted": fta,
             "plus_minus": plus_minus,
         }
 
@@ -214,7 +238,10 @@ class NBAStatsUpdater:
                 UPDATE player_game_logs
                 SET game_id = %s, season = %s, team_abbrev = %s, opponent_abbrev = %s, is_home = %s,
                     minutes_played = %s, points = %s, rebounds = %s, assists = %s,
-                    three_pointers_made = %s, fg_made = %s, fg_attempted = %s, plus_minus = %s
+                    steals = %s, blocks = %s, turnovers = %s,
+                    three_pointers_made = %s, three_pt_attempted = %s,
+                    fg_made = %s, fg_attempted = %s, ft_made = %s, ft_attempted = %s,
+                    plus_minus = %s
                 WHERE player_id = %s AND game_date = %s
             """,
                 (
@@ -227,9 +254,15 @@ class NBAStatsUpdater:
                     game_data["points"],
                     game_data["rebounds"],
                     game_data["assists"],
+                    game_data["steals"],
+                    game_data["blocks"],
+                    game_data["turnovers"],
                     game_data["three_pointers_made"],
+                    game_data["three_pt_attempted"],
                     game_data["fg_made"],
                     game_data["fg_attempted"],
+                    game_data["ft_made"],
+                    game_data["ft_attempted"],
                     game_data["plus_minus"],
                     player_id,
                     game_data["game_date"],
@@ -242,9 +275,10 @@ class NBAStatsUpdater:
                 """
                 INSERT INTO player_game_logs (
                     player_id, game_id, game_date, season, team_abbrev, opponent_abbrev, is_home,
-                    minutes_played, points, rebounds, assists, three_pointers_made, fg_made, fg_attempted,
-                    plus_minus
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    minutes_played, points, rebounds, assists, steals, blocks, turnovers,
+                    three_pointers_made, three_pt_attempted, fg_made, fg_attempted,
+                    ft_made, ft_attempted, plus_minus
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
                 tuple(game_data.values()),
             )
@@ -253,7 +287,9 @@ class NBAStatsUpdater:
         self.conn_players.commit()
         cursor.close()
 
-        logger.info(f"  ✅ {player_name}: {action} ({points}p {rebounds}r {assists}a)")
+        logger.info(
+            f"  ✅ {player_name}: {action} ({points}p {rebounds}r {assists}a {steals}s {blocks}b)"
+        )
         return True
 
     def process_game(self, event, fetch_date):

@@ -284,22 +284,12 @@ CREATE INDEX idx_vr_version ON validation_runs(model_version, market);
 CREATE INDEX idx_vr_promoted ON validation_runs(market, promoted) WHERE promoted = TRUE;
 CREATE INDEX idx_vr_date ON validation_runs(run_date DESC);
 
--- ==========================================================================
--- MODEL REGISTRY — which version is production for each market
--- ==========================================================================
-CREATE TABLE model_registry (
-    market TEXT PRIMARY KEY,
-    production_version TEXT NOT NULL,
-    promoted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    validation_run_id INTEGER REFERENCES validation_runs(id),
-    previous_version TEXT,
-    rollback_count INTEGER DEFAULT 0
-);
-
-INSERT INTO model_registry (market, production_version) VALUES
-    ('POINTS', 'v3'),
-    ('REBOUNDS', 'v3')
-ON CONFLICT (market) DO NOTHING;
+-- Seed production model versions (uses model_registry table defined above)
+INSERT INTO model_registry (version, market, status, pkl_path)
+VALUES
+    ('v3_POINTS', 'POINTS', 'production', 'nba/models/saved_xl/points_v3_regressor.pkl'),
+    ('v3_REBOUNDS', 'REBOUNDS', 'production', 'nba/models/saved_xl/rebounds_v3_regressor.pkl')
+ON CONFLICT (version) DO NOTHING;
 
 -- Seed data sources
 INSERT INTO data_sources (name, provider, source_type, description, cost_monthly_usd, expected_frequency, sla_max_age_hours, markets, books) VALUES

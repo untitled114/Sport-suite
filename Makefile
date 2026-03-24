@@ -63,7 +63,7 @@ db-up:
 	cd docker && docker-compose up -d
 	@echo "Waiting for databases to be ready..."
 	@sleep 5
-	@echo "Databases started on ports 5536-5539"
+	@echo "Database started on port 5500 (consolidated TimescaleDB)"
 
 db-down:
 	cd docker && docker-compose down

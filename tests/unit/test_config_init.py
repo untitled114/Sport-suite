@@ -210,36 +210,36 @@ class TestDatabaseReexports:
         assert callable(get_db_config)
 
     def test_get_players_db_config_exported(self):
-        """Test get_players_db_config is accessible from config."""
+        """Test get_players_db_config routes to consolidated DB."""
         from nba.config import get_players_db_config
 
         config = get_players_db_config()
-        assert config["port"] == 5536
-        assert config["database"] == "nba_players"
+        assert config["port"] == 5500
+        assert config["database"] == "sportsuite"
 
     def test_get_games_db_config_exported(self):
-        """Test get_games_db_config is accessible from config."""
+        """Test get_games_db_config routes to consolidated DB."""
         from nba.config import get_games_db_config
 
         config = get_games_db_config()
-        assert config["port"] == 5537
-        assert config["database"] == "nba_games"
+        assert config["port"] == 5500
+        assert config["database"] == "sportsuite"
 
     def test_get_team_db_config_exported(self):
-        """Test get_team_db_config is accessible from config."""
+        """Test get_team_db_config routes to consolidated DB."""
         from nba.config import get_team_db_config
 
         config = get_team_db_config()
-        assert config["port"] == 5538
-        assert config["database"] == "nba_team"
+        assert config["port"] == 5500
+        assert config["database"] == "sportsuite"
 
     def test_get_intelligence_db_config_exported(self):
-        """Test get_intelligence_db_config is accessible from config."""
+        """Test get_intelligence_db_config routes to consolidated DB."""
         from nba.config import get_intelligence_db_config
 
         config = get_intelligence_db_config()
-        assert config["port"] == 5539
-        assert config["database"] == "nba_intelligence"
+        assert config["port"] == 5500
+        assert config["database"] == "sportsuite"
 
     def test_get_mongo_config_exported(self):
         """Test get_mongo_config is accessible from config."""
@@ -291,13 +291,13 @@ class TestThresholdsReexports:
         """Test BLEND_WEIGHTS is accessible from config."""
         from nba.config import BLEND_WEIGHTS
 
-        assert BLEND_WEIGHTS.classifier_weight == 0.6
+        assert BLEND_WEIGHTS.classifier_weight == 1.0
 
     def test_training_hyperparameters_exported(self):
         """Test TRAINING_HYPERPARAMETERS is accessible from config."""
         from nba.config import TRAINING_HYPERPARAMETERS
 
-        assert TRAINING_HYPERPARAMETERS.n_estimators == 2000
+        assert TRAINING_HYPERPARAMETERS.n_estimators == 500
 
     def test_points_config_exported(self):
         """Test POINTS_CONFIG is accessible from config."""

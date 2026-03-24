@@ -43,9 +43,7 @@ logger = get_logger(__name__)
 # Combo props like POINTS_ASSISTS are not supported
 VALID_STAT_TYPES = {"POINTS", "REBOUNDS", "ASSISTS", "THREES"}
 
-# Database connections
-# IMPORTANT: Use port 5539 (nba_intelligence) - the ORIGINAL/LEGACY database
-# Port 5540 (nba_reference) is the consolidated DB that gives mixed/bad predictions
+# Database connection — routes to consolidated TimescaleDB (port 5500, schema intelligence)
 DB_CONFIG = get_intelligence_db_config()
 
 

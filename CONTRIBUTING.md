@@ -14,8 +14,8 @@ Thank you for your interest in contributing! This document provides guidelines f
 
 ```bash
 # Clone the repository
-git clone https://github.com/untitled114/nba-props-betting.git
-cd nba-props-betting
+git clone https://github.com/untitled114/Sport-suite.git
+cd Sport-suite
 
 # Create virtual environment
 python -m venv .venv
@@ -164,9 +164,9 @@ nba/
 ├── core/                # Core utilities
 │   ├── schemas.py       # Pydantic models
 │   ├── drift_detection.py
-│   └── experiment_tracking.py
+│   └── drift_service.py
 ├── features/            # Feature extraction
-├── models/              # Model training
+├── models/              # Model training + MLflow tracking
 ├── config/              # Configuration
 └── utils/               # Utilities
 
