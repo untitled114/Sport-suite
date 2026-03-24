@@ -494,14 +494,14 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
         book_features = self.extract_book_features(player_name, game_date, stat_type)
         player_features.update(book_features)
 
-        # Add 44 H2H matchup features
+        # Add 12 H2H matchup features (primary stat only)
         if opponent_team:
             h2h_features = self.extract_h2h_matchup_features(
                 player_name, opponent_team, stat_type, game_date
             )
             player_features.update(h2h_features)
         else:
-            player_features.update(self._get_default_h2h_features())
+            player_features.update(self._get_default_h2h_features(stat_type))
 
         # Add 12 prop history features
         if line is not None and line > 0:
@@ -573,19 +573,20 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
         self, player_name, opponent_team, stat_type, game_date
     ) -> Dict[str, float]:
         """
-        Extract 32 head-to-head matchup features.
+        Extract 12 head-to-head matchup features (primary stat only).
 
-        For LIVE predictions: queries pre-computed matchup_history table (fast).
-        For TRAINING: computes inline from player_game_logs with point-in-time
-        filtering (game_date < prop_date) to prevent data leakage.
+        Computes inline from player_game_logs with point-in-time filtering
+        (game_date < prop_date) to prevent data leakage.
 
         Features:
         - 4 quality metrics (games, days_since_last, sample_quality, recency_weight)
-        - 20 per-stat averages (avg, std, L3/L5/L10/L20 for 4 stats)
-        - 8 home/away splits (4 stats x home/away)
+        - 8 primary-stat metrics (avg, std, L3/L5/L10/L20, home_avg, away_avg)
+
+        Cross-stat H2H features (e.g. assists on a POINTS prop) were removed —
+        they had zero LightGBM importance across all trained models.
         """
         if not opponent_team or opponent_team == "":
-            return self._get_default_h2h_features()
+            return self._get_default_h2h_features(stat_type)
 
         stat_col_map = {
             "POINTS": "points",
@@ -595,7 +596,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
         }
         stat_suffix = stat_col_map.get(stat_type)
         if stat_suffix is None:
-            return self._get_default_h2h_features()
+            return self._get_default_h2h_features(stat_type)
 
         # Always use point-in-time inline computation from game logs.
         # This prevents leakage in training AND is accurate for live predictions.
@@ -609,6 +610,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
         """Compute H2H features inline from player_game_logs.
 
         Point-in-time: only uses games BEFORE game_date to prevent leakage.
+        Only computes features for the primary stat type (no cross-stat features).
         """
         try:
             query = """
@@ -629,7 +631,7 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
                 rows = cur.fetchall()
 
                 if not rows:
-                    return self._get_default_h2h_features()
+                    return self._get_default_h2h_features(stat_type)
 
                 # Build game dicts
                 games = []
@@ -649,8 +651,8 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
                 n = len(games)
                 stat_vals = [g[stat_suffix if stat_suffix != "threes" else "threes"] for g in games]
 
-                # Initialize features
-                features = self._get_default_h2h_features()
+                # Initialize features (primary stat only)
+                features = self._get_default_h2h_features(stat_type)
                 features["h2h_games"] = n
 
                 # Days since last matchup
@@ -707,24 +709,37 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
 
         except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
             logger.warning(f"Error computing inline H2H for {player_name} vs {opponent_team}: {e}")
-            return self._get_default_h2h_features()
+            return self._get_default_h2h_features(stat_type)
 
-    def _get_default_h2h_features(self) -> Dict[str, float]:
-        """Return zero-filled H2H features when no matchup history exists (36 features)"""
+    def _get_default_h2h_features(self, stat_type: str = "POINTS") -> Dict[str, float]:
+        """Return zero-filled H2H features for the primary stat only.
+
+        Only produces features for the requested stat type — cross-stat H2H
+        features (e.g. assists features on a POINTS prop) have zero model
+        importance and are excluded.
+        """
+        stat_col_map = {
+            "POINTS": "points",
+            "REBOUNDS": "rebounds",
+            "ASSISTS": "assists",
+            "THREES": "threes",
+        }
+        stat = stat_col_map.get(stat_type, "points")
+
         features = {
             "h2h_games": 0,
             "h2h_days_since_last": 999,
             "h2h_sample_quality": 0.2,
             "h2h_recency_weight": 0.5,
+            f"h2h_avg_{stat}": 0.0,
+            f"h2h_std_{stat}": 0.0,
+            f"h2h_L3_{stat}": 0.0,
+            f"h2h_L5_{stat}": 0.0,
+            f"h2h_L10_{stat}": 0.0,
+            f"h2h_L20_{stat}": 0.0,
+            f"h2h_home_avg_{stat}": 0.0,
+            f"h2h_away_avg_{stat}": 0.0,
         }
-
-        for stat in ["points", "rebounds", "assists", "threes"]:
-            features[f"h2h_avg_{stat}"] = 0.0
-            features[f"h2h_std_{stat}"] = 0.0
-            for window in ["L3", "L5", "L10", "L20"]:
-                features[f"h2h_{window}_{stat}"] = 0.0
-            features[f"h2h_home_avg_{stat}"] = 0.0
-            features[f"h2h_away_avg_{stat}"] = 0.0
 
         return features
 
@@ -1499,45 +1514,46 @@ class LiveFeatureExtractorXL(LiveFeatureExtractor):
         # =============================================================================
         # 5. MATCHUP FEATURES (4 features)
         # =============================================================================
-        # Query opponent defensive metrics
+        # Query opponent defensive metrics from team_season_stats
+        # Note: team_stats doesn't exist on AWS — use team_season_stats
         try:
+            # Determine game season
+            gd = (
+                game_date_obj
+                if isinstance(game_date_obj, datetime)
+                else datetime.strptime(str(game_date), "%Y-%m-%d")
+            )
+            game_season = gd.year + 1 if gd.month >= 10 else gd.year
+
             opp_query = """
-            SELECT
-                def_rating, pace,
-                opp_pts_allowed_rank, opp_reb_allowed_rank
-            FROM team_stats
-            WHERE team_abbr = %s
+            SELECT defensive_rating, offensive_rating
+            FROM team_season_stats
+            WHERE team_abbrev = %s
+              AND season <= %s
             ORDER BY season DESC
             LIMIT 1
             """
             with self.team_conn.cursor() as cur:
-                cur.execute(opp_query, (opponent_team,))
+                cur.execute(opp_query, (opponent_team, game_season))
                 result = cur.fetchone()
 
-                if result:
-                    def_rating = float(result[0]) if result[0] else 110.0
+                if result and result[0] is not None:
+                    def_rating = float(result[0])
                     # Normalize def_rating to factor (lower = better defense)
-                    # League avg ~110, elite ~105, poor ~115
-                    features["opp_def_factor"] = (def_rating - 110.0) / 10.0  # -0.5 to +0.5
-                    features["opp_positional_def"] = (
-                        float(
-                            result[2]
-                            if stat_type == "POINTS"
-                            else result[3] if stat_type == "REBOUNDS" else result[2]
-                        )
-                        if result[2]
-                        else 15.0
-                    )
+                    # League avg ~112, elite ~105, poor ~120
+                    features["opp_def_factor"] = (def_rating - 112.0) / 10.0
+                    # Use def_rating as proxy for positional defense
+                    features["opp_positional_def"] = def_rating
                 else:
                     features["opp_def_factor"] = 0.0
-                    features["opp_positional_def"] = 15.0
+                    features["opp_positional_def"] = 112.0
         except (psycopg2.Error, KeyError, TypeError) as e:
             logger.debug(f"Could not query opponent features: {e}")
             features["opp_def_factor"] = 0.0
-            features["opp_positional_def"] = 15.0
+            features["opp_positional_def"] = 112.0
 
-        # Position matchup advantage (placeholder - would need position tracking)
-        features["position_matchup_advantage"] = 0.0
+        # Position matchup advantage derived from opp_def_factor
+        features["position_matchup_advantage"] = features["opp_def_factor"]
 
         # Starter ratio (from existing features if available)
         features["starter_ratio"] = existing.get("starter_ratio", 0.8)

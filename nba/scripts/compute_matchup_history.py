@@ -16,8 +16,7 @@ Usage:
     # Incremental (only players who played in last N days)
     python3 nba/scripts/compute_matchup_history.py --incremental --days 7
 
-Database Source: nba_players (port 5536) - player_game_logs + player_profile
-Database Target: nba_intelligence (port 5539) - matchup_history
+Database: consolidated TimescaleDB (port 5500) - players + intelligence schemas
 """
 
 import argparse
@@ -76,26 +75,11 @@ class MatchupHistoryUpdater:
                     opponent_team VARCHAR(10) NOT NULL,
                     stat_type VARCHAR(20) NOT NULL,
                     games_played INT NOT NULL DEFAULT 0,
-                    avg_points DECIMAL(5,2), avg_rebounds DECIMAL(5,2),
-                    avg_assists DECIMAL(5,2), avg_threes DECIMAL(5,2),
-                    std_points DECIMAL(5,2), std_rebounds DECIMAL(5,2),
-                    std_assists DECIMAL(5,2), std_threes DECIMAL(5,2),
-                    L3_points DECIMAL(5,2), L5_points DECIMAL(5,2),
-                    L10_points DECIMAL(5,2), L20_points DECIMAL(5,2),
-                    L3_rebounds DECIMAL(5,2), L5_rebounds DECIMAL(5,2),
-                    L10_rebounds DECIMAL(5,2), L20_rebounds DECIMAL(5,2),
-                    L3_assists DECIMAL(5,2), L5_assists DECIMAL(5,2),
-                    L10_assists DECIMAL(5,2), L20_assists DECIMAL(5,2),
-                    L3_threes DECIMAL(5,2), L5_threes DECIMAL(5,2),
-                    L10_threes DECIMAL(5,2), L20_threes DECIMAL(5,2),
-                    home_avg_points DECIMAL(5,2), away_avg_points DECIMAL(5,2),
-                    home_away_split_points DECIMAL(5,2),
-                    home_avg_rebounds DECIMAL(5,2), away_avg_rebounds DECIMAL(5,2),
-                    home_away_split_rebounds DECIMAL(5,2),
-                    home_avg_assists DECIMAL(5,2), away_avg_assists DECIMAL(5,2),
-                    home_away_split_assists DECIMAL(5,2),
-                    home_avg_threes DECIMAL(5,2), away_avg_threes DECIMAL(5,2),
-                    home_away_split_threes DECIMAL(5,2),
+                    avg_stat DECIMAL(5,2),
+                    std_stat DECIMAL(5,2),
+                    L3_stat DECIMAL(5,2), L5_stat DECIMAL(5,2),
+                    L10_stat DECIMAL(5,2), L20_stat DECIMAL(5,2),
+                    home_avg_stat DECIMAL(5,2), away_avg_stat DECIMAL(5,2),
                     last_matchup_date DATE,
                     days_since_last INT,
                     sample_quality DECIMAL(3,2),
@@ -181,7 +165,11 @@ class MatchupHistoryUpdater:
             return [row[0] for row in cur.fetchall()]
 
     def compute_matchup_row(self, games, player_name, opponent_team, stat_type):
-        """Compute a single matchup_history row from game data."""
+        """Compute a single matchup_history row from game data.
+
+        Only computes stats for the primary stat type — cross-stat H2H
+        features had zero model importance and were removed.
+        """
         if not games:
             return None
 
@@ -189,37 +177,25 @@ class MatchupHistoryUpdater:
         n = len(games)
         today = date.today()
 
-        # All stat values
-        vals = [float(g[stat_col] or 0) for g in games]
-
-        # Aggregate stats for ALL stat types (table stores all 4)
         row = {"player_name": player_name, "opponent_team": opponent_team, "stat_type": stat_type}
         row["games_played"] = n
 
-        for stype, scol in [
-            ("points", "points"),
-            ("rebounds", "rebounds"),
-            ("assists", "assists"),
-            ("threes", "threes"),
-        ]:
-            all_vals = [float(g[scol] or 0) for g in games]
-            row[f"avg_{stype}"] = float(round(np.mean(all_vals), 2)) if all_vals else 0.0
-            row[f"std_{stype}"] = float(round(np.std(all_vals), 2)) if len(all_vals) >= 2 else 0.0
+        # Compute only the primary stat
+        all_vals = [float(g[stat_col] or 0) for g in games]
+        row["avg_stat"] = float(round(np.mean(all_vals), 2)) if all_vals else 0.0
+        row["std_stat"] = float(round(np.std(all_vals), 2)) if len(all_vals) >= 2 else 0.0
 
-            # Rolling windows (most recent N games)
-            recent = list(reversed(all_vals))  # Most recent first
-            for window, label in [(3, "L3"), (5, "L5"), (10, "L10"), (20, "L20")]:
-                subset = recent[:window]
-                row[f"{label}_{stype}"] = float(round(np.mean(subset), 2)) if subset else 0.0
+        # Rolling windows (most recent N games)
+        recent = list(reversed(all_vals))  # Most recent first
+        for window, label in [(3, "L3"), (5, "L5"), (10, "L10"), (20, "L20")]:
+            subset = recent[:window]
+            row[f"{label}_stat"] = float(round(np.mean(subset), 2)) if subset else 0.0
 
-            # Home/away splits
-            home_vals = [float(g[scol] or 0) for g in games if g["is_home"]]
-            away_vals = [float(g[scol] or 0) for g in games if not g["is_home"]]
-            home_avg = float(round(np.mean(home_vals), 2)) if home_vals else 0.0
-            away_avg = float(round(np.mean(away_vals), 2)) if away_vals else 0.0
-            row[f"home_avg_{stype}"] = home_avg
-            row[f"away_avg_{stype}"] = away_avg
-            row[f"home_away_split_{stype}"] = float(round(home_avg - away_avg, 2))
+        # Home/away averages
+        home_vals = [float(g[stat_col] or 0) for g in games if g["is_home"]]
+        away_vals = [float(g[stat_col] or 0) for g in games if not g["is_home"]]
+        row["home_avg_stat"] = float(round(np.mean(home_vals), 2)) if home_vals else 0.0
+        row["away_avg_stat"] = float(round(np.mean(away_vals), 2)) if away_vals else 0.0
 
         # Quality metrics
         last_game = games[-1]  # Most recent (sorted ASC)
@@ -230,7 +206,6 @@ class MatchupHistoryUpdater:
         row["days_since_last"] = (today - last_date).days
 
         # Sample quality: Wilson score lower bound (confidence in the estimate)
-        # Higher with more games, caps at 1.0
         row["sample_quality"] = round(min(1.0, n / 20.0), 2)
 
         # Recency weight: exponential decay (tau=90 days)
@@ -250,42 +225,14 @@ class MatchupHistoryUpdater:
             "opponent_team",
             "stat_type",
             "games_played",
-            "avg_points",
-            "avg_rebounds",
-            "avg_assists",
-            "avg_threes",
-            "std_points",
-            "std_rebounds",
-            "std_assists",
-            "std_threes",
-            "L3_points",
-            "L5_points",
-            "L10_points",
-            "L20_points",
-            "L3_rebounds",
-            "L5_rebounds",
-            "L10_rebounds",
-            "L20_rebounds",
-            "L3_assists",
-            "L5_assists",
-            "L10_assists",
-            "L20_assists",
-            "L3_threes",
-            "L5_threes",
-            "L10_threes",
-            "L20_threes",
-            "home_avg_points",
-            "away_avg_points",
-            "home_away_split_points",
-            "home_avg_rebounds",
-            "away_avg_rebounds",
-            "home_away_split_rebounds",
-            "home_avg_assists",
-            "away_avg_assists",
-            "home_away_split_assists",
-            "home_avg_threes",
-            "away_avg_threes",
-            "home_away_split_threes",
+            "avg_stat",
+            "std_stat",
+            "L3_stat",
+            "L5_stat",
+            "L10_stat",
+            "L20_stat",
+            "home_avg_stat",
+            "away_avg_stat",
             "last_matchup_date",
             "days_since_last",
             "sample_quality",
