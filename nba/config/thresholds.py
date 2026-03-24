@@ -171,8 +171,8 @@ class BlendWeights:
         base_model_weight: Weight for base model in ensemble
     """
 
-    classifier_weight: float = 0.6
-    residual_weight: float = 0.4
+    classifier_weight: float = 1.0
+    residual_weight: float = 0.0
     residual_scale_factor: float = 5.0
     book_intelligence_weight: float = 0.30
     base_model_weight: float = 0.70
@@ -630,9 +630,13 @@ class TrainingHyperparameters:
         test_size: Fraction of data for testing
     """
 
-    # Regressor params (predicts stat value — can be more complex)
-    n_estimators: int = 2000
-    learning_rate: float = 0.02
+    # Regressor params — matched to XL production values (lr=0.05, ~72 trees)
+    # Higher LR + fewer estimators prevents regressor overfitting that poisons
+    # expected_diff_train. V3's lr=0.02/2000est built 245 trees → train RMSE 5.44
+    # vs test 6.23 → expected_diff_train was artificially informative → classifier
+    # learned "expected_diff > 0 → OVER" in 5 trees and stopped.
+    n_estimators: int = 500
+    learning_rate: float = 0.05
     num_leaves: int = 63
     feature_fraction: float = 0.8
     bagging_fraction: float = 0.8
@@ -646,7 +650,7 @@ class TrainingHyperparameters:
     lambda_l2: float = 1.0  # L2 regularization
     min_child_samples: int = 50  # LightGBM default=20, too low for high feature count
 
-    # Classifier-specific overrides
+    # Classifier-specific overrides (matched to XL production values)
     classifier_num_leaves: int = 31  # XL used 31 → built 369 trees
     classifier_learning_rate: float = 0.05  # XL used 0.05
     classifier_n_estimators: int = 1000  # More room before early stopping
@@ -662,7 +666,9 @@ class FeaturePreprocessing:
         h2h_cols_by_stat: H2H columns grouped by stat type (drop non-matching markets)
     """
 
-    # Always drop these (data/logic issues or redundancy)
+    # Always drop these — zero LightGBM importance or data/logic issues.
+    # Verified via feature importance audit across XL, V3, V4, projection,
+    # market classifier, and matchup models (Mar 2026).
     common_cols_to_drop: tuple = (
         # Injury features (team_abbrev not populated in player_profile)
         "injured_teammates_count",
@@ -673,6 +679,52 @@ class FeaturePreprocessing:
         # Multicollinearity - redundant with line_movement_std
         "line_volatility",  # r=0.97 with line_movement_std
         "market_stability",  # r=-0.74 with line_movement_std (inverse)
+        # --- Zero-importance features (0 LightGBM splits across all models) ---
+        # Prop history (zero signal — prop_hit_rate_context at 6 is the only useful one)
+        "prop_hit_rate_defense",
+        "prop_hit_rate_rest",
+        "prop_sample_size_L20",
+        # Team betting (flag column, always 1 when data exists)
+        "team_betting_available",
+        # Season temporal (season_phase already covers this; all 7 had 0-2 importance)
+        "is_early_season",
+        "is_late_season",
+        "season_phase_encoded",
+        "is_post_trade_deadline",
+        "is_post_allstar",
+        "is_playoff_push",
+        # days_into_season: monotonically increasing → temporal leakage with temporal
+        # split. Classifier learns "high value = test set" not seasonal patterns.
+        # season_phase (cyclical 0-3, resets each season) captures this properly.
+        "days_into_season",
+        # Player context (zero signal)
+        "player_games_with_team",
+        "is_new_team",
+        # Situational flags (zero signal in all models)
+        "is_back_to_back",
+        "opponent_back_to_back_flag",
+        "revenge_game_flag",
+        # Book features (zero signal — line_spread/books_disagree already capture this)
+        "books_agree",
+        # BP analytics duplicates (same data as bp_* but from different endpoint)
+        "softest_book_hit_rate",
+        "softest_book_soft_rate",
+        "bp_analytics_recommended_over",
+        # --- Zero-importance in 2024-present V3 training (Mar 24, 2026 audit) ---
+        "line_spread",  # redundant with line_spread_percentile
+        "books_disagree",  # no signal
+        "espnbet_deviation",  # book no longer in data feed
+        "fanatics_deviation",  # book no longer in data feed
+        "bp_bet_rating",  # near-zero in both regressor and classifier
+        "is_playoffs",  # no playoff data in training range
+        "game_velocity",  # derived from pace, redundant with pace_diff
+        "altitude_flag",  # too few high-altitude games
+        "line_std",  # redundant with line_std_dev
+        # Near-dead (importance 1-4, confirmed redundant)
+        "is_mid_season",  # season_phase covers this
+        "projected_team_possessions",  # redundant with projected_possessions
+        "expected_possessions",  # redundant with projected_possessions
+        "starter_ratio",  # low signal, sparse data
     )
 
     # H2H columns by stat type - drop columns for OTHER markets, keep matching market

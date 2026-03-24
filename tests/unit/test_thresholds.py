@@ -81,8 +81,8 @@ class TestBlendWeights:
         """Test default blend weight values."""
         from nba.config.thresholds import BLEND_WEIGHTS
 
-        assert BLEND_WEIGHTS.classifier_weight == 0.6
-        assert BLEND_WEIGHTS.residual_weight == 0.4
+        assert BLEND_WEIGHTS.classifier_weight == 1.0
+        assert BLEND_WEIGHTS.residual_weight == 0.0
         assert BLEND_WEIGHTS.residual_scale_factor == 5.0
 
     def test_weights_sum_to_one(self):
@@ -249,8 +249,8 @@ class TestTrainingHyperparameters:
         """Test default training hyperparameters."""
         from nba.config.thresholds import TRAINING_HYPERPARAMETERS
 
-        assert TRAINING_HYPERPARAMETERS.n_estimators == 2000
-        assert TRAINING_HYPERPARAMETERS.learning_rate == 0.02
+        assert TRAINING_HYPERPARAMETERS.n_estimators == 500
+        assert TRAINING_HYPERPARAMETERS.learning_rate == 0.05
         assert TRAINING_HYPERPARAMETERS.num_leaves == 63
         assert TRAINING_HYPERPARAMETERS.test_size == 0.3
 
