@@ -438,8 +438,7 @@ def nba_refresh_pipeline():
 
         # Write picks to history
         picks_written = 0
-        xl_count = 0
-        v3_count = 0
+        v5_count = 0
 
         date_str = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
         xl_file = f"{PREDICTIONS_DIR}/xl_picks_{date_str}.json"
@@ -448,8 +447,7 @@ def nba_refresh_pipeline():
                 data = json.load(f)
             picks = data.get("picks", [])
             picks_written = write_picks(run_date, run_number, datetime.now().isoformat(), picks)
-            xl_count = sum(1 for p in picks if p.get("model_version") == "xl")
-            v3_count = sum(1 for p in picks if p.get("model_version") == "v3")
+            v5_count = sum(1 for p in picks if p.get("model_version") == "v5")
 
         status = "no_games" if summary.get("status") == "no_games" else "success"
         audit_run_complete(
@@ -460,8 +458,8 @@ def nba_refresh_pipeline():
             books_available=books_available,
             duration_seconds=duration,
             picks_generated=picks_written,
-            xl_picks=xl_count,
-            v3_picks=v3_count,
+            xl_picks=v5_count,
+            v3_picks=0,
         )
 
         return {"picks_written": picks_written, "duration_seconds": duration}

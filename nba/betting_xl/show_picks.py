@@ -172,11 +172,12 @@ def show_xl_picks(date_str, compact=False):
 
     picks = data["picks"]
     # Count by model version
-    xl_count = sum(1 for p in picks if p.get("model_version", "xl") == "xl")
-    v3_count = sum(1 for p in picks if p.get("model_version") == "v3")
-    model_breakdown = f"XL: {xl_count}, V3: {v3_count}" if v3_count > 0 else f"{len(picks)} total"
+    from collections import Counter as _Counter
 
-    print_header(f"XL + V3 MODEL PICKS ({len(picks)})")
+    model_counts = _Counter(p.get("model_version", "v5") for p in picks)
+    model_breakdown = ", ".join(f"{v.upper()}: {c}" for v, c in model_counts.items())
+
+    print_header(f"V5 MODEL PICKS ({len(picks)})")
     print(f"  {MUTED}Models:{RESET} {model_breakdown}")
     print(f"  {MUTED}Strategy:{RESET} {data.get('strategy', 'N/A')}")
     print(f"  {MUTED}Markets:{RESET} {', '.join(data.get('markets_enabled', []))}")

@@ -79,14 +79,14 @@ class ModelManager:
                     # Load without dynamic calibration for API (simpler, faster)
                     predictor = XLPredictor(
                         market=market,
-                        use_3head=False,  # Use 2-head for stability
+                        use_3head=False,
                         enable_book_intelligence=False,
                         enable_dynamic_calibration=False,
-                        model_version="xl",
+                        model_version="v5",
                     )
                     self.predictors[market] = predictor
                     feature_count = len(predictor.features) if predictor.features else 0
-                    logger.info(f"  [OK] {market}: Loaded XL model ({feature_count} features)")
+                    logger.info(f"  [OK] {market}: Loaded V5 model ({feature_count} features)")
                 except (psycopg2.Error, KeyError, TypeError, ValueError) as e:
                     logger.error(f"  [ERROR] {market}: Failed to load model: {e}")
                     self.predictors[market] = None

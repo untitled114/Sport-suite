@@ -729,15 +729,13 @@ def nba_full_pipeline():
         props_fetched, books_available = count_todays_props(run_date)
 
         picks_written = 0
-        xl_count = 0
-        v3_count = 0
+        v5_count = 0
         if xl_result.get("output_file") and Path(xl_result["output_file"]).exists():
             with open(xl_result["output_file"]) as f:
                 data = json.load(f)
             picks = data.get("picks", [])
             picks_written = write_picks(run_date, run_number, datetime.now().isoformat(), picks)
-            xl_count = sum(1 for p in picks if p.get("model_version") == "xl")
-            v3_count = sum(1 for p in picks if p.get("model_version") == "v3")
+            v5_count = sum(1 for p in picks if p.get("model_version") == "v5")
 
         status = "no_games" if summary.get("status") == "no_games" else "success"
         audit_run_complete(
@@ -749,8 +747,8 @@ def nba_full_pipeline():
             games_found=summary.get("total", 0) if status != "no_games" else 0,
             duration_seconds=duration,
             picks_generated=picks_written,
-            xl_picks=xl_count,
-            v3_picks=v3_count,
+            xl_picks=v5_count,
+            v3_picks=0,
         )
 
         return {"picks_written": picks_written, "duration_seconds": duration}

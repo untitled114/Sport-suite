@@ -168,7 +168,7 @@ class PredictionResponse(BaseModel):
     reasoning: str = Field(..., description="Brief explanation of the prediction")
     opponent_team: Optional[str] = Field(None, description="Opponent team code")
     game_date: Optional[date] = Field(None, description="Game date")
-    model_version: str = Field(default="xl", description="Model version used")
+    model_version: str = Field(default="v5", description="Model version used")
     timestamp: datetime = Field(default_factory=datetime.now, description="Prediction timestamp")
 
     class Config:

@@ -97,8 +97,8 @@ class XLPredictionsGenerator:
         self.predictions_dir = predictions_dir
         # Underdog-only mode: only accept props where Underdog is softest
         self.underdog_only = underdog_only
-        # Model versions to load: ['xl', 'v3', 'dfs']
-        self.model_versions = model_versions or ["xl", "v3"]
+        # Model versions to load (V5 is sole production model since Mar 2026)
+        self.model_versions = model_versions or ["v5"]
 
         # Components
         self.feature_extractor = None
@@ -1436,36 +1436,23 @@ class XLPredictionsGenerator:
         star_picks = [p for p in self.picks if p.get("filter_tier") == "star_tier"]
         star_player_picks = [p for p in self.picks if p.get("player_name") in STAR_PLAYERS]
 
-        # Count picks by model version and consensus
-        consensus_picks = [p for p in self.picks if p.get("consensus", False)]
-        xl_only_picks = [
-            p for p in self.picks if not p.get("consensus") and p.get("model_version") == "xl"
-        ]
-        v3_only_picks = [
-            p for p in self.picks if not p.get("consensus") and p.get("model_version") == "v3"
-        ]
+        # Count picks by model version
+        by_model = Counter(p.get("model_version", "v5") for p in self.picks)
 
         output = {
             "generated_at": datetime.now(EST).isoformat(),
             "date": self.game_date,
-            "strategy": "XL + V3 Line Shopping (Softest Line, Consensus Merged)",
+            "strategy": "V5 Line Shopping (Softest Line)",
             "markets_enabled": list(self.predictors.keys()),
             "total_picks": len(self.picks),
             "picks": self.picks,
             "summary": {
                 "total": len(self.picks),
-                "consensus": len(consensus_picks),
-                "xl_only": len(xl_only_picks),
-                "v3_only": len(v3_only_picks),
                 "by_market": {
                     market: len([p for p in self.picks if p["stat_type"] == market])
                     for market in self.predictors.keys()
                 },
-                "by_model": {
-                    "consensus": len(consensus_picks),
-                    "xl_only": len(xl_only_picks),
-                    "v3_only": len(v3_only_picks),
-                },
+                "by_model": dict(by_model),
                 "high_confidence": len([p for p in self.picks if p["confidence"] == "HIGH"]),
                 "avg_edge": round(np.mean([p["edge"] for p in self.picks]), 2) if self.picks else 0,
                 "avg_line_spread": (

@@ -113,7 +113,7 @@ class HistoricalBacktest:
         self.dry_run = dry_run
         self.skip_validation = skip_validation
         self.no_seed = no_seed
-        self.model_versions = model_versions or ["xl", "v3"]
+        self.model_versions = model_versions or ["v5"]
         self.underdog_only = underdog_only
 
         # Seed period for calibrator warmup

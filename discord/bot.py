@@ -254,7 +254,7 @@ async def _pipeline_completion_monitor():
                 status = row["status"]
                 icon = "✅" if status == "success" else ("⚠️" if status == "partial" else "❌")
                 picks = row["picks_generated"]
-                xl, v3 = row["xl_picks"], row["v3_picks"]
+                v5 = row["xl_picks"]  # xl_picks column now holds V5 count
                 dur = row["duration_seconds"]
                 err = row["error_message"]
                 num = row["run_number"]
@@ -262,8 +262,8 @@ async def _pipeline_completion_monitor():
                 run_date = str(row.get("run_date") or _get_today())
 
                 picks_str = f"{picks} picks" if picks is not None else "?"
-                if xl is not None and v3 is not None:
-                    picks_str += f" (XL:{xl} V3:{v3})"
+                if v5 is not None and v5 > 0:
+                    picks_str += f" (V5:{v5})"
                 dur_str = f" in {int(dur)}s" if dur else ""
                 err_str = f"\n⚠️ {err[:120]}" if err else ""
                 ts = datetime.now(_EST).strftime("%H:%M EST")

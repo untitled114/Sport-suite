@@ -42,7 +42,7 @@ MODELS_DIR = Path(__file__).parent.parent / "models" / "saved_xl"
 OUTPUT_DIR = Path(__file__).parent
 
 MARKETS = ["points", "rebounds", "assists", "threes"]
-MODEL_VERSIONS = ["xl", "v3"]  # Both XL (102 features) and V3 (136 features)
+MODEL_VERSIONS = ["v5"]  # V5 (134 features) — sole production model
 
 
 class XLMarketValidator:
@@ -241,7 +241,7 @@ class XLHistoricalValidator:
         self.start_date = start_date
         self.end_date = end_date
         self.conn = None
-        self.model_versions = model_versions or ["xl", "v3"]  # Run both by default
+        self.model_versions = model_versions or ["v5"]
         self.market_validators = {}  # {(market, version): validator}
 
         # Initialize validators for all markets AND all model versions

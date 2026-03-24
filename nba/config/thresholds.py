@@ -210,7 +210,7 @@ class TierConfig:
     require_positive_edge: bool = False
     require_both: bool = False
     expected_wr: float = 0.60
-    model_version: str = "xl"
+    model_version: str = "v5"
 
 
 @dataclass(frozen=True)
@@ -826,19 +826,19 @@ POINTS_TIER_X = TierConfig(
     min_edge_points=3.0,
     require_positive_edge=False,
     require_both=False,
-    model_version="xl",
+    model_version="v5",
     expected_wr=0.67,
 )
 
 POINTS_TIER_V3 = TierConfig(
-    name="V3",
+    name="V5",
     direction="OVER",
     min_p_over=0.85,
     min_spread=0.0,
     min_edge_points=3.0,
     require_positive_edge=False,
     require_both=False,
-    model_version="v3",
+    model_version="v5",
     expected_wr=0.84,
 )
 
@@ -964,7 +964,7 @@ class StarPlayerConfig:
     max_line: float = 29.0
     min_edge: float = 3.0
     avoid_books_softest: FrozenSet[str] = field(default_factory=frozenset)
-    model_preference: str = "v3"
+    model_preference: str = "v5"
 
 
 STAR_POINTS_CONFIG = StarPlayerConfig(
@@ -974,7 +974,7 @@ STAR_POINTS_CONFIG = StarPlayerConfig(
     max_line=29.0,
     min_edge=3.0,
     avoid_books_softest=frozenset({"draftkings", "DraftKings", "betrivers", "BetRivers"}),
-    model_preference="v3",
+    model_preference="v5",
 )
 
 STAR_REBOUNDS_CONFIG = StarPlayerConfig(

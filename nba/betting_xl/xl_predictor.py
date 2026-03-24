@@ -304,12 +304,16 @@ class XLPredictor:
         """Load all 6 XL model components."""
         try:
             # Determine model prefix based on version
-            # 'xl' = XL models (102 features) - CURRENT PRODUCTION
-            # 'v3' = V3 models (136 features) - deployed Feb 2026
+            # 'v5' = V5 models (134 features) - CURRENT PRODUCTION (Mar 2026)
+            # 'v3' = V3 models (136 features) - retired
+            # 'xl' = XL models (102 features) - retired
             # 'dfs' = DFS models (136 features) - trained on DFS data only
             if self.model_version == "dfs":
                 model_prefix = MODELS_DIR_DFS / f"{self.market_lower}_v3"
                 version_label = "DFS_136"
+            elif self.model_version == "v5":
+                model_prefix = MODELS_DIR / f"{self.market_lower}_v5"
+                version_label = "V5_134"
             elif self.model_version == "v3":
                 model_prefix = MODELS_DIR / f"{self.market_lower}_v3"
                 version_label = "V3_136"

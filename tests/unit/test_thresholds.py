@@ -152,7 +152,7 @@ class TestTierConfigs:
         assert POINTS_TIER_X.name == "X"
         assert POINTS_TIER_X.min_p_over == 0.70
 
-        assert POINTS_TIER_V3.name == "V3"
+        assert POINTS_TIER_V3.name == "V5"
         assert POINTS_TIER_V3.min_p_over == 0.85
 
     def test_rebounds_meta_tier(self):
