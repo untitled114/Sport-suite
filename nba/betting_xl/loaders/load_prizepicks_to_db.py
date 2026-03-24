@@ -37,15 +37,13 @@ from nba.betting_xl.fetchers.fetch_prizepicks_direct import PrizePicksDirectFetc
 
 EST = ZoneInfo("America/New_York")
 
-# Database config
-DB_CONFIG = {
-    "host": os.getenv("NBA_INT_DB_HOST", "localhost"),
-    "port": int(os.getenv("NBA_INT_DB_PORT", 5539)),
-    "database": os.getenv("NBA_INT_DB_NAME", "nba_intelligence"),
-    "user": os.getenv("NBA_INT_DB_USER", os.getenv("DB_USER", "mlb_user")),
-    "password": os.getenv("NBA_INT_DB_PASSWORD", os.getenv("DB_PASSWORD")),
-    "connect_timeout": 10,
-}
+
+# Database config — routes to consolidated DB (port 5500, intelligence schema)
+def _get_db_config():
+    from nba.config.database import get_schema_config
+
+    return get_schema_config("intelligence")
+
 
 # Valid stat types (must match database constraint)
 VALID_STAT_TYPES = {
@@ -76,12 +74,13 @@ class PrizePicksLoader:
 
     def connect(self):
         """Connect to PostgreSQL"""
+        db_config = _get_db_config()
         if self.verbose:
             print(
-                f"Connecting to PostgreSQL: {DB_CONFIG['database']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}"
+                f"Connecting to PostgreSQL: {db_config['database']}@{db_config['host']}:{db_config['port']}"
             )
 
-        self.conn = psycopg2.connect(**DB_CONFIG)
+        self.conn = psycopg2.connect(**db_config)
         self.cursor = self.conn.cursor()
 
         if self.verbose:

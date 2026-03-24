@@ -31,19 +31,13 @@ EST = ZoneInfo("America/New_York")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# Database config for player team lookup
-# Note: Production uses mlb_user for all databases (legacy naming)
-DB_PLAYERS = {
-    "host": os.getenv("NBA_PLAYERS_DB_HOST", "localhost"),
-    "port": int(os.getenv("NBA_PLAYERS_DB_PORT", 5536)),
-    "user": os.getenv(
-        "NBA_PLAYERS_DB_USER", os.getenv("NBA_DB_USER", os.getenv("DB_USER", "mlb_user"))
-    ),
-    "password": os.getenv(
-        "NBA_PLAYERS_DB_PASSWORD", os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
-    ),
-    "database": os.getenv("NBA_PLAYERS_DB_NAME", "nba_players"),
-}
+
+# Database config — routes to consolidated DB (port 5500, players schema)
+def _get_players_db_config():
+    from nba.config.database import get_schema_config
+
+    return get_schema_config("players")
+
 
 # ESPN API
 ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
@@ -63,7 +57,7 @@ class OpponentMapper:
     def _get_db_connection(self):
         """Get database connection for player team lookup."""
         if self._conn is None or self._conn.closed:
-            self._conn = psycopg2.connect(**DB_PLAYERS)
+            self._conn = psycopg2.connect(**_get_players_db_config())
         return self._conn
 
     def _close_connection(self):

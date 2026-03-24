@@ -57,14 +57,12 @@ class NameNormalizer:
         "Sviatoslav Mykhailiuk": "Svi Mykhailiuk",
     }
 
-    # Database config (connects to player_profile database)
-    DB_CONFIG = {
-        "host": "localhost",
-        "port": 5536,  # nba_players database (where player_profile is located)
-        "database": "nba_players",
-        "user": os.getenv("DB_USER", "mlb_user"),
-        "password": os.getenv("DB_PASSWORD"),
-    }
+    # Database config — routes to consolidated DB (port 5500, players schema)
+    @staticmethod
+    def _get_db_config():
+        from nba.config.database import get_schema_config
+
+        return get_schema_config("players")
 
     # Cache file location
     CACHE_FILE = Path(__file__).parent / ".name_normalizer_cache.pkl"
@@ -242,7 +240,7 @@ class NameNormalizer:
         - Find all player_ids with that name
         - Pick the one with MOST game logs as canonical
         """
-        conn = psycopg2.connect(**self.DB_CONFIG)
+        conn = psycopg2.connect(**self._get_db_config())
         cursor = conn.cursor()
 
         try:

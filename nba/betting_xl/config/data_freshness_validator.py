@@ -27,26 +27,18 @@ from betting_xl.config.production_policies import DATA_FRESHNESS_POLICY
 
 EST = ZoneInfo("America/New_York")
 
-# Database configuration (override with environment variables as needed)
-# Note: Production uses mlb_user for all databases (legacy naming)
-DB_DEFAULT_USER = os.getenv("NBA_DB_USER", os.getenv("DB_USER", "mlb_user"))
-DB_DEFAULT_PASSWORD = os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
 
-DB_CONFIG = {
-    "host": os.getenv("NBA_INT_DB_HOST", "localhost"),
-    "port": int(os.getenv("NBA_INT_DB_PORT", 5539)),
-    "user": os.getenv("NBA_INT_DB_USER", DB_DEFAULT_USER),
-    "password": os.getenv("NBA_INT_DB_PASSWORD", DB_DEFAULT_PASSWORD),
-    "database": os.getenv("NBA_INT_DB_NAME", "nba_intelligence"),
-}
+# Database config — routes to consolidated DB (port 5500)
+def _get_intelligence_db_config():
+    from nba.config.database import get_schema_config
 
-PLAYERS_DB_CONFIG = {
-    "host": os.getenv("NBA_PLAYERS_DB_HOST", "localhost"),
-    "port": int(os.getenv("NBA_PLAYERS_DB_PORT", 5536)),
-    "user": os.getenv("NBA_PLAYERS_DB_USER", DB_DEFAULT_USER),
-    "password": os.getenv("NBA_PLAYERS_DB_PASSWORD", DB_DEFAULT_PASSWORD),
-    "database": os.getenv("NBA_PLAYERS_DB_NAME", "nba_players"),
-}
+    return get_schema_config("intelligence")
+
+
+def _get_players_db_config():
+    from nba.config.database import get_schema_config
+
+    return get_schema_config("players")
 
 
 class DataFreshnessValidator:
@@ -90,7 +82,7 @@ class DataFreshnessValidator:
         result = {"status": "pending", "props_count": 0, "props_date": None}
 
         try:
-            conn = psycopg2.connect(**DB_CONFIG)
+            conn = psycopg2.connect(**_get_intelligence_db_config())
             cursor = conn.cursor()
 
             # Check props from today
@@ -135,7 +127,7 @@ class DataFreshnessValidator:
         result = {"status": "pending", "latest_game_date": None, "age_hours": None}
 
         try:
-            conn = psycopg2.connect(**PLAYERS_DB_CONFIG)
+            conn = psycopg2.connect(**_get_players_db_config())
             cursor = conn.cursor()
 
             # Get latest game date from current season
@@ -192,7 +184,7 @@ class DataFreshnessValidator:
             return result
 
         try:
-            conn = psycopg2.connect(**DB_CONFIG)
+            conn = psycopg2.connect(**_get_intelligence_db_config())
             cursor = conn.cursor()
 
             # Check latest injury report update

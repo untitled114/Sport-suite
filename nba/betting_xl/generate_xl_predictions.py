@@ -1367,7 +1367,7 @@ class XLPredictionsGenerator:
                     # Single model pick
                     pick = picks[0]
                     pick["consensus"] = False
-                    pick["models_agreeing"] = [pick.get("model_version", "xl")]
+                    pick["models_agreeing"] = [pick.get("model_version", "v5")]
                     merged_picks.append(pick)
                 else:
                     # Multiple models agree - merge into consensus pick
@@ -1376,11 +1376,11 @@ class XLPredictionsGenerator:
                     best_pick = max(picks, key=lambda p: p.get("p_over", 0))
                     best_pick["consensus"] = True
                     best_pick["models_agreeing"] = sorted(
-                        list(set(p.get("model_version", "xl") for p in picks))
+                        list(set(p.get("model_version", "v5") for p in picks))
                     )
                     # Store both p_over values for reference
                     best_pick["p_over_by_model"] = {
-                        p.get("model_version", "xl"): p.get("p_over") for p in picks
+                        p.get("model_version", "v5"): p.get("p_over") for p in picks
                     }
                     # Use model_version of the best pick but note it's consensus
                     merged_picks.append(best_pick)

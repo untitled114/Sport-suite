@@ -26,18 +26,12 @@ import psycopg2
 
 logger = logging.getLogger(__name__)
 
-# Database config for querying game logs
-DB_PLAYERS = {
-    "host": os.getenv("NBA_PLAYERS_DB_HOST", "localhost"),
-    "port": int(os.getenv("NBA_PLAYERS_DB_PORT", 5536)),
-    "user": os.getenv(
-        "NBA_PLAYERS_DB_USER", os.getenv("NBA_DB_USER", os.getenv("DB_USER", "mlb_user"))
-    ),
-    "password": os.getenv(
-        "NBA_PLAYERS_DB_PASSWORD", os.getenv("NBA_DB_PASSWORD", os.getenv("DB_PASSWORD"))
-    ),
-    "database": os.getenv("NBA_PLAYERS_DB_NAME", "nba_players"),
-}
+
+# Database config — routes to consolidated DB (port 5500, players schema)
+def _get_players_db_config():
+    from nba.config.database import get_schema_config
+
+    return get_schema_config("players")
 
 
 @dataclass
@@ -131,7 +125,7 @@ class RiskFilter:
         """Get database connection for game log queries"""
         if self._conn is None or self._conn.closed:
             try:
-                self._conn = psycopg2.connect(**DB_PLAYERS)
+                self._conn = psycopg2.connect(**_get_players_db_config())
             except psycopg2.Error as e:
                 logger.warning(f"Could not connect to players database: {e}")
                 return None
