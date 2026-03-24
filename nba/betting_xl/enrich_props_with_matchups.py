@@ -549,31 +549,6 @@ class PropsMatchupEnricher:
         """
         logger.info(f"\nEnriching props for {self.game_date}...")
 
-        # Pre-clean: fix known parser artifacts in player names
-        # DraftKings sometimes embeds stat type in the name (e.g. "Aaron Gordon Three Pointers Made O/U")
-        cleanup_patterns = [
-            (r" Three Pointers Made O/U$", ""),
-            (r" Points O/U$", ""),
-            (r" Rebounds O/U$", ""),
-            (r" Assists O/U$", ""),
-            (r" Steals O/U$", ""),
-            (r" Blocks O/U$", ""),
-        ]
-        cur_cleanup = self.conn_intelligence.cursor()
-        total_cleaned = 0
-        for pattern, replacement in cleanup_patterns:
-            cur_cleanup.execute(
-                """
-                UPDATE nba_props_xl
-                SET player_name = TRIM(REGEXP_REPLACE(player_name, %s, %s))
-                WHERE game_date = %s AND player_name ~ %s
-                """,
-                (pattern, replacement, self.game_date, pattern),
-            )
-            total_cleaned += cur_cleanup.rowcount
-        if total_cleaned > 0:
-            logger.info(f"[OK] Cleaned {total_cleaned} player names with embedded stat types")
-
         # Query props needing enrichment - also get player_team from props table
         query = """
         SELECT DISTINCT player_name, player_team
