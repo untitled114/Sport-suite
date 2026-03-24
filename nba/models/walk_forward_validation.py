@@ -253,12 +253,23 @@ class WalkForwardValidator:
         # Initialize model
         model = StackedMarketModel(market=market)
 
-        # Prepare features for train and test
+        # Prepare features — train first, then align test to same columns
         X_train, y_value_train, y_binary_train, y_residual_train, meta_train = (
             model.prepare_features(train_df)
         )
         X_test, y_value_test, y_binary_test, y_residual_test, meta_test = model.prepare_features(
             test_df
+        )
+        # Align test features to train columns (some may be missing or extra per fold)
+        if isinstance(X_test, pd.DataFrame) and isinstance(X_train, pd.DataFrame):
+            X_test = X_test.reindex(columns=X_train.columns, fill_value=0)
+
+        # Extract game dates for temporal decay
+        game_dates_train = (
+            pd.to_datetime(meta_train["game_date"]) if "game_date" in meta_train.columns else None
+        )
+        game_dates_test = (
+            pd.to_datetime(meta_test["game_date"]) if "game_date" in meta_test.columns else None
         )
 
         # Train the full stacked model
@@ -271,33 +282,38 @@ class WalkForwardValidator:
             y_value_test,
             y_binary_test,
             y_residual_test,
+            game_dates_train=game_dates_train,
+            game_dates_test=game_dates_test,
         )
 
         # Get predictions on test set using trained model
         # Impute and scale test data
-        X_test_imputed = model.imputer.transform(X_test)
-        X_test_scaled = model.scaler.transform(X_test_imputed)
+        X_test_arr = model.imputer.transform(X_test)
+        X_test_scaled_arr = model.scaler.transform(X_test_arr)
 
         # Get regressor predictions
-        test_value_preds = model.regressor.predict(X_test_scaled)
+        test_value_preds = model.regressor.predict(X_test_scaled_arr)
 
         # Calculate expected_diff and augment features for classifier
-        expected_diff = test_value_preds - meta_test["line"].values
-        X_test_aug = np.column_stack([X_test_scaled, expected_diff])
+        line_values = (
+            meta_test["line"].values if hasattr(meta_test, "values") else meta_test["line"]
+        )
+        expected_diff = test_value_preds - line_values
+
+        # Build classifier input — append expected_diff as last column
+        X_test_aug = np.column_stack([X_test_scaled_arr, expected_diff])
 
         # Get classifier predictions
         test_probs_raw = model.classifier.predict_proba(X_test_aug)[:, 1]
 
-        # Calibrate
-        test_probs = model.calibrator.transform(test_probs_raw)
+        # Calibrate if calibrator was applied
+        if model.calibrator is not None:
+            test_probs = model.calibrator.transform(test_probs_raw)
+        else:
+            test_probs = test_probs_raw
 
-        # Blend
-        test_residuals = y_value_test.values - test_value_preds
-        blend_weight = 0.6
-        residual_contrib = np.clip(test_residuals / 5.0, -0.3, 0.3)
-        test_probs_blended = np.clip(
-            blend_weight * test_probs + (1 - blend_weight) * (0.5 + residual_contrib), 0.05, 0.95
-        )
+        # Use classifier-only output (blend weights from config: 1.0/0.0)
+        test_probs_blended = np.clip(test_probs, 0.05, 0.95)
 
         # Calculate metrics
         test_preds_binary = (test_probs_blended > 0.5).astype(int)
@@ -416,6 +432,11 @@ def main():
         type=str,
         help="Output file for results (default: stdout)",
     )
+    parser.add_argument(
+        "--plot",
+        action="store_true",
+        help="Generate walk-forward charts (saved to nba/models/model_cards/images/)",
+    )
 
     args = parser.parse_args()
 
@@ -423,7 +444,7 @@ def main():
     if args.data:
         data_path = Path(args.data)
     else:
-        data_path = Path(f"nba/features/datasets/xl_training_{args.market}_2023_2025.csv")
+        data_path = Path(f"nba/features/datasets/xl_training_{args.market}_2024_present.csv")
 
     if not data_path.exists():
         logger.error(f"Data file not found: {data_path}")
@@ -450,6 +471,237 @@ def main():
         with open(args.output, "w") as f:
             f.write(summary)
         logger.info(f"Results saved to {args.output}")
+
+    if args.plot:
+        plot_results(results)
+
+
+def plot_results(results: WalkForwardResults):
+    """Generate walk-forward charts and markdown for GitHub."""
+    import matplotlib
+    import matplotlib.pyplot as plt
+
+    matplotlib.use("Agg")
+
+    market = results.market
+    folds = results.folds
+    n = len(folds)
+
+    if n == 0:
+        print("No folds to plot")
+        return
+
+    output_dir = Path("nba/models/model_cards/images")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Data
+    fold_nums = [f.fold for f in folds]
+    aucs = [f.auc for f in folds]
+    win_rates = [f.win_rate * 100 for f in folds]
+    edge_win_rates = [f.edge_win_rate * 100 for f in folds]
+    rois = [f.roi * 100 for f in folds]
+    test_labels = []
+    for f in folds:
+        ts = f.test_start[:10] if len(f.test_start) >= 10 else f.test_start
+        te = f.test_end[:10] if len(f.test_end) >= 10 else f.test_end
+        test_labels.append(f"{ts[5:]}\n{te[5:]}")
+
+    primary = "#2563EB"
+    accent = "#10B981"
+    bg = "#F8FAFC"
+
+    # === Chart 1: AUC per fold ===
+    fig, ax = plt.subplots(figsize=(10, 5))
+    fig.patch.set_facecolor(bg)
+    ax.set_facecolor(bg)
+
+    bars = ax.bar(
+        fold_nums, aucs, color=primary, alpha=0.85, width=0.6, edgecolor="white", linewidth=1.5
+    )
+    ax.axhline(
+        y=results.mean_auc,
+        color=accent,
+        linestyle="--",
+        linewidth=2,
+        label=f"Mean: {results.mean_auc:.3f} (\u00b1{results.std_auc:.3f})",
+    )
+    ax.axhline(
+        y=0.5, color="#94A3B8", linestyle=":", linewidth=1, alpha=0.5, label="Random (0.500)"
+    )
+
+    for bar, val in zip(bars, aucs):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.005,
+            f"{val:.3f}",
+            ha="center",
+            va="bottom",
+            fontsize=11,
+            fontweight="bold",
+        )
+
+    ax.set_xlabel("Fold (test period)", fontsize=12)
+    ax.set_ylabel("AUC", fontsize=12)
+    ax.set_title(f"{market} \u2014 Walk-Forward AUC by Fold", fontsize=14, fontweight="bold")
+    ax.set_xticks(fold_nums)
+    ax.set_xticklabels(test_labels, fontsize=9)
+    ax.set_ylim(0.45, max(aucs) + 0.06)
+    ax.legend(fontsize=10)
+    ax.grid(axis="y", alpha=0.3)
+    plt.tight_layout()
+    path = output_dir / f"{market}_walkforward_auc.png"
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {path}")
+
+    # === Chart 2: Win Rate + Edge Win Rate ===
+    fig, ax = plt.subplots(figsize=(10, 5))
+    fig.patch.set_facecolor(bg)
+    ax.set_facecolor(bg)
+
+    x = np.arange(n)
+    width = 0.35
+    bars1 = ax.bar(
+        x - width / 2,
+        win_rates,
+        width,
+        label="Overall Win Rate",
+        color=primary,
+        alpha=0.85,
+        edgecolor="white",
+        linewidth=1.5,
+    )
+    bars2 = ax.bar(
+        x + width / 2,
+        edge_win_rates,
+        width,
+        label="Edge Bets Win Rate",
+        color=accent,
+        alpha=0.85,
+        edgecolor="white",
+        linewidth=1.5,
+    )
+    ax.axhline(
+        y=52.4,
+        color="#EF4444",
+        linestyle="--",
+        linewidth=1.5,
+        alpha=0.7,
+        label="Break-even (52.4%)",
+    )
+
+    for bar, val in zip(bars1, win_rates):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.5,
+            f"{val:.1f}%",
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            fontweight="bold",
+        )
+    for bar, val in zip(bars2, edge_win_rates):
+        if val > 0:
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + 0.5,
+                f"{val:.1f}%",
+                ha="center",
+                va="bottom",
+                fontsize=10,
+                fontweight="bold",
+            )
+
+    ax.set_xlabel("Fold (test period)", fontsize=12)
+    ax.set_ylabel("Win Rate (%)", fontsize=12)
+    ax.set_title(
+        f"{market} \u2014 Win Rate Consistency Across Folds", fontsize=14, fontweight="bold"
+    )
+    ax.set_xticks(x)
+    ax.set_xticklabels(test_labels, fontsize=9)
+    ax.set_ylim(40, max(max(win_rates), max(edge_win_rates)) + 8)
+    ax.legend(fontsize=10)
+    ax.grid(axis="y", alpha=0.3)
+    plt.tight_layout()
+    path = output_dir / f"{market}_walkforward_winrate.png"
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {path}")
+
+    # === Chart 3: Cumulative ROI ===
+    fig, ax = plt.subplots(figsize=(10, 5))
+    fig.patch.set_facecolor(bg)
+    ax.set_facecolor(bg)
+
+    cumulative_roi = np.cumsum(rois)
+    ax.plot(
+        fold_nums,
+        cumulative_roi,
+        color=primary,
+        linewidth=2.5,
+        marker="o",
+        markersize=8,
+        markerfacecolor="white",
+        markeredgecolor=primary,
+        markeredgewidth=2,
+    )
+    ax.fill_between(fold_nums, 0, cumulative_roi, alpha=0.15, color=primary)
+    ax.axhline(y=0, color="#94A3B8", linestyle="-", linewidth=1, alpha=0.5)
+
+    for x_val, y_val in zip(fold_nums, cumulative_roi):
+        ax.annotate(
+            f"{y_val:+.1f}%",
+            (x_val, y_val),
+            textcoords="offset points",
+            xytext=(0, 12),
+            ha="center",
+            fontsize=10,
+            fontweight="bold",
+        )
+
+    ax.set_xlabel("Fold (test period)", fontsize=12)
+    ax.set_ylabel("Cumulative ROI (%)", fontsize=12)
+    ax.set_title(f"{market} \u2014 Cumulative ROI (Walk-Forward)", fontsize=14, fontweight="bold")
+    ax.set_xticks(fold_nums)
+    ax.set_xticklabels(test_labels, fontsize=9)
+    ax.grid(axis="y", alpha=0.3)
+    plt.tight_layout()
+    path = output_dir / f"{market}_walkforward_roi.png"
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {path}")
+
+    # === Markdown ===
+    md_path = Path("nba/models/model_cards") / f"WALKFORWARD_{market}.md"
+    lines = [
+        f"# {market} Walk-Forward Validation",
+        "",
+        f"**{results.n_folds} folds** | "
+        f"Mean AUC: **{results.mean_auc:.3f}** (std {results.std_auc:.3f}) | "
+        f"Win Rate: **{results.mean_win_rate:.1%}** | "
+        f"Edge WR: **{results.mean_edge_win_rate:.1%}** | "
+        f"ROI: **{results.total_roi:+.1%}**",
+        "",
+        "| Fold | Train Period | Test Period | AUC | Win Rate | Edge WR | ROI |",
+        "|------|-------------|-------------|-----|----------|---------|-----|",
+    ]
+    for f in folds:
+        lines.append(
+            f"| {f.fold} | {f.train_start[:10]} to {f.train_end[:10]} | "
+            f"{f.test_start[:10]} to {f.test_end[:10]} | "
+            f"{f.auc:.3f} | {f.win_rate:.1%} | "
+            f"{f.edge_win_rate:.1%} | {f.roi:+.1%} |"
+        )
+    lines.extend(
+        [
+            "",
+            f"![AUC](images/{market}_walkforward_auc.png)",
+            f"![Win Rate](images/{market}_walkforward_winrate.png)",
+            f"![ROI](images/{market}_walkforward_roi.png)",
+        ]
+    )
+    md_path.write_text("\n".join(lines))
+    print(f"  Saved: {md_path}")
 
 
 if __name__ == "__main__":
