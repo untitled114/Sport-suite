@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 import psycopg2
 
-from nba.config.thresholds import EDGE_THRESHOLDS
+from nba.config.thresholds import BLEND_WEIGHTS, EDGE_THRESHOLDS
 from nba.core.exceptions import (
     CalibrationDataError,
     CalibrationError,
@@ -30,6 +30,7 @@ from nba.core.exceptions import (
     ModelPredictionError,
     PickleLoadError,
 )
+from nba.models.train_market import PlattCalibrator
 
 # Suppress sklearn feature name warnings
 warnings.filterwarnings("ignore", message=".*feature names.*")
@@ -168,6 +169,25 @@ class BookIntelligencePredictor:
         except (AttributeError, TypeError) as e:
             logger.error(f"Book intelligence prediction error (model): {e}")
             return None
+
+
+class _ModelUnpickler(pickle.Unpickler):
+    """Custom unpickler that remaps __main__.PlattCalibrator to the real class.
+
+    When train_market.py runs as a script, pickle stores PlattCalibrator as
+    __main__.PlattCalibrator. This unpickler redirects it to the installed module.
+    """
+
+    def find_class(self, module, name):
+        if name == "PlattCalibrator" and module == "__main__":
+            return PlattCalibrator
+        return super().find_class(module, name)
+
+
+def _load_pkl(path):
+    """Load a pickle file with __main__ class remapping."""
+    with open(path, "rb") as f:
+        return _ModelUnpickler(f).load()
 
 
 class XLPredictor:
@@ -321,18 +341,12 @@ class XLPredictor:
                 model_prefix = MODELS_DIR / f"{self.market_lower}_xl"
                 version_label = "XL_102"
 
-            with open(f"{model_prefix}_regressor.pkl", "rb") as f:
-                self.regressor = pickle.load(f)
-            with open(f"{model_prefix}_classifier.pkl", "rb") as f:
-                self.classifier = pickle.load(f)
-            with open(f"{model_prefix}_calibrator.pkl", "rb") as f:
-                self.calibrator = pickle.load(f)
-            with open(f"{model_prefix}_imputer.pkl", "rb") as f:
-                self.imputer = pickle.load(f)
-            with open(f"{model_prefix}_scaler.pkl", "rb") as f:
-                self.scaler = pickle.load(f)
-            with open(f"{model_prefix}_features.pkl", "rb") as f:
-                self.features = pickle.load(f)
+            self.regressor = _load_pkl(f"{model_prefix}_regressor.pkl")
+            self.classifier = _load_pkl(f"{model_prefix}_classifier.pkl")
+            self.calibrator = _load_pkl(f"{model_prefix}_calibrator.pkl")
+            self.imputer = _load_pkl(f"{model_prefix}_imputer.pkl")
+            self.scaler = _load_pkl(f"{model_prefix}_scaler.pkl")
+            self.features = _load_pkl(f"{model_prefix}_features.pkl")
 
             # Load metadata (optional)
             try:
@@ -666,12 +680,20 @@ class XLPredictor:
 
             prob_over_raw = self.classifier.predict_proba(X_cls)[0, 1]
 
-            # Stage 3: Calibrate probability (Isotonic Regression)
-            prob_over = self.calibrator.transform([prob_over_raw])[0]
+            # Stage 3: Calibrate probability
+            if self.calibrator is not None:
+                prob_over = self.calibrator.transform([prob_over_raw])[0]
+            else:
+                prob_over = prob_over_raw
 
-            # Blend (60% classifier, 40% residual signal)
-            residual_signal = 1 / (1 + np.exp(-expected_diff / 5.0))
-            prob_over_blended = 0.6 * prob_over + 0.4 * residual_signal
+            # Blend (uses config weights — V5: 1.0 classifier / 0.0 residual)
+            blend_cls = BLEND_WEIGHTS.classifier_weight
+            blend_res = BLEND_WEIGHTS.residual_weight
+            if blend_res > 0:
+                residual_signal = 1 / (1 + np.exp(-expected_diff / 5.0))
+                prob_over_blended = blend_cls * prob_over + blend_res * residual_signal
+            else:
+                prob_over_blended = prob_over
             prob_over_base = float(np.clip(prob_over_blended, 0.01, 0.99))
 
             # Stage 4: Dynamic calibration adjustment (if enabled)
