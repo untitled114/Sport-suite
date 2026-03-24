@@ -23,8 +23,8 @@ Usage:
     python3 enrich_props_with_matchups.py --date 2025-11-07 --dry-run
 
 Exit codes:
-    0 = Success (95%+ coverage achieved)
-    1 = Failed (< 95% coverage - cannot guarantee prediction quality)
+    0 = Success (98%+ coverage achieved)
+    1 = Failed (< 98% coverage - cannot guarantee prediction quality)
 """
 
 import argparse
@@ -72,7 +72,7 @@ BETTINGPROS_PREMIUM_HEADERS = {
 }
 
 # Coverage threshold for production readiness
-COVERAGE_THRESHOLD = 95.0
+COVERAGE_THRESHOLD = 98.0
 
 
 class PropsMatchupEnricher:
@@ -490,16 +490,18 @@ class PropsMatchupEnricher:
             JOIN player_profile pp ON pgl.player_id = pp.player_id
             WHERE pgl.season = %s
               AND (
-                pp.full_name = %s
-                OR REPLACE(REPLACE(pp.full_name, ' Jr.', ' Jr'), ' III.', ' III') = %s
-                OR REPLACE(REPLACE(pp.full_name, ' Jr.', ''), ' III.', '') = %s
+                unaccent(pp.full_name) = %s
+                OR unaccent(pp.full_name) = %s
+                OR unaccent(REPLACE(REPLACE(pp.full_name, ' Jr.', ' Jr'), ' III.', ' III')) = %s
+                OR unaccent(REPLACE(REPLACE(REPLACE(pp.full_name, ' Jr.', ''), ' III', ''), ' II', '')) = %s
               )
             ORDER BY pgl.game_date DESC
             LIMIT 1
             """
 
             cur_players.execute(
-                team_query, (current_season, player_name, normalized_name, base_name)
+                team_query,
+                (current_season, player_name, normalized_name, normalized_name, base_name),
             )
             team_result = cur_players.fetchone()
 
@@ -769,7 +771,7 @@ class PropsMatchupEnricher:
 def main():
     parser = argparse.ArgumentParser(
         description="Enrich NBA props with game matchups",
-        epilog="Exit codes: 0 = Success (≥95%% coverage), 1 = Failed (< 95%% coverage)",
+        epilog="Exit codes: 0 = Success (≥98%% coverage), 1 = Failed (< 98%% coverage)",
     )
     parser.add_argument(
         "--date",

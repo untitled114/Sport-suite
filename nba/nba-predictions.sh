@@ -698,7 +698,7 @@ enrich_matchups() {
     local coverage
     coverage=$(get_coverage)
     coverage="${coverage:-0}"
-    if [ "${coverage%.*}" -ge 95 ]; then
+    if [ "${coverage%.*}" -ge 98 ]; then
         success "Coverage: ${coverage}%"
     else
         warning "Coverage below target: ${coverage}%"
@@ -1137,7 +1137,7 @@ health_check() {
     local coverage
     coverage=$(get_coverage)
     coverage="${coverage:-0}"  # Default to 0 if empty
-    if [ "${coverage%.*}" -ge 95 ]; then
+    if [ "${coverage%.*}" -ge 98 ]; then
         success "Matchup coverage (${coverage}%)"
     else
         warning "Coverage below target (${coverage}%)"

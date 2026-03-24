@@ -534,7 +534,8 @@ class DraftKingsDirectFetcher(BaseFetcher):
             # Market name: "Paolo Banchero Points O/U" → "Paolo Banchero"
             if market_name:
                 cleaned = re.sub(
-                    r"\s+(?:Points|Rebounds|Assists|Threes|3-Pt|Steals|Blocks)" r"(?:\s+O/U)?$",
+                    r"\s+(?:Points|Rebounds|Assists|Threes|Three Pointers Made|3-Pt|Steals|Blocks)"
+                    r"(?:\s+O/U)?$",
                     "",
                     market_name,
                     flags=re.IGNORECASE,

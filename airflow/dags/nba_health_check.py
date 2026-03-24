@@ -271,7 +271,7 @@ def nba_health_check():
 
         Verifies:
         - Props available for today (minimum 50)
-        - Matchup coverage >= 95%
+        - Matchup coverage >= 98%
         - Vegas lines present for scheduled games
         - Cheatsheet data available
 
@@ -335,9 +335,9 @@ def nba_health_check():
             conn.close()
             results["coverage"] = coverage
 
-            if coverage < 95:
+            if coverage < 98:
                 warnings.append(f"Coverage below target: {coverage}%")
-                print(f"[WARN] Coverage: {coverage}% (target 95%)")
+                print(f"[WARN] Coverage: {coverage}% (target 98%)")
             else:
                 print(f"[OK] Coverage: {coverage}%")
         except Exception as e:
