@@ -42,26 +42,12 @@ from tqdm import tqdm
 # Add parent directory to path
 sys.path.append(str(Path(__file__).parent.parent))
 
+from nba.config.database import get_connection
 from nba.utils.season_helpers import date_to_season
 
-# Database configuration
-DB_CONFIG = {
-    "host": "localhost",
-    "user": os.getenv("DB_USER", "mlb_user"),
-    "password": os.getenv("DB_PASSWORD"),
-}
-
-# Port mapping for each database
-DB_PORTS = {
-    "players": 5536,  # nba_players - player_profile, player_game_logs
-    "games": 5537,  # nba_games - games table
-    "team": 5538,  # nba_team - team_season_stats, team_betting_performance
-    "intelligence": 5539,  # nba_intelligence - props, matchup_history, etc.
-}
-
 # Temporal split cutoffs
-TRAIN_START = date(2023, 10, 24)
-TRAIN_END = date(2025, 12, 1)
+TRAIN_START = date(2024, 10, 22)
+TRAIN_END = date(2026, 3, 19)
 
 # Stat types to build
 STAT_TYPES = ["POINTS", "REBOUNDS"]
@@ -147,20 +133,20 @@ class BatchedDatasetBuilder:
             print("=" * 80)
 
     def connect(self):
-        """Connect to all databases"""
-        db_names = {
-            "players": "nba_players",
-            "games": "nba_games",
-            "team": "nba_team",
-            "intelligence": "nba_intelligence",
+        """Connect to consolidated database using schema-based routing."""
+        schema_map = {
+            "players": "players",
+            "games": "games",
+            "team": "teams",
+            "intelligence": "intelligence",
         }
-        for db_name, port in DB_PORTS.items():
-            config = {**DB_CONFIG, "port": port, "database": db_names[db_name]}
-            self.connections[db_name] = psycopg2.connect(**config)
-            self.connections[db_name].autocommit = True
+        for db_name, schema in schema_map.items():
+            conn = get_connection(schema)
+            conn.autocommit = True
+            self.connections[db_name] = conn
 
         if self.verbose:
-            print(f"✅ Connected to {len(self.connections)} databases")
+            print(f"✅ Connected to {len(self.connections)} schemas (consolidated DB)")
 
     def disconnect(self):
         """Disconnect from all databases"""
@@ -184,6 +170,50 @@ class BatchedDatasetBuilder:
         for v in valid[1:]:
             ema = alpha * v + (1 - alpha) * ema
         return ema
+
+    # NBA arena coordinates for travel distance calculation
+    ARENA_COORDS = {
+        "ATL": (33.7573, -84.3963),
+        "BOS": (42.3662, -71.0621),
+        "BKN": (40.6826, -73.9754),
+        "CHA": (35.2251, -80.8392),
+        "CHI": (41.8807, -87.6742),
+        "CLE": (41.4965, -81.6882),
+        "DAL": (32.7905, -96.8103),
+        "DEN": (39.7487, -105.0077),
+        "DET": (42.6970, -83.2456),
+        "GSW": (37.7680, -122.3877),
+        "HOU": (29.7508, -95.3621),
+        "IND": (39.7640, -86.1555),
+        "LAC": (34.0430, -118.2673),
+        "LAL": (34.0430, -118.2673),
+        "MEM": (35.1382, -90.0505),
+        "MIA": (25.7814, -80.1870),
+        "MIL": (43.0451, -87.9172),
+        "MIN": (44.9795, -93.2761),
+        "NOP": (29.9490, -90.0821),
+        "NYK": (40.7505, -73.9934),
+        "OKC": (35.4634, -97.5151),
+        "ORL": (28.5392, -81.3839),
+        "PHI": (39.9012, -75.1720),
+        "PHX": (33.4457, -112.0712),
+        "POR": (45.5316, -122.6668),
+        "SAC": (38.5802, -121.4997),
+        "SAS": (29.4270, -98.4375),
+        "TOR": (43.6435, -79.3791),
+        "UTA": (40.7683, -111.9011),
+        "WAS": (38.8981, -77.0209),
+    }
+
+    def _haversine_distance(self, team1: str, team2: str) -> float:
+        """Haversine distance between two NBA arenas in km."""
+        if team1 not in self.ARENA_COORDS or team2 not in self.ARENA_COORDS:
+            return 0.0
+        lat1, lon1 = np.radians(self.ARENA_COORDS[team1])
+        lat2, lon2 = np.radians(self.ARENA_COORDS[team2])
+        dlat, dlon = lat2 - lat1, lon2 - lon1
+        a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
+        return float(2 * 6371 * np.arcsin(np.sqrt(a)))
 
     # =========================================================================
     # BULK DATA LOADING
@@ -368,70 +398,47 @@ class BatchedDatasetBuilder:
         if self.verbose:
             print(f"\n📊 Loading H2H matchup history for {len(player_opponent_pairs)} pairs...")
 
-        query = """
-            SELECT
-                player_name, opponent_team, stat_type,
-                games_played, days_since_last, sample_quality, recency_weight,
-                avg_points, std_points, l3_points, l5_points, l10_points, l20_points,
-                home_avg_points, away_avg_points,
-                avg_rebounds, std_rebounds, l3_rebounds, l5_rebounds, l10_rebounds, l20_rebounds,
-                home_avg_rebounds, away_avg_rebounds,
-                avg_assists, std_assists, l3_assists, l5_assists, l10_assists, l20_assists,
-                home_avg_assists, away_avg_assists,
-                avg_threes, std_threes, l3_threes, l5_threes, l10_threes, l20_threes,
-                home_avg_threes, away_avg_threes
-            FROM matchup_history
-        """
+        # Query uses stat-specific columns (avg_points, l3_points, etc.)
+        # since the server DB hasn't migrated to generic names yet.
+        stat_suffix_map = {
+            "POINTS": "points",
+            "REBOUNDS": "rebounds",
+            "ASSISTS": "assists",
+            "THREES": "threes",
+        }
 
         with self.connections["intelligence"].cursor() as cur:
-            cur.execute(query)
-            for row in cur.fetchall():
-                player_name, opponent_team, stat_type = row[0], row[1], row[2]
-                key = (player_name, opponent_team, stat_type)
+            for st in stat_types:
+                s = stat_suffix_map.get(st, "points")
+                query = f"""
+                    SELECT
+                        player_name, opponent_team, stat_type,
+                        games_played, days_since_last, sample_quality, recency_weight,
+                        avg_{s}, std_{s}, l3_{s}, l5_{s}, l10_{s}, l20_{s},
+                        home_avg_{s}, away_avg_{s}
+                    FROM matchup_history
+                    WHERE stat_type = %s
+                """
+                cur.execute(query, (st,))
+                for row in cur.fetchall():
+                    player_name, opponent_team, stat_type = row[0], row[1], row[2]
+                    key = (player_name, opponent_team, stat_type)
+                    suffix = stat_suffix_map.get(stat_type, "points")
 
-                # Parse all stats
-                self.cache.h2h_stats[key] = {
-                    "h2h_games": row[3] or 0,
-                    "h2h_days_since_last": row[4] or 999,
-                    "h2h_sample_quality": float(row[5]) if row[5] else 0.2,
-                    "h2h_recency_weight": float(row[6]) if row[6] else 0.5,
-                    # Points
-                    "h2h_avg_points": float(row[7]) if row[7] else 0.0,
-                    "h2h_std_points": float(row[8]) if row[8] else 0.0,
-                    "h2h_L3_points": float(row[9]) if row[9] else 0.0,
-                    "h2h_L5_points": float(row[10]) if row[10] else 0.0,
-                    "h2h_L10_points": float(row[11]) if row[11] else 0.0,
-                    "h2h_L20_points": float(row[12]) if row[12] else 0.0,
-                    "h2h_home_avg_points": float(row[13]) if row[13] else 0.0,
-                    "h2h_away_avg_points": float(row[14]) if row[14] else 0.0,
-                    # Rebounds
-                    "h2h_avg_rebounds": float(row[15]) if row[15] else 0.0,
-                    "h2h_std_rebounds": float(row[16]) if row[16] else 0.0,
-                    "h2h_L3_rebounds": float(row[17]) if row[17] else 0.0,
-                    "h2h_L5_rebounds": float(row[18]) if row[18] else 0.0,
-                    "h2h_L10_rebounds": float(row[19]) if row[19] else 0.0,
-                    "h2h_L20_rebounds": float(row[20]) if row[20] else 0.0,
-                    "h2h_home_avg_rebounds": float(row[21]) if row[21] else 0.0,
-                    "h2h_away_avg_rebounds": float(row[22]) if row[22] else 0.0,
-                    # Assists
-                    "h2h_avg_assists": float(row[23]) if row[23] else 0.0,
-                    "h2h_std_assists": float(row[24]) if row[24] else 0.0,
-                    "h2h_L3_assists": float(row[25]) if row[25] else 0.0,
-                    "h2h_L5_assists": float(row[26]) if row[26] else 0.0,
-                    "h2h_L10_assists": float(row[27]) if row[27] else 0.0,
-                    "h2h_L20_assists": float(row[28]) if row[28] else 0.0,
-                    "h2h_home_avg_assists": float(row[29]) if row[29] else 0.0,
-                    "h2h_away_avg_assists": float(row[30]) if row[30] else 0.0,
-                    # Threes
-                    "h2h_avg_threes": float(row[31]) if row[31] else 0.0,
-                    "h2h_std_threes": float(row[32]) if row[32] else 0.0,
-                    "h2h_L3_threes": float(row[33]) if row[33] else 0.0,
-                    "h2h_L5_threes": float(row[34]) if row[34] else 0.0,
-                    "h2h_L10_threes": float(row[35]) if row[35] else 0.0,
-                    "h2h_L20_threes": float(row[36]) if row[36] else 0.0,
-                    "h2h_home_avg_threes": float(row[37]) if row[37] else 0.0,
-                    "h2h_away_avg_threes": float(row[38]) if row[38] else 0.0,
-                }
+                    self.cache.h2h_stats[key] = {
+                        "h2h_games": row[3] or 0,
+                        "h2h_days_since_last": row[4] or 999,
+                        "h2h_sample_quality": float(row[5]) if row[5] else 0.2,
+                        "h2h_recency_weight": float(row[6]) if row[6] else 0.5,
+                        f"h2h_avg_{suffix}": float(row[7]) if row[7] else 0.0,
+                        f"h2h_std_{suffix}": float(row[8]) if row[8] else 0.0,
+                        f"h2h_L3_{suffix}": float(row[9]) if row[9] else 0.0,
+                        f"h2h_L5_{suffix}": float(row[10]) if row[10] else 0.0,
+                        f"h2h_L10_{suffix}": float(row[11]) if row[11] else 0.0,
+                        f"h2h_L20_{suffix}": float(row[12]) if row[12] else 0.0,
+                        f"h2h_home_avg_{suffix}": float(row[13]) if row[13] else 0.0,
+                        f"h2h_away_avg_{suffix}": float(row[14]) if row[14] else 0.0,
+                    }
 
         if self.verbose:
             print(f"   ✅ Loaded {len(self.cache.h2h_stats)} H2H records")
@@ -739,27 +746,46 @@ class BatchedDatasetBuilder:
 
         features = {}
 
-        # Map stat_type to game log column
+        # Map stat_type to game log column and feature name
         stat_map = {
             "POINTS": "points",
             "REBOUNDS": "rebounds",
             "ASSISTS": "assists",
             "THREES": "threes",
         }
+        # Feature name for threes uses camelCase to match XL/nba_api convention
+        stat_feat_map = {
+            "POINTS": "points",
+            "REBOUNDS": "rebounds",
+            "ASSISTS": "assists",
+            "THREES": "threePointersMade",
+        }
         target_stat = stat_map.get(stat_type, "points")
+        target_feat = stat_feat_map.get(stat_type, "points")
 
-        # Rolling windows
+        # Rolling windows — extract ALL stats like XL model did.
+        # Cross-stat EMAs matter: rebounds trending up → more minutes → affects points.
+        # XL (AUC 0.765) had all 9 stats × 4 windows = 36 EMA features.
         windows = [3, 5, 10, 20]
-        # Only target stat + minutes (playing time context)
-        stats_to_extract = [target_stat, "minutes"]
+        # (game_log_key, feature_name) — threes uses camelCase to match XL/nba_api convention
+        all_stats = [
+            ("points", "points"),
+            ("rebounds", "rebounds"),
+            ("assists", "assists"),
+            ("threes", "threePointersMade"),
+            ("steals", "steals"),
+            ("blocks", "blocks"),
+            ("turnovers", "turnovers"),
+            ("minutes", "minutes"),
+        ]
 
         for window in windows:
             window_games = prior_games[:window]
 
-            for stat in stats_to_extract:
-                values = [g[stat] for g in window_games]
+            for game_key, feat_name in all_stats:
+                values = [g[game_key] for g in window_games]
                 ema_value = self.calculate_ema(values)
-                features[f"ema_{stat}_L{window}"] = ema_value
+                features[f"ema_{feat_name}_L{window}"] = ema_value
 
             # FG% for this window
             fgm = sum(g["fgm"] for g in window_games)
@@ -849,9 +875,9 @@ class BatchedDatasetBuilder:
         )
 
         # Target stat trend: L5 vs L20 (is scoring increasing or decreasing?)
-        ema_stat_l5 = features.get(f"ema_{target_stat}_L5", 15.0)
-        ema_stat_l20 = features.get(f"ema_{target_stat}_L20", 15.0)
-        features[f"{target_stat}_trend_ratio"] = (
+        ema_stat_l5 = features.get(f"ema_{target_feat}_L5", 15.0)
+        ema_stat_l20 = features.get(f"ema_{target_feat}_L20", 15.0)
+        features[f"{target_feat}_trend_ratio"] = (
             ema_stat_l5 / ema_stat_l20 if ema_stat_l20 > 0 else 1.0
         )
 
@@ -1464,21 +1490,28 @@ class BatchedDatasetBuilder:
         else:
             features["season_phase"] = 0.5
 
-        # Map stat_type to column name for computed features
-        stat_col_map = {
+        # Map stat_type to feature name for computed features
+        stat_feat_col_map = {
             "POINTS": "points",
             "REBOUNDS": "rebounds",
             "ASSISTS": "assists",
-            "THREES": "threes",
+            "THREES": "threePointersMade",
         }
-        target_stat_col = stat_col_map.get(stat_type, "points")
+        target_stat_col = stat_feat_col_map.get(stat_type, "points")
 
         # 4. resistance_adjusted_L3: player L3 target stat adjusted for opponent defense
         raw_L3 = features.get(f"ema_{target_stat_col}_L3", 10.0)
         features["resistance_adjusted_L3"] = raw_L3 * (opp_def / 112.0)
 
         # 5. volume_proxy: estimate from stat/minutes * pace
-        spm = features.get(f"{target_stat_col}_per_minute_L5", 0.3)
+        # per_minute feature uses game-log key (points/rebounds/threes), not feature name
+        _game_log_stat = {
+            "POINTS": "points",
+            "REBOUNDS": "rebounds",
+            "ASSISTS": "assists",
+            "THREES": "threes",
+        }.get(stat_type, "points")
+        spm = features.get(f"{_game_log_stat}_per_minute_L5", 0.3)
         mins = features.get("ema_minutes_L5", 30.0)
         pace_factor = features.get("team_pace", 100.0) / 100.0
         features["volume_proxy"] = spm * mins * pace_factor
@@ -1503,14 +1536,18 @@ class BatchedDatasetBuilder:
         features["position_encoded"] = position
 
         # 9. matchup_advantage_score: composite of form, defense, h2h
-        player_form = features.get("ema_points_L5", 15.0) / 15.0
+        _stat_suffix = {
+            "POINTS": "points",
+            "REBOUNDS": "rebounds",
+            "ASSISTS": "assists",
+            "THREES": "threes",
+        }.get(stat_type, "points")
+        player_form = features.get(f"ema_{_stat_suffix}_L5", 15.0) / 15.0
         opp_defense = features.get("opp_def_factor", 1.1) / 1.1
         h2h_boost = 0.0
         if features.get("h2h_games", 0) > 0:
-            h2h_avg = (
-                features.get("h2h_avg_points", 0) or features.get("h2h_avg_rebounds", 0) or 15.0
-            )
-            h2h_boost = (h2h_avg - features.get("ema_points_L5", 15.0)) / 15.0
+            h2h_avg = features.get(f"h2h_avg_{_stat_suffix}", 0) or 15.0
+            h2h_boost = (h2h_avg - features.get(f"ema_{_stat_suffix}_L5", 15.0)) / 15.0
         features["matchup_advantage_score"] = player_form - opp_defense + h2h_boost
 
         # 10. days_since_last_30pt_game: find in game history
@@ -1563,10 +1600,32 @@ class BatchedDatasetBuilder:
         # 14. opp_def_factor: from opponent defense rating
         features["opp_def_factor"] = opp_def / 100.0
 
-        # DROPPED FEATURES (no data available):
-        # - travel_distance_km (needs city coordinates table)
-        # - revenge_game_flag (needs previous matchup result lookup)
-        # - avg_teammate_usage (needs teammate usage rate data)
+        # 15. travel_distance_km: haversine distance between arenas (away games)
+        features["travel_distance_km"] = 0.0
+        if not is_home and opponent and player_team:
+            features["travel_distance_km"] = self._haversine_distance(player_team, opponent)
+
+        # 16. bench_points_ratio: fraction of L10 games where player started (28+ min)
+        all_games = self.cache.player_games.get(player_name, [])
+        recent_games = [g for g in all_games if g["game_date"] < game_date][:10]
+        if recent_games:
+            started = sum(1 for g in recent_games if g["minutes"] >= 28)
+            features["bench_points_ratio"] = started / len(recent_games)
+        else:
+            features["bench_points_ratio"] = 0.5
+
+        # 17. avg_teammate_usage: proxy from player's own FGA share
+        # True teammate usage needs all teammate game logs (not cached).
+        # Proxy: player's FGA / total minutes ratio captures usage context.
+        l10 = recent_games[:10] if recent_games else []
+        if len(l10) >= 5:
+            player_fga = sum(g["fga"] for g in l10)
+            player_mins = sum(g["minutes"] for g in l10)
+            features["avg_teammate_usage"] = (
+                (player_fga / player_mins * 0.48) if player_mins > 0 else 0.20
+            )
+        else:
+            features["avg_teammate_usage"] = 0.20
 
         return features
 
@@ -1794,8 +1853,11 @@ class BatchedDatasetBuilder:
 
                 if dataset is not None and len(dataset) > 0:
                     suffix = "_dfs" if self.dfs_only else ""
+                    start_year = TRAIN_START.year
+                    end_year = TRAIN_END.year
                     output_file = (
-                        self.output_dir / f"xl_training_{stat_type}{suffix}_2023_2025_batched.csv"
+                        self.output_dir
+                        / f"xl_training_{stat_type}{suffix}_{start_year}_present.csv"
                     )
                     dataset.to_csv(output_file, index=False)
 
