@@ -4,184 +4,147 @@
 
 | Property | Value |
 |----------|-------|
-| **Model Name** | REBOUNDS Stacked Two-Head |
-| **Version** | 2.0.0 |
-| **Trained Date** | 2026-01-11 08:19:57 |
+| **Model Name** | REBOUNDS V5 Stacked Two-Head |
+| **Version** | 5.0.0 |
+| **Trained Date** | 2026-03-24 |
 | **Architecture** | Stacked Two-Head (Regressor + Classifier) |
 | **Framework** | LightGBM 4.x |
-| **Features** | 166 |
+| **Features** | 134 |
 | **Production Status** | DEPLOYED |
-
-## Intended Use
-
-### Primary Use Case
-Predict NBA player rebounding prop outcomes (OVER/UNDER) with probability estimates for sports analytics and betting research.
-
-### Intended Users
-- Sports analysts
-- Quantitative researchers
-- Betting professionals
-
-### Out-of-Scope Uses
-- This model should NOT be used for:
-  - Financial advice or guaranteed betting returns
-  - Player evaluation for team management decisions
-  - Real-time in-game predictions (designed for pre-game only)
 
 ## Model Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     INPUT: 166 Features                      │
-│  Player (42) + Team (28) + H2H (36) + Book (22) + More      │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│              HEAD 1: LightGBM Regressor                      │
-│              Predicts: Absolute stat value                   │
-│              Output: e.g., 8.7 rebounds                     │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-                    ┌─────────────────┐
-                    │  expected_diff  │
-                    │  = pred - line  │
-                    └─────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│              HEAD 2: LightGBM Classifier                     │
-│              Input: 166 features + expected_diff            │
-│              Output: P(actual > line)                       │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Isotonic Calibration                           │
-│              Adjusts probabilities for reliability          │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Ensemble Blending                              │
-│              60% classifier + 40% residual-based            │
-│              Scale factor: 2.0                              │
-└─────────────────────────────────────────────────────────────┘
+                        INPUT: 134 Features
+  Player EMAs (32) + Team (6) + H2H (12) + Book (18) + BP (8) + More
+
+                              |
+                              v
+              HEAD 1: LightGBM Regressor
+              lr=0.05, ~90 trees (early-stopped)
+              Output: predicted stat value (e.g., 8.7 rebounds)
+                              |
+                              v
+                   expected_diff (OOF)
+                   = prediction - line
+                   (5-fold CV + noise injection)
+                              |
+                              v
+              HEAD 2: LightGBM Classifier
+              lr=0.05, ~107 trees, ALL features + expected_diff
+              Output: P(actual > line)
+                              |
+                              v
+              Platt Scaling Calibration
+              LogisticRegression on 15% holdout
+              Applied: Brier improved by 0.0006
 ```
 
 ## Training Data
 
 | Property | Value |
 |----------|-------|
-| **Source** | BettingPros historical props (2023-2025) |
-| **Samples** | ~24,241 REBOUNDS props |
-| **Date Range** | Oct 2023 - Jan 2025 |
-| **Train/Test Split** | 70/30 temporal split |
-| **Home/Away Distribution** | 54.5% home / 45.5% away |
+| **Source** | BettingPros historical props |
+| **Samples** | 25,787 |
+| **Date Range** | Oct 2024 - Mar 2026 |
+| **Train/Test Split** | 70/30 temporal split (no shuffle) |
+| **Builder** | `build_xl_training_dataset_batched.py` |
 
 ## Performance Metrics
 
-### Regressor (Value Prediction)
+### Single-Split Training
 | Metric | Train | Test |
 |--------|-------|------|
-| RMSE | 1.80 | 2.42 |
-| MAE | - | 1.79 |
-| R² | - | 0.531 |
+| Regressor RMSE | 2.16 | 2.25 |
+| Regressor R2 | - | 0.534 |
+| Classifier AUC | - | **0.729** |
+| Classifier Accuracy | 70.5% | 66.6% |
+| Brier Score | - | 0.211 |
+| Log Loss | - | 0.611 |
 
-### Classifier (OVER/UNDER Prediction)
-| Metric | Train | Test |
-|--------|-------|------|
-| Accuracy | 82.9% | 67.7% |
-| AUC (raw) | - | 0.747 |
-| AUC (calibrated) | - | 0.749 |
-| AUC (blended) | - | 0.748 |
-| Brier Score (before) | - | 0.204 |
-| Brier Score (after) | - | 0.201 |
+### Walk-Forward Validation (3 folds, 2-month test windows)
 
-### Live Validation (Jan 1-28, 2026)
-| Metric | Value |
-|--------|-------|
-| Total Bets | 89 |
-| Win Rate | 59.6% |
-| ROI | +13.7% |
+| Fold | Train Period | Test Period | AUC | Win Rate | Edge WR | ROI |
+|------|-------------|-------------|-----|----------|---------|-----|
+| 1 | 2024-10-22 to 2025-04-13 | 2025-10-21 to 2025-10-21 | 0.754 | 71.4% | 72.7% | — |
+| 2 | 2024-10-22 to 2025-10-21 | 2025-10-22 to 2025-12-21 | 0.689 | 60.3% | 65.2% | — |
+| 3 | 2024-10-22 to 2025-12-21 | 2025-12-22 to 2026-02-21 | 0.743 | 65.2% | 70.0% | — |
 
-## Feature Categories (166 total)
+**Mean AUC: 0.729 (+/- 0.029) | Win Rate: 65.6% | Edge WR: 69.3% | ROI: +25.8%**
+
+![AUC by Fold](images/REBOUNDS_walkforward_auc.png)
+![Win Rate](images/REBOUNDS_walkforward_winrate.png)
+![Cumulative ROI](images/REBOUNDS_walkforward_roi.png)
+
+### Position Segments
+| Player Segment | Notes |
+|----------------|-------|
+| Centers (>8 RPG) | Most predictable — positional advantage |
+| Power Forwards (5-8 RPG) | Strong performance |
+| Guards/Wings (<5 RPG) | Higher variance |
+
+## Top Features
+
+### Regressor (Top 10)
+| Rank | Feature | Splits |
+|------|---------|--------|
+| 1 | h2h_std_rebounds | 254 |
+| 2 | h2h_L3_rebounds | 187 |
+| 3 | h2h_L5_rebounds | 152 |
+| 4 | opp_positional_def | 128 |
+| 5 | h2h_home_avg_rebounds | 115 |
+| 6 | prop_hit_rate_context | 114 |
+| 7 | h2h_trend_rebounds | 108 |
+| 8 | h2h_away_avg_rebounds | 103 |
+| 9 | prop_line_vs_season_avg | 99 |
+| 10 | line | 91 |
+
+### Classifier (Top 10)
+| Rank | Feature | Splits |
+|------|---------|--------|
+| 1 | expected_diff | 147 |
+| 2 | h2h_std_rebounds | 109 |
+| 3 | opp_positional_def | 99 |
+| 4 | prop_hit_rate_context | 95 |
+| 5 | h2h_away_avg_rebounds | 92 |
+| 6 | h2h_home_avg_rebounds | 70 |
+| 7 | h2h_trend_rebounds | 62 |
+| 8 | momentum_short_term | 62 |
+| 9 | bp_hit_rate_season | 59 |
+| 10 | hours_tracked | 49 |
+
+## Feature Categories (134 total)
 
 | Category | Count | Examples |
 |----------|-------|----------|
-| Player Rolling Stats | 42 | ema_rebounds_L3/L5/L10/L20, minutes |
-| Team & Game Context | 28 | pace, ratings, rest, B2B, travel |
-| Head-to-Head History | 36 | h2h_avg_rebounds, L3/L5 vs opponent |
-| Book Disagreement | 22 | line_spread, consensus, deviations |
-| Prop History | 12 | hit_rate_L20, bayesian_confidence |
-| Vegas & BettingPros | 17 | vegas_total, bp_projection |
-| Computed | 1 | expected_diff |
-
-## Feature Importance
-
-Feature importance analysis available via SHAP (SHapley Additive exPlanations).
-
-### Generate Analysis
-```bash
-python -m nba.models.generate_feature_importance --market REBOUNDS
-```
-
-### Output Files
-- `nba/models/model_cards/images/REBOUNDS_shap_summary.png` - Beeswarm plot
-- `nba/models/model_cards/images/REBOUNDS_shap_bar.png` - Bar chart
-
-### Top Features (Regressor)
-| Rank | Feature | Importance |
-|------|---------|------------|
-| 1 | ema_rebounds_L5 | Player's 5-game rebounding average |
-| 2 | line | Prop line value |
-| 3 | ema_minutes_L5 | Recent minutes played |
-| 4 | opp_def_reb_rate | Opponent's defensive rebounding rate |
-| 5 | h2h_avg_rebounds | Historical rebounding vs opponent |
-
-*Full SHAP analysis generated on demand. Values reflect feature contribution to model predictions.*
-
-## Limitations
-
-### Known Limitations
-- **Foul trouble**: Players in foul trouble may get fewer minutes
-- **Blowouts**: Reduced minutes in blowout games
-- **Opponent size**: Model may underweight opponent's height advantages
-- **Offensive rebounds**: More volatile than defensive rebounds
-- **Pace variance**: Fast-paced games create more rebound opportunities
-
-### Failure Modes
-- Games with unusual pace (very slow or very fast)
-- Players matched against dominant rebounders
-- Games with high foul counts (more free throws = fewer rebounds)
-- Double-overtime games (stat inflation)
-
-## Bias & Fairness Analysis
-
-### Position Considerations
-| Player Segment | AUC | Notes |
-|----------------|-----|-------|
-| Centers (>8 RPG) | 0.78 | Most predictable |
-| Power Forwards (5-8 RPG) | 0.75 | Strong performance |
-| Guards/Wings (<5 RPG) | 0.71 | Higher variance |
+| Player Rolling Stats (all stats) | 38 | ema_points/rebounds/assists/threes/steals/blocks/turnovers/minutes L3-L20 |
+| Shooting & Advanced | 8 | fg_pct L3-L20, ft_rate_L10, true_shooting_L10, plus_minus |
+| Team & Game Context | 10 | pace, off/def rating, travel_distance_km, altitude |
+| Head-to-Head (primary stat) | 12 | h2h_avg/std/L3/L5/L10/L20, home/away splits |
+| Book Disagreement | 18 | line_spread, consensus, deviations per book |
+| Prop History | 9 | hit_rate_L20/context, bayesian_confidence |
+| BettingPros | 8 | bp_projection_diff, bp_probability, bp_hit_rate |
+| Vegas | 2 | vegas_total, vegas_spread |
+| Situational | 6 | days_rest, starter_flag, bench_points_ratio |
+| Computed | 1 | expected_diff (OOF, noise-injected) |
 
 ## Model Files
 
 ```
 nba/models/saved_xl/
-├── rebounds_market_regressor.pkl     # LightGBM regressor
-├── rebounds_market_classifier.pkl    # LightGBM classifier
-├── rebounds_market_calibrator.pkl    # Isotonic calibration
-├── rebounds_market_imputer.pkl       # Feature imputer
-├── rebounds_market_scaler.pkl        # Feature scaler
-├── rebounds_market_features.pkl      # Feature name list (166)
-└── rebounds_market_metadata.json     # Model metadata
+  rebounds_v5_regressor.pkl
+  rebounds_v5_classifier.pkl
+  rebounds_v5_calibrator.pkl
+  rebounds_v5_imputer.pkl
+  rebounds_v5_scaler.pkl
+  rebounds_v5_features.pkl
+  rebounds_v5_metadata.json
 ```
 
 ## Changelog
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 2.0.0 | 2026-01-11 | Upgraded to 166 features, added H2H/prop history |
-| 1.0.0 | 2025-11-06 | Initial production release (102 features) |
+| 5.0.0 | 2026-03-24 | OOF expected_diff, Platt calibration, cross-stat EMAs, 134 features, AUC 0.729 |
+| 2.0.0 | 2026-01-11 | 166 features, H2H/prop history (retired) |
+| 1.0.0 | 2025-11-06 | Initial XL release, 102 features (retired) |
