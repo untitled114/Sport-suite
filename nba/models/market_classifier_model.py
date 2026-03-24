@@ -301,7 +301,7 @@ class MarketClassifierModel:
         # MLflow tracking
         self._tracker = ModelTracker(experiment="nba-model-cascade")
         self._tracker.start_run(
-            f"{self.market}_classifier_{datetime.now(EST).strftime('%Y%m%d_%H%M')}",
+            f"{self.market}_classifier_{datetime.now(EST).strftime('%Y%m%d_%H%M%S')}",
             tags={"model_type": "market_classifier", "market": self.market},
         )
         self._tracker.log_params(
@@ -488,7 +488,11 @@ class MarketClassifierModel:
                 "training_duration_s": train_duration,
             }
         )
-        self._tracker.end_run()
+        self._tracker.log_feature_importance(
+            feature_names=list(X_train_scaled.columns),
+            importances=list(self.classifier.feature_importances_),
+            head="classifier",
+        )
 
         return metrics
 
@@ -545,6 +549,11 @@ class MarketClassifierModel:
                 "feature_count": len(self.feature_names),
             },
         )
+
+        # Log model path for lineage and end the MLflow run
+        if hasattr(self, "_tracker"):
+            self._tracker.log_model_path(str(output_path / f"{prefix}_market_classifier.pkl"))
+            self._tracker.end_run()
 
     def load(self, output_dir: str) -> None:
         """Load model artifacts from disk.

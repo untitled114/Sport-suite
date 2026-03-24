@@ -296,7 +296,7 @@ class PlayerProjectionModel:
         # MLflow tracking
         self._tracker = ModelTracker(experiment="nba-model-cascade")
         self._tracker.start_run(
-            f"{self.market}_projection_{datetime.now(EST).strftime('%Y%m%d_%H%M')}",
+            f"{self.market}_projection_{datetime.now(EST).strftime('%Y%m%d_%H%M%S')}",
             tags={"model_type": "projection", "market": self.market},
         )
         self._tracker.log_params(
@@ -443,7 +443,11 @@ class PlayerProjectionModel:
                 "training_duration_s": train_duration,
             }
         )
-        self._tracker.end_run()
+        self._tracker.log_feature_importance(
+            feature_names=list(X_train_scaled.columns),
+            importances=list(self.regressor.feature_importances_),
+            head="regressor",
+        )
 
         return metrics
 
@@ -498,6 +502,11 @@ class PlayerProjectionModel:
                 "feature_count": len(self.feature_names),
             },
         )
+
+        # Log model path for lineage and end the MLflow run
+        if hasattr(self, "_tracker"):
+            self._tracker.log_model_path(str(output_path / f"{prefix}_regressor.pkl"))
+            self._tracker.end_run()
 
     def load(self, output_dir: str, model_version: str = "projection") -> None:
         """Load model artifacts from disk.

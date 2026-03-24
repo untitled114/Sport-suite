@@ -3,7 +3,7 @@ NBA Props ML Core Module
 ========================
 Core utilities for ML operations including:
 - Data validation (Pydantic schemas)
-- Experiment tracking (MLflow integration)
+- Experiment tracking (via nba.models.mlflow_tracking)
 - Feature monitoring (drift detection)
 - Custom exceptions
 - Structured logging configuration
