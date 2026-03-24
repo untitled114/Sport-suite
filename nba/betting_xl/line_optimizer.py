@@ -195,68 +195,57 @@ DB_INTELLIGENCE = get_intelligence_db_config()
 #
 # All tiers use XL model (102 features) - tier names reflect FILTER criteria
 # =============================================================================
+# V5 tier config (Mar 2026) — model is walk-forward validated (AUC 0.730/0.729).
+# p_over IS the signal; spread/edge gates are secondary safety nets, not primary filters.
 TIER_CONFIG = {
     "POINTS": {
         "enabled": True,
-        "min_probability": 0.65,
-        "min_line": 12.0,
-        "max_line": 35.0,
-        "max_edge_points": 6.0,
-        "max_edge_low_variance": 3.0,
+        "min_probability": 0.58,
+        "min_line": 10.0,
+        "max_line": 40.0,
+        "max_edge_points": 8.0,
+        "max_edge_low_variance": 4.0,
         "avoid_books": {"betrivers", "BetRivers"},
         "tiers": {
-            # =================================================================
-            # GOLDMINE: High spread = market inefficiency (80% WR validated)
-            # When books disagree by 2.5+ pts, someone is wrong
-            # =================================================================
             "Goldmine": {
-                "min_spread": 2.5,
-                "min_p_over": 0.65,
-                "min_edge_points": 1.0,
-                "require_positive_edge": True,
-                "require_both": True,
-                "expected_wr": 0.80,
-            },
-            # =================================================================
-            # STANDARD: Moderate spread + higher confidence (100% WR validated)
-            # =================================================================
-            "Standard": {
-                "min_spread": 1.5,
-                "min_p_over": 0.75,
-                "min_edge_points": 2.0,
+                "min_spread": 2.0,
+                "min_p_over": 0.58,
+                "min_edge_points": 0.5,
                 "require_positive_edge": True,
                 "require_both": True,
                 "expected_wr": 0.70,
+            },
+            "Standard": {
+                "min_spread": 0.0,
+                "min_p_over": 0.62,
+                "min_edge_points": 0.5,
+                "require_positive_edge": True,
+                "require_both": False,
+                "expected_wr": 0.62,
             },
         },
     },
     "REBOUNDS": {
         "enabled": True,
         "min_probability": 0.55,
-        "min_line": 5.5,
-        "max_edge_low_variance": 2.0,
+        "min_line": 3.5,
+        "max_edge_low_variance": 3.0,
         "tiers": {
-            # =================================================================
-            # GOLDMINE: High spread for rebounds
-            # =================================================================
             "Goldmine": {
-                "min_spread": 2.0,
-                "min_p_over": 0.60,
-                "min_edge_points": 1.0,
-                "require_positive_edge": True,
-                "require_both": True,
-                "expected_wr": 0.80,
-            },
-            # =================================================================
-            # STANDARD: Moderate spread + higher confidence for rebounds
-            # =================================================================
-            "Standard": {
                 "min_spread": 1.5,
-                "min_p_over": 0.75,
-                "min_edge_points": 1.0,
+                "min_p_over": 0.58,
+                "min_edge_points": 0.5,
                 "require_positive_edge": True,
                 "require_both": True,
                 "expected_wr": 0.70,
+            },
+            "Standard": {
+                "min_spread": 0.0,
+                "min_p_over": 0.60,
+                "min_edge_points": 0.5,
+                "require_positive_edge": True,
+                "require_both": False,
+                "expected_wr": 0.62,
             },
         },
     },

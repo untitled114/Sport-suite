@@ -429,7 +429,7 @@ class XLPredictionsGenerator:
         return {"level": level, "spread": game["spread"], "abs_spread": abs_spread}
 
     # Minutes/availability guard configuration
-    MIN_MINUTES_FLOOR = 25.0
+    MIN_MINUTES_FLOOR = 20.0
     MAX_DAYS_SINCE_GAME = 10
     # Allow UNKNOWN/DTD to avoid over-filtering when status feed is sparse, but still require minutes/recent game.
     ALLOWED_STATUSES = {"ACTIVE", "PROBABLE", "QUESTIONABLE", "UNKNOWN", "DAY_TO_DAY", "DTD"}

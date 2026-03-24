@@ -123,7 +123,7 @@ def _load_conviction_picks(run_date: str) -> tuple[list[dict], int]:
             cur.execute(
                 """
                 SELECT COALESCE(MAX(run_number), 1)
-                FROM nba_prediction_history
+                FROM axiom_pipeline_audit
                 WHERE run_date = %s
                 """,
                 (run_date,),
