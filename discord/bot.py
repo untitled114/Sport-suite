@@ -43,12 +43,14 @@ from cephalon.context import axiom_context
 from cephalon.persistence import _init_dedup_table, claim_message
 from cephalon.personalities import AXIOM
 
+_PID = os.getpid()
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
+    format=f"%(asctime)s [%(levelname)s] [pid={_PID}] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 log = logging.getLogger("axiom")
+
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -80,6 +82,9 @@ _sent_live_alerts: set[str] = set()
 _sent_pregame: set[str] = set()
 _morning_brief_sent: set[str] = set()
 _last_dedup_reset: str = ""
+
+# In-memory message dedup — instant, catches gateway re-delivery within same process
+_seen_message_ids: set[int] = set()
 
 _init_dedup_table()
 
@@ -173,11 +178,10 @@ def _record_post(run_date: str, post_type: str, data: dict = None):
 
         conn = psycopg2.connect(
             host=os.environ.get("DB_HOST", "localhost"),
-            port=int(os.environ.get("DB_PORT", "5500")),
-            dbname=os.environ.get("DB_NAME", "sportsuite"),
+            port=5541,
+            dbname="cephalon_axiom",
             user=os.environ.get("DB_USER", "mlb_user"),
             password=os.environ.get("DB_PASSWORD", ""),
-            options="-c search_path=axiom,public",
             connect_timeout=5,
         )
         cur = conn.cursor()
@@ -254,7 +258,7 @@ async def _pipeline_completion_monitor():
                 status = row["status"]
                 icon = "✅" if status == "success" else ("⚠️" if status == "partial" else "❌")
                 picks = row["picks_generated"]
-                v5 = row["xl_picks"]  # xl_picks column now holds V5 count
+                xl, v3 = row["xl_picks"], row["v3_picks"]
                 dur = row["duration_seconds"]
                 err = row["error_message"]
                 num = row["run_number"]
@@ -262,8 +266,8 @@ async def _pipeline_completion_monitor():
                 run_date = str(row.get("run_date") or _get_today())
 
                 picks_str = f"{picks} picks" if picks is not None else "?"
-                if v5 is not None and v5 > 0:
-                    picks_str += f" (V5:{v5})"
+                if xl is not None and v3 is not None:
+                    picks_str += f" (XL:{xl} V3:{v3})"
                 dur_str = f" in {int(dur)}s" if dur else ""
                 err_str = f"\n⚠️ {err[:120]}" if err else ""
                 ts = datetime.now(_EST).strftime("%H:%M EST")
@@ -683,25 +687,35 @@ async def on_message(message):
         await bot.process_commands(message)
         return
 
-    # Deduplicate: SQLite-backed claim so cross-restart / two-process races are safe
-    if not claim_message(message.id):
-        log.debug(f"Skipping already-claimed message id={message.id}")
+    # In-memory dedup — instant, runs before any await so no race condition
+    if message.id in _seen_message_ids:
+        log.info(f"DEDUP-MEM: Skipping already-seen message id={message.id}")
         return
+    _seen_message_ids.add(message.id)
+    # Cap set size to prevent unbounded growth
+    if len(_seen_message_ids) > 10000:
+        _seen_message_ids.clear()
+
+    # SQLite dedup — cross-restart / two-process protection (backup)
+    if not claim_message(message.id):
+        log.info(f"DEDUP-SQL: Skipping already-claimed message id={message.id}")
+        return
+
+    log.info(f"CLAIMED msg={message.id} from user={message.author.id}: {message.content[:80]!r}")
 
     # DM conversation via AI
     async with message.channel.typing():
         reply = await brain.respond(message.author.id, message.content)
 
+    log.info(f"REPLY msg={message.id} len={len(reply)}")
+
     # Send reply — truncate to Discord's 2000 char limit (no multi-message splits)
     if len(reply) > 2000:
-        # Cut at last newline before limit to avoid mid-sentence breaks
         cut = reply.rfind("\n", 0, 1997)
         if cut == -1:
             cut = 1997
         reply = reply[:cut] + "..."
     await message.channel.send(reply)
-
-    await bot.process_commands(message)
 
 
 @bot.tree.command(name="ask", description="Ask Cephalon Axiom a question about NBA picks")
